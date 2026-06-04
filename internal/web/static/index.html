@@ -1,65 +1,260 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>NetLogger</title>
-<style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;padding:2rem;line-height:1.5}
-.k{color:#677483}.v{font-family:monospace}h2{font-size:14px;margin-top:1.5rem}
-table{border-collapse:collapse;font-size:13px;margin-top:.5rem}td,th{padding:6px 12px;border-bottom:1px solid #222b36;text-align:left}
-.ok{color:#3fb950}.bad{color:#f85149}</style></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetLogger</title>
+<style>
+  :root{
+    --bg:#0d1117;--panel:#161b22;--panel2:#1c2230;--border:#2a3340;--txt:#e6edf3;
+    --muted:#9aa7b3;--dim:#677483;--accent:#4cc2ff;--green:#3fb950;--amber:#e3a82b;
+    --red:#f85149;--grey:#5c6773;--grid:#1e2731;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:13.5px;display:flex;flex-direction:column;overflow:hidden;line-height:1.5}
+  .topbar{height:50px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:14px;flex-shrink:0}
+  .logo{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+  .logo .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .logo .sub{color:var(--accent)}
+  .topbar .sep{flex:1}
+  .live{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .live .rdot{width:7px;height:7px;border-radius:50%;background:var(--green);transition:opacity .2s}
+  .live.pulse .rdot{opacity:.25}
+  .shell{flex:1;display:flex;min-height:0}
+  .nav{width:194px;background:var(--panel);border-right:1px solid var(--border);padding:14px 10px;flex-shrink:0}
+  .nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;color:var(--muted);cursor:pointer;font-weight:500;margin-bottom:2px}
+  .nav a:hover{background:var(--panel2);color:var(--txt)}
+  .nav a.active{background:rgba(76,194,255,.13);color:var(--accent)}
+  .nav a .ico{width:17px;text-align:center}
+  .nav a .badge{margin-left:auto;background:var(--red);color:#fff;border-radius:10px;font-size:10px;padding:0 6px;font-weight:700}
+  .main{flex:1;overflow:auto;padding:22px 26px;max-width:1100px}
+  .view{display:none}.view.active{display:block}
+  h1{font-size:18px;font-weight:650;margin-bottom:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .card h2{font-size:13px;font-weight:650;margin-bottom:12px}
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:13px 15px}
+  .stat .l{color:var(--dim);font-size:11px;margin-bottom:4px}.stat .v{font-size:16px;font-weight:650}
+  .stat.ok .v{color:var(--green)}.stat.warn .v{color:var(--amber)}.stat.bad .v{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:10px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:none}
+  .mono{font-family:var(--mono);font-size:11.5px}.muted{color:var(--muted)}.dim{color:var(--dim)}
+  .h{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:6px;text-transform:uppercase;letter-spacing:.3px}
+  .h.good{color:var(--green);background:rgba(63,185,80,.13)}.h.fair{color:var(--amber);background:rgba(227,168,43,.13)}
+  .h.poor{color:var(--red);background:rgba(248,81,73,.13)}.h.untested{color:var(--grey);background:rgba(120,134,148,.13)}
+  .ok{color:var(--green);font-weight:700}.bad{color:var(--red);font-weight:700}.warn{color:var(--amber);font-weight:700}
+  .cov{display:inline-flex;gap:3px;align-items:center}
+  .cov .seg{width:13px;height:7px;border-radius:2px;background:var(--grid)}
+  .cov.l1 .seg:nth-child(1){background:var(--amber)}
+  .cov.l2 .seg:nth-child(-n+2){background:var(--amber)}
+  .cov.l3 .seg:nth-child(-n+3){background:#7bce5a}
+  .cov.l4 .seg{background:var(--green)}
+  .covlbl{font-size:10px;color:var(--dim);margin-left:6px}
+  .map{position:relative;background:radial-gradient(circle at 50% 40%,#10202d 0,var(--panel) 75%);border-radius:12px;border:1px solid var(--border);overflow:hidden;min-height:360px}
+  .mnode{position:absolute;transform:translate(-50%,-50%);border:2px solid var(--border);background:var(--panel2);border-radius:9px;padding:6px 9px;text-align:center;z-index:2;min-width:70px}
+  .mnode .nm{font-size:11.5px;font-weight:650}.mnode .md{font-size:8.5px;color:var(--dim);font-family:var(--mono);margin-top:1px}
+  .mnode.good{border-color:var(--green)}.mnode.fair{border-color:var(--amber)}
+  .mnode.poor{border-color:var(--red);box-shadow:0 0 16px rgba(248,81,73,.4)}.mnode.untested{border-color:var(--grey);border-style:dashed;opacity:.8}
+  .btn{background:var(--accent);color:#06121f;border:none;border-radius:7px;padding:8px 14px;font-weight:600;font-size:12.5px;cursor:pointer;font-family:inherit}
+  .btn:hover{filter:brightness(1.08)}.btn:disabled{opacity:.5;cursor:default}
+  select,input{background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:12.5px}
+  pre{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;background:var(--panel2);border-radius:8px;padding:12px;margin-top:10px}
+  .rd b{color:var(--txt)}
+</style>
+</head>
 <body>
-  <h1>NetLogger <span class="v" id="ver"></span></h1>
-  <p><span class="k">host:</span> <span class="v" id="host"></span> &nbsp; <span class="k">service:</span> <span class="v" id="svc"></span></p>
-  <h2>Components</h2><table id="components"><thead><tr><th>component</th><th>health</th><th>coverage</th><th>tested</th><th>failing</th></tr></thead><tbody></tbody></table>
-  <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
-  <h2>Readiness</h2><div id="readiness"></div>
-  <h2>Load test</h2>
-  <p><input id="lt-target" placeholder="target node id" size="20"> <button onclick="runLoad()">Run iperf3</button></p>
-  <pre id="lt-out" class="v"></pre>
+  <div class="topbar">
+    <div class="logo"><span class="dot"></span>Net<span class="sub">Logger</span></div>
+    <div class="sep"></div>
+    <div class="live" id="live"><span class="rdot"></span><span id="liveText">connecting…</span></div>
+  </div>
+  <div class="shell">
+    <nav class="nav">
+      <a data-v="overview" class="active"><span class="ico">📊</span> Overview</a>
+      <a data-v="map"><span class="ico">🗺️</span> Network map</a>
+      <a data-v="agents"><span class="ico">🖥️</span> Agents</a>
+      <a data-v="config"><span class="ico">⚙️</span> Configuration <span class="badge" id="cfgBadge" style="display:none"></span></a>
+      <a data-v="tests"><span class="ico">⚡</span> Tests</a>
+    </nav>
+    <main class="main">
+      <section class="view active" id="overview">
+        <h1>Overview</h1>
+        <div class="strip" id="strip"></div>
+        <div class="card"><h2>Components</h2><div id="components"></div></div>
+      </section>
+      <section class="view" id="map">
+        <h1>Network map</h1>
+        <div class="card" style="padding:0;border:none;background:none"><div class="map" id="mapArea"></div></div>
+        <p class="dim" style="font-size:11.5px">Colour = health · dashed = untested. Layout follows your configured links.</p>
+      </section>
+      <section class="view" id="agents">
+        <h1>Agents</h1>
+        <div class="card"><div id="agentsTable"></div></div>
+      </section>
+      <section class="view" id="config">
+        <h1>Configuration</h1>
+        <div id="readiness"></div>
+      </section>
+      <section class="view" id="tests">
+        <h1>Tests</h1>
+        <div class="card">
+          <h2>Load test (iperf3)</h2>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label class="dim">target <select id="ltTarget"></select></label>
+            <label class="dim">duration <input id="ltDur" type="number" value="5" min="1" max="120" style="width:64px"></label>
+            <label class="dim"><input id="ltUdp" type="checkbox"> UDP</label>
+            <button class="btn" id="ltRun" onclick="runLoad()">Run</button>
+          </div>
+          <pre id="ltOut">No run yet. Requires iperf3 installed on both ends.</pre>
+        </div>
+      </section>
+    </main>
+  </div>
 <script>
-// All cell content is set via textContent (never innerHTML), so values that
-// originate from other agents' responses (errors, labels, details) cannot
-// inject HTML/script into the operator's dashboard.
-function cell(text, cls){ const td=document.createElement('td'); td.textContent=text==null?'':String(text); if(cls) td.className=cls; return td; }
-function row(cells){ const tr=document.createElement('tr'); cells.forEach(c=>tr.appendChild(c)); return tr; }
+"use strict";
+const $=s=>document.querySelector(s);
+function el(tag,text,cls){const e=document.createElement(tag);if(text!=null)e.textContent=String(text);if(cls)e.className=cls;return e;}
+function covClass(c){return {none:'',light:'l1',partial:'l2',thorough:'l3'}[c]||'';}
+function ago(us){if(!us)return '—';const s=Math.max(0,Math.round(Date.now()/1000-us/1e6));if(s<2)return 'just now';if(s<90)return s+'s ago';const m=Math.round(s/60);if(m<90)return m+'m ago';return Math.round(m/60)+'h ago';}
+function covMeter(c){const w=el('span','', 'cov '+covClass(c));for(let i=0;i<4;i++)w.appendChild(el('span','','seg'));w.appendChild(el('span',c,'covlbl'));return w;}
 
-fetch('/api/status').then(r=>r.json()).then(s=>{
-  document.getElementById('ver').textContent=s.version;
-  document.getElementById('host').textContent=s.host;
-  document.getElementById('svc').textContent=s.service_state;
-});
-
-fetch('/api/components').then(r=>r.json()).then(rows=>{
-  const tb=document.querySelector('#components tbody');
-  rows.forEach(c=>{
-    const cls=c.health==='good'?'ok':(c.health==='untested'?'':'bad');
-    tb.appendChild(row([cell(c.label||c.id), cell(c.health,cls), cell(c.coverage), cell(c.tested_paths), cell(c.failing_paths)]));
-  });
-});
-
-fetch('/api/agents').then(r=>r.json()).then(rows=>{
-  const tb=document.querySelector('#agents tbody');
-  rows.forEach(a=>{
-    tb.appendChild(row([cell(a.id), cell(a.online?'yes':'no', a.online?'ok':'bad'), cell(a.last_seen_unix_us||'-'), cell(a.last_err||'')]));
-  });
-});
-
-fetch('/api/readiness').then(r=>r.json()).then(list=>{
-  const root=document.getElementById('readiness');
-  list.forEach(n=>{
-    const h=document.createElement('div');
-    const title=document.createElement('b'); title.textContent=n.node_id; h.appendChild(title);
-    h.appendChild(document.createTextNode(' ('+n.issues+' issue'+(n.issues===1?'':'s')+')'));
-    const tbl=document.createElement('table'); const tb=document.createElement('tbody'); tbl.appendChild(tb);
-    (n.checks||[]).forEach(c=>{ tb.appendChild(row([cell(c.name), cell(c.ok?'OK':'FAIL', c.ok?'ok':'bad'), cell(c.detail||'')])); });
-    h.appendChild(tbl); root.appendChild(h);
-  });
-});
-
-function runLoad(){
-  const t=document.getElementById('lt-target').value;
-  document.getElementById('lt-out').textContent='running...';
-  fetch('/api/loadtest?target='+encodeURIComponent(t)+'&duration=5',{method:'POST'})
-    .then(r=>r.json()).then(j=>{document.getElementById('lt-out').textContent=JSON.stringify(j,null,2);});
+let DATA={};
+async function getJSON(u){try{const r=await fetch(u);return await r.json();}catch(e){return null;}}
+async function refresh(){
+  const [status,components,agents,readiness,topology]=await Promise.all([
+    getJSON('/api/status'),getJSON('/api/components'),getJSON('/api/agents'),getJSON('/api/readiness'),getJSON('/api/topology')]);
+  if(status===null){setLive(false);return;}
+  DATA={status,components:components||[],agents:agents||[],readiness:readiness||[],topology:topology||{nodes:[],links:[]}};
+  setLive(true);
+  render();
 }
+function setLive(ok){
+  const live=$('#live');live.classList.add('pulse');setTimeout(()=>live.classList.remove('pulse'),200);
+  if(!ok){$('#liveText').textContent='offline';live.querySelector('.rdot').style.background='var(--red)';return;}
+  const a=DATA.agents||[];const on=a.filter(x=>x.online).length;
+  $('#liveText').textContent=`${on}/${a.length} agents online · live`;
+  live.querySelector('.rdot').style.background='var(--green)';
+}
+
+function render(){
+  renderStrip();renderComponents();renderAgents();renderReadiness();renderMap();renderTargets();
+}
+function healthOf(id){const c=(DATA.components||[]).find(x=>x.id===id);return c?c.health:'untested';}
+
+function renderStrip(){
+  const c=DATA.components||[],a=DATA.agents||[];
+  const poor=c.filter(x=>x.health==='poor').map(x=>x.label||x.id);
+  const tested=c.filter(x=>x.health!=='untested').length;
+  const on=a.filter(x=>x.online).length;
+  const strip=$('#strip');strip.replaceChildren();
+  const stat=(l,v,cls)=>{const s=el('div',null,'stat '+(cls||''));s.appendChild(el('div',l,'l'));s.appendChild(el('div',v,'v'));return s;};
+  strip.appendChild(stat('Agents online',`${on}/${a.length}`, on===a.length&&a.length?'ok':'warn'));
+  strip.appendChild(stat('Needs attention', poor.length?poor.join(', '):'none', poor.length?'bad':'ok'));
+  strip.appendChild(stat('Coverage', c.length?`${tested}/${c.length} components`:'—', tested<c.length?'warn':'ok'));
+  const issues=(DATA.readiness||[]).reduce((n,r)=>n+(r.issues||0),0);
+  strip.appendChild(stat('Config issues', issues, issues?'warn':'ok'));
+}
+function renderComponents(){
+  const root=$('#components');root.replaceChildren();
+  const t=el('table');const head=el('tr');['Component','Health','Coverage','Tested','Failing'].forEach(h=>head.appendChild(el('th',h)));
+  t.appendChild(head);
+  (DATA.components||[]).forEach(c=>{
+    const tr=el('tr');
+    const nm=el('td');nm.appendChild(el('b',c.label||c.id));tr.appendChild(nm);
+    const h=el('td');h.appendChild(el('span',c.health,'h '+c.health));tr.appendChild(h);
+    const cov=el('td');cov.appendChild(covMeter(c.coverage));tr.appendChild(cov);
+    tr.appendChild(el('td',c.tested_paths,'mono'));
+    const f=el('td',c.failing_paths,'mono');if(c.failing_paths>0)f.classList.add('bad');tr.appendChild(f);
+    t.appendChild(tr);
+  });
+  root.appendChild(t);
+}
+function renderAgents(){
+  const root=$('#agentsTable');root.replaceChildren();
+  const t=el('table');const head=el('tr');['Node','Online','Last seen','Error'].forEach(h=>head.appendChild(el('th',h)));t.appendChild(head);
+  (DATA.agents||[]).forEach(a=>{
+    const tr=el('tr');tr.appendChild(el('td',a.id,'mono'));
+    tr.appendChild(el('td',a.online?'yes':'no',a.online?'ok':'bad'));
+    tr.appendChild(el('td',ago(a.last_seen_unix_us)));
+    tr.appendChild(el('td',a.last_err||'',a.last_err?'warn':''));
+    t.appendChild(tr);
+  });
+  root.appendChild(t);
+}
+function renderReadiness(){
+  const root=$('#readiness');root.replaceChildren();
+  let totalIssues=0;
+  (DATA.readiness||[]).forEach(n=>{
+    totalIssues+=n.issues||0;
+    const card=el('div',null,'card rd');
+    const head=el('h2');head.appendChild(el('span',n.node_id));
+    head.appendChild(el('span',`  ${n.issues} issue${n.issues===1?'':'s'}`, n.issues?'bad':'ok'));
+    card.appendChild(head);
+    const t=el('table');
+    (n.checks||[]).forEach(c=>{const tr=el('tr');tr.appendChild(el('td',c.name));
+      tr.appendChild(el('td',c.ok?'OK':'FAIL',c.ok?'ok':'bad'));tr.appendChild(el('td',c.detail||'','mono'));t.appendChild(tr);});
+    card.appendChild(t);root.appendChild(card);
+  });
+  const b=$('#cfgBadge');if(totalIssues){b.style.display='';b.textContent=totalIssues;}else b.style.display='none';
+}
+function renderTargets(){
+  const sel=$('#ltTarget');const prev=sel.value;
+  const targets=(DATA.topology.nodes||[]).filter(n=>n.address);
+  sel.replaceChildren();
+  targets.forEach(n=>{const o=el('option',n.label||n.id);o.value=n.id;sel.appendChild(o);});
+  if([...sel.options].some(o=>o.value===prev))sel.value=prev;
+}
+
+// ---- network map: BFS-depth tiered layout from the configured links ----
+function renderMap(){
+  const area=$('#mapArea');area.replaceChildren();
+  const nodes=DATA.topology.nodes||[],links=DATA.topology.links||[];
+  if(!nodes.length){area.appendChild(el('p','No topology configured.','dim'));return;}
+  const adj={};nodes.forEach(n=>adj[n.id]=[]);
+  links.forEach(l=>{if(adj[l[0]]&&adj[l[1]]){adj[l[0]].push(l[1]);adj[l[1]].push(l[0]);}});
+  // root: prefer modem, then router, then first node
+  const root=(nodes.find(n=>n.type==='modem')||nodes.find(n=>n.type==='router')||nodes[0]).id;
+  const depth={};depth[root]=0;const q=[root];
+  while(q.length){const cur=q.shift();adj[cur].forEach(nx=>{if(depth[nx]===undefined){depth[nx]=depth[cur]+1;q.push(nx);}});}
+  let maxd=0;nodes.forEach(n=>{if(depth[n.id]===undefined)depth[n.id]=0;maxd=Math.max(maxd,depth[n.id]);});
+  const tiers={};nodes.forEach(n=>{(tiers[depth[n.id]]=tiers[depth[n.id]]||[]).push(n);});
+  const W=area.clientWidth||820,rowH=Math.max(78,Math.min(110,(area.clientHeight||380)/(maxd+1)));
+  area.style.height=Math.max(360,(maxd+1)*rowH+30)+'px';
+  const pos={};
+  for(let d=0;d<=maxd;d++){const row=tiers[d]||[];row.forEach((n,i)=>{pos[n.id]={x:W*(i+1)/(row.length+1),y:30+d*rowH};});}
+  // edges
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width','100%');svg.setAttribute('height','100%');svg.style.position='absolute';svg.style.inset='0';svg.style.zIndex=1;
+  links.forEach(l=>{const a=pos[l[0]],b=pos[l[1]];if(!a||!b)return;
+    const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',a.x);ln.setAttribute('y1',a.y);ln.setAttribute('x2',b.x);ln.setAttribute('y2',b.y);
+    ln.setAttribute('stroke','#33414f');ln.setAttribute('stroke-width','2');svg.appendChild(ln);});
+  area.appendChild(svg);
+  nodes.forEach(n=>{const p=pos[n.id];const h=healthOf(n.id);
+    const d=el('div',null,'mnode '+h);d.style.left=p.x+'px';d.style.top=p.y+'px';
+    d.appendChild(el('div',n.label||n.id,'nm'));
+    if(n.model||n.nic)d.appendChild(el('div',(n.model||n.nic),'md'));
+    area.appendChild(d);});
+}
+
+async function runLoad(){
+  const t=$('#ltTarget').value;if(!t){$('#ltOut').textContent='No target available.';return;}
+  const dur=$('#ltDur').value||5,udp=$('#ltUdp').checked;
+  $('#ltRun').disabled=true;$('#ltOut').textContent='running…';
+  const r=await fetch(`/api/loadtest?target=${encodeURIComponent(t)}&duration=${dur}&udp=${udp}`,{method:'POST'});
+  const j=await r.json();$('#ltOut').textContent=JSON.stringify(j,null,2);$('#ltRun').disabled=false;
+}
+
+document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
+  document.querySelectorAll('.nav a').forEach(x=>x.classList.toggle('active',x===a));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===a.dataset.v));
+  if(a.dataset.v==='map')renderMap();
+});
+refresh();setInterval(refresh,3000);
 </script>
 </body>
 </html>

@@ -30,6 +30,7 @@ type Server struct {
 	ComponentsHandler  http.HandlerFunc // optional; nil -> empty array
 	LoadTestHandler    http.HandlerFunc // optional; nil -> empty array
 	ClassifyHandler    http.HandlerFunc // optional; nil -> empty array
+	TopologyHandler    http.HandlerFunc // optional; nil -> empty array
 }
 
 // Handler returns the HTTP handler (status API, agents/readiness, static files).
@@ -49,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/components", orEmptyArray(s.ComponentsHandler))
 	mux.HandleFunc("/api/loadtest", orEmptyArray(s.LoadTestHandler))
 	mux.HandleFunc("/api/classify", orEmptyArray(s.ClassifyHandler))
+	mux.HandleFunc("/api/topology", orEmptyArray(s.TopologyHandler))
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)

@@ -92,6 +92,7 @@ func (p *Program) Start(s service.Service) error {
 		ws.ComponentsHandler = coordinator.ComponentsHandler(st, cfg)
 		ws.LoadTestHandler = coordinator.LoadTestHandler(loadTargets(cfg), nil)
 		ws.ClassifyHandler = coordinator.ClassifyHandler()
+		ws.TopologyHandler = coordinator.TopologyHandler(cfg)
 	}
 
 	root := http.NewServeMux()

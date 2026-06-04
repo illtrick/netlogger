@@ -182,6 +182,13 @@ type ClassifyResponse struct {
 	LANvsWAN string `json:"lan_vs_wan"`
 }
 
+// TopologyHandler returns the configured nodes + links (for the GUI inventory).
+func TopologyHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, cfg)
+	}
+}
+
 // ClassifyHandler exposes the LAN-vs-WAN classifier over query params.
 func ClassifyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

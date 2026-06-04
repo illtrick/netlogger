@@ -26,22 +26,22 @@ const (
 
 // Node is one element of the network (a device, switch, or passive segment).
 type Node struct {
-	ID        string   `yaml:"id"`
-	Type      NodeType `yaml:"type"`
-	Label     string   `yaml:"label"`
-	Model     string   `yaml:"model,omitempty"`
-	NIC       string   `yaml:"nic,omitempty"`
-	Address   string   `yaml:"address,omitempty"`
-	LinkSpeed string   `yaml:"link_speed,omitempty"`
-	Role      string   `yaml:"role,omitempty"`
-	ClockRes  string   `yaml:"clock_res,omitempty"`
-	Managed   bool     `yaml:"managed,omitempty"`
+	ID        string   `yaml:"id" json:"id"`
+	Type      NodeType `yaml:"type" json:"type"`
+	Label     string   `yaml:"label" json:"label"`
+	Model     string   `yaml:"model,omitempty" json:"model,omitempty"`
+	NIC       string   `yaml:"nic,omitempty" json:"nic,omitempty"`
+	Address   string   `yaml:"address,omitempty" json:"address,omitempty"`
+	LinkSpeed string   `yaml:"link_speed,omitempty" json:"link_speed,omitempty"`
+	Role      string   `yaml:"role,omitempty" json:"role,omitempty"`
+	ClockRes  string   `yaml:"clock_res,omitempty" json:"clock_res,omitempty"`
+	Managed   bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
 }
 
 // Config is the whole network config file: nodes plus their links.
 type Config struct {
-	Nodes []Node     `yaml:"nodes"`
-	Links [][]string `yaml:"links"`
+	Nodes []Node     `yaml:"nodes" json:"nodes"`
+	Links [][]string `yaml:"links" json:"links"`
 }
 
 // WriteStarter creates a minimal single-node coordinator config at path (used
