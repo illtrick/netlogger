@@ -93,6 +93,8 @@ func (p *Program) Start(s service.Service) error {
 	ws.RestartHandler = p.handleRestart // apply config changes
 	ws.ServiceHandler = p.handleService // install/start/stop/uninstall (elevated)
 	ws.QuitHandler = p.handleQuit       // stop this foreground app from the GUI
+	ws.DownloadAgent = p.handleDownloadAgent
+	ws.DownloadConfig = p.handleDownloadConfig
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
@@ -343,6 +345,33 @@ func (p *Program) handleService(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleDownloadAgent serves this running binary so a peer can fetch the exact
+// agent (same OS/arch). Used by the GUI's push-to-peer bootstrap.
+func (p *Program) handleDownloadAgent(w http.ResponseWriter, r *http.Request) {
+	exe, err := os.Executable()
+	if err != nil {
+		http.Error(w, "agent binary unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=netlogger.exe")
+	http.ServeFile(w, r, exe)
+}
+
+// handleDownloadConfig serves the current network config as YAML, for peers.
+func (p *Program) handleDownloadConfig(w http.ResponseWriter, r *http.Request) {
+	p.cfgMu.Lock()
+	c := p.cfg
+	p.cfgMu.Unlock()
+	data, err := config.ToYAML(c)
+	if err != nil {
+		http.Error(w, "config unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml")
+	w.Header().Set("Content-Disposition", "attachment; filename=network.yaml")
+	_, _ = w.Write(data)
 }
 
 // handleQuit stops a foreground (double-click) app from the GUI. Under a

@@ -71,6 +71,9 @@ func WriteStarter(path, nodeID, address string) error {
 	return nil
 }
 
+// ToYAML marshals a config to YAML (used to serve it to peers for deploy).
+func ToYAML(c *Config) ([]byte, error) { return yaml.Marshal(c) }
+
 // Save validates c and writes it to path as YAML (used by the in-GUI editor).
 func Save(path string, c *Config) error {
 	if err := c.Validate(); err != nil {

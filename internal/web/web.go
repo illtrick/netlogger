@@ -35,6 +35,8 @@ type Server struct {
 	RestartHandler     http.HandlerFunc // optional; nil -> 404
 	ServiceHandler     http.HandlerFunc // optional; nil -> 404
 	QuitHandler        http.HandlerFunc // optional; nil -> 404
+	DownloadAgent      http.HandlerFunc // optional; nil -> 404 (serve this binary)
+	DownloadConfig     http.HandlerFunc // optional; nil -> 404 (serve config as YAML)
 }
 
 // Handler returns the HTTP handler (status API, agents/readiness, static files).
@@ -59,6 +61,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/restart", orNotFound(s.RestartHandler))
 	mux.HandleFunc("/api/service", orNotFound(s.ServiceHandler))
 	mux.HandleFunc("/api/quit", orNotFound(s.QuitHandler))
+	mux.HandleFunc("/download/agent", orNotFound(s.DownloadAgent))
+	mux.HandleFunc("/download/config.yaml", orNotFound(s.DownloadConfig))
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)

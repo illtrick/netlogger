@@ -102,6 +102,16 @@
       <section class="view" id="agents">
         <h1>Agents</h1>
         <div class="card"><div id="agentsTable"></div></div>
+        <div class="card">
+          <h2>Deploy to another machine</h2>
+          <p class="dim" style="font-size:11.5px;margin-bottom:10px">Add the machine in Configuration first (id + its LAN IP). Then pick it here and run the generated command in an <b>elevated PowerShell</b> on that machine — it pulls the agent + config from this coordinator and installs the service. (Agent download matches this coordinator's OS/CPU; for QNAP/macOS use the matching build.)</p>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <label class="dim">machine <select id="depNode"></select></label>
+            <button class="btn ghost sm" onclick="copyBoot()">Copy command</button>
+            <span id="depMsg" class="dim"></span>
+          </div>
+          <pre id="depCmd"></pre>
+        </div>
       </section>
       <section class="view" id="config">
         <h1>Configuration</h1>
@@ -176,7 +186,7 @@ function setLive(ok){
 }
 
 function render(){
-  renderStrip();renderComponents();renderAgents();renderReadiness();renderMap();renderTargets();
+  renderStrip();renderComponents();renderAgents();renderReadiness();renderMap();renderTargets();renderDeploy();
 }
 function healthOf(id){const c=(DATA.components||[]).find(x=>x.id===id);return c?c.health:'untested';}
 
@@ -275,6 +285,30 @@ function renderMap(){
     if(n.model||n.nic)d.appendChild(el('div',(n.model||n.nic),'md'));
     area.appendChild(d);});
 }
+
+// ---- push to peer ----
+function bootstrapFor(node){
+  const coord=location.host;
+  return [
+    '# Run in an ELEVATED PowerShell on the new machine:',
+    '$d="$env:ProgramData\\NetLogger"; New-Item -ItemType Directory -Force $d | Out-Null',
+    'Invoke-WebRequest "http://'+coord+'/download/agent" -OutFile "$d\\netlogger.exe"',
+    'Invoke-WebRequest "http://'+coord+'/download/config.yaml" -OutFile "$d\\network.yaml"',
+    '& "$d\\netlogger.exe" --config "$d\\network.yaml" --node '+node+' --listen 0.0.0.0:8088 install',
+    '& "$d\\netlogger.exe" --config "$d\\network.yaml" --node '+node+' --listen 0.0.0.0:8088 start'
+  ].join("\n");
+}
+function renderDeploy(){
+  const sel=$('#depNode');const prev=sel.value;
+  const me=(DATA.status&&DATA.status.host)||'';
+  const nodes=(DATA.topology.nodes||[]).filter(n=>n.address);
+  sel.replaceChildren();
+  nodes.forEach(n=>{const o=el('option',(n.label||n.id));o.value=n.id;sel.appendChild(o);});
+  if([...sel.options].some(o=>o.value===prev))sel.value=prev;
+  sel.onchange=()=>{$('#depCmd').textContent=bootstrapFor(sel.value);};
+  $('#depCmd').textContent=sel.value?bootstrapFor(sel.value):'Add a machine in Configuration first.';
+}
+function copyBoot(){const t=$('#depCmd').textContent;navigator.clipboard.writeText(t).then(()=>{$('#depMsg').textContent='✓ copied';$('#depMsg').className='ok';setTimeout(()=>$('#depMsg').textContent='',2000);});}
 
 async function quitApp(){
   if(!confirm('Stop NetLogger on this machine?'))return;
