@@ -126,6 +126,17 @@
             <span id="svcMsg" class="dim"></span>
           </div>
         </div>
+        <div class="card" id="storageCard">
+          <h2>Data storage <span class="dim" style="font-weight:400">— where this machine keeps its database</span></h2>
+          <p class="dim" style="font-size:11.5px;margin-bottom:10px">The diagnostic database is local to this machine and is not shared with peers. Point it at a different drive or folder if you want. Leave blank to use the default. Changes apply after a restart, and a fresh database is started in the new location (existing data is left in place).</p>
+          <p class="dim" style="font-size:11.5px;margin-bottom:10px">Current: <span class="mono" id="dbPathNow">—</span></p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input id="dbDirInput" type="text" placeholder="e.g. D:\netlogger-data (blank = default)" style="flex:1;min-width:280px" />
+            <button class="btn" onclick="saveStorage(false)">Save</button>
+            <button class="btn" onclick="saveStorage(true)">Save &amp; restart</button>
+            <span id="storageMsg" class="dim"></span>
+          </div>
+        </div>
         <div id="readiness"></div>
         <div class="card">
           <h2>Edit network <span class="dim" style="font-weight:400">— changes apply after a restart</span></h2>
@@ -353,6 +364,20 @@ async function loadEditor(){
   $('#editorLinks').value=(c.links||[]).map(l=>l.join(',')).join('\n');
   editorLoaded=true;$('#editorMsg').textContent='';
 }
+async function loadStorage(){
+  const s=await getJSON('/api/settings');if(!s)return;
+  $('#dbPathNow').textContent=s.db_path||'—';
+  $('#dbDirInput').value=s.configured||'';
+  $('#dbDirInput').placeholder=(s.default_dir?('blank = default ('+s.default_dir+')'):'blank = default');
+}
+async function saveStorage(restart){
+  const msg=$('#storageMsg');msg.textContent='saving…';msg.className='dim';
+  const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({db_dir:$('#dbDirInput').value.trim()})});
+  const j=await r.json();
+  if(!j.ok){msg.textContent='✗ '+(j.error||'save failed');msg.className='bad';return;}
+  msg.textContent='✓ saved — restart to apply';msg.className='ok';
+  if(restart){msg.textContent='✓ saved — restarting…';await fetch('/api/restart',{method:'POST'});}
+}
 async function saveConfig(restart){
   const nodes=[...$('#editorNodes').children].map(r=>r._get()).filter(n=>n.id);
   // role doubles as model for non-endpoints; keep it simple: put it in role.
@@ -377,7 +402,7 @@ document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
   document.querySelectorAll('.nav a').forEach(x=>x.classList.toggle('active',x===a));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===a.dataset.v));
   if(a.dataset.v==='map')renderMap();
-  if(a.dataset.v==='config'){loadService();if(!editorLoaded)loadEditor();}
+  if(a.dataset.v==='config'){loadService();loadStorage();if(!editorLoaded)loadEditor();}
 });
 refresh();setInterval(refresh,3000);
 </script>

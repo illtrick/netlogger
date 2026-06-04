@@ -11,6 +11,7 @@ import (
 	"netlogger/internal/agentsvc"
 	"netlogger/internal/config"
 	"netlogger/internal/launch"
+	"netlogger/internal/localsettings"
 	"netlogger/internal/version"
 )
 
@@ -43,12 +44,26 @@ func main() {
 	dir := dataDir()
 	_ = os.MkdirAll(dir, 0o755)
 
+	// Machine-local settings (db directory override, etc.) live in the fixed
+	// data dir and are read at startup so both interactive and service launches
+	// — and self-restarts — honor the same db location.
+	settingsPath := localsettings.Path(dir)
+	ls, err := localsettings.Load(settingsPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "netlogger: could not read settings:", err)
+		ls = &localsettings.Settings{}
+	}
+	dbPath := localsettings.ResolveDBPath(dir, *dbName, ls)
+	_ = os.MkdirAll(filepath.Dir(dbPath), 0o755)
+
 	prog := &agentsvc.Program{
-		ConfigPath:  *cfgPath,
-		NodeID:      node,
-		DBPath:      filepath.Join(dir, *dbName),
-		Listen:      *listen,
-		ServiceArgs: []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
+		ConfigPath:     *cfgPath,
+		NodeID:         node,
+		DBPath:         dbPath,
+		SettingsPath:   settingsPath,
+		DefaultDataDir: dir,
+		Listen:         *listen,
+		ServiceArgs:    []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
 	}
 	svcConfig := &service.Config{
 		Name:        "NetLogger",

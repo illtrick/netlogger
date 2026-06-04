@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"netlogger/internal/coordinator"
 	"netlogger/internal/httpauth"
 	"netlogger/internal/launch"
+	"netlogger/internal/localsettings"
 	"netlogger/internal/mesh"
 	"netlogger/internal/probe"
 	"netlogger/internal/readiness"
@@ -32,13 +34,15 @@ import (
 
 // Program is the long-running node: probe loop + sync API + optional puller.
 type Program struct {
-	ConfigPath  string
-	NodeID      string
-	DBPath      string
-	Listen      string // host:port for this node's control server
-	OpenBrowser bool     // open the dashboard in a browser after start (interactive launch)
-	Interactive bool     // true for a foreground/double-click launch (enables self-restart)
-	ServiceArgs []string // flags to pass to elevated service-control commands
+	ConfigPath     string
+	NodeID         string
+	DBPath         string
+	SettingsPath   string   // machine-local settings.json (db dir override, etc.)
+	DefaultDataDir string   // default dir for the db when no override is set
+	Listen         string   // host:port for this node's control server
+	OpenBrowser    bool     // open the dashboard in a browser after start (interactive launch)
+	Interactive    bool     // true for a foreground/double-click launch (enables self-restart)
+	ServiceArgs    []string // flags to pass to elevated service-control commands
 
 	store      *store.Store
 	srv        *http.Server
@@ -89,10 +93,11 @@ func (p *Program) Start(s service.Service) error {
 		DataWritable:  sysinfo.DataDirWritable(dataDir),
 	}
 	ws := &web.Server{Host: host, ServiceState: "running"}
-	ws.ConfigHandler = p.handleConfig   // GET/POST the network config (any node)
-	ws.RestartHandler = p.handleRestart // apply config changes
-	ws.ServiceHandler = p.handleService // install/start/stop/uninstall (elevated)
-	ws.QuitHandler = p.handleQuit       // stop this foreground app from the GUI
+	ws.ConfigHandler = p.handleConfig     // GET/POST the network config (any node)
+	ws.SettingsHandler = p.handleSettings // GET/POST machine-local settings (db dir)
+	ws.RestartHandler = p.handleRestart   // apply config changes
+	ws.ServiceHandler = p.handleService   // install/start/stop/uninstall (elevated)
+	ws.QuitHandler = p.handleQuit         // stop this foreground app from the GUI
 	ws.DownloadAgent = p.handleDownloadAgent
 	ws.DownloadConfig = p.handleDownloadConfig
 
@@ -308,6 +313,52 @@ func (p *Program) handleConfig(w http.ResponseWriter, r *http.Request) {
 		p.cfg = &c
 		p.cfgMu.Unlock()
 		writeJSON(w, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSettings serves machine-local preferences for the in-GUI editor. GET
+// reports where the database currently lives; POST sets a new db directory
+// (validated as writable) and persists it. The change applies on the next
+// restart, since the database is opened once at startup.
+func (p *Program) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		ls, _ := localsettings.Load(p.SettingsPath)
+		writeJSON(w, map[string]any{
+			"db_path":     p.DBPath,
+			"db_dir":      filepath.Dir(p.DBPath),
+			"default_dir": p.DefaultDataDir,
+			"configured":  ls.DBDir,
+			"interactive": p.Interactive,
+		})
+	case http.MethodPost:
+		var body struct {
+			DBDir string `json:"db_dir"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "invalid json: " + err.Error()})
+			return
+		}
+		dir := strings.TrimSpace(body.DBDir)
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "error": "cannot create directory: " + err.Error()})
+				return
+			}
+			if !sysinfo.DataDirWritable(dir) {
+				writeJSON(w, map[string]any{"ok": false, "error": "directory is not writable: " + dir})
+				return
+			}
+		}
+		ls, _ := localsettings.Load(p.SettingsPath)
+		ls.DBDir = dir
+		if err := localsettings.Save(p.SettingsPath, ls); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "restart_required": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

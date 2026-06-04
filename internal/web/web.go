@@ -22,8 +22,8 @@ type Status struct {
 
 // Server holds the live state and optional coordinator data handlers.
 type Server struct {
-	Host             string
-	ServiceState     string
+	Host               string
+	ServiceState       string
 	AgentsHandler      http.HandlerFunc // optional; nil -> empty array
 	ReadinessHandler   http.HandlerFunc // optional; nil -> empty array
 	CorrelationHandler http.HandlerFunc // optional; nil -> empty array
@@ -32,6 +32,7 @@ type Server struct {
 	ClassifyHandler    http.HandlerFunc // optional; nil -> empty array
 	TopologyHandler    http.HandlerFunc // optional; nil -> empty array
 	ConfigHandler      http.HandlerFunc // optional; nil -> 404 (GET/POST config)
+	SettingsHandler    http.HandlerFunc // optional; nil -> 404 (GET/POST machine-local settings)
 	RestartHandler     http.HandlerFunc // optional; nil -> 404
 	ServiceHandler     http.HandlerFunc // optional; nil -> 404
 	QuitHandler        http.HandlerFunc // optional; nil -> 404
@@ -58,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/classify", orEmptyArray(s.ClassifyHandler))
 	mux.HandleFunc("/api/topology", orEmptyArray(s.TopologyHandler))
 	mux.HandleFunc("/api/config", orNotFound(s.ConfigHandler))
+	mux.HandleFunc("/api/settings", orNotFound(s.SettingsHandler))
 	mux.HandleFunc("/api/restart", orNotFound(s.RestartHandler))
 	mux.HandleFunc("/api/service", orNotFound(s.ServiceHandler))
 	mux.HandleFunc("/api/quit", orNotFound(s.QuitHandler))
