@@ -1,0 +1,19 @@
+nodes:
+  - id: router
+    type: router
+    label: "Router"
+    model: "TP-Link BE9300"
+  - id: switch1
+    type: switch
+    label: "Switch 1"
+    model: "Tenda TEM2010F"
+    managed: false
+  - id: ryzen
+    type: endpoint
+    label: "Ryzen"
+    nic: "Killer E3100G"
+    link_speed: "2.5G"
+    role: coordinator
+links:
+  - [router, switch1]
+  - [switch1, ryzen]
