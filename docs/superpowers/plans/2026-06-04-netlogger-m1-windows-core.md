@@ -925,10 +925,9 @@ func ProbeUDP(target string, count int, interval, timeout time.Duration) (UDPSta
 Run: `go test ./internal/probe/`
 Expected: PASS
 
-- [ ] **Step 5: Run the race detector (catches the reader/writer sync)**
+- [ ] **Step 5: Race detector (optional — needs a C toolchain)**
 
-Run: `go test -race ./internal/probe/ -run UDP`
-Expected: PASS, no race reported.
+`go test -race` requires `CGO_ENABLED=1` and a C compiler, which this project intentionally avoids (pure-Go via `modernc.org/sqlite`). Skip on a cgo-free machine. The reader goroutine's access to the shared `received`/`rtts` slices is safe because `ProbeUDP` only reads them after `<-done`, and the reader closes `done` as its last action (channel close establishes happens-before). If a C toolchain is available later: `CGO_ENABLED=1 go test -race ./internal/probe/ -run UDP` should pass.
 
 - [ ] **Step 6: Commit**
 
