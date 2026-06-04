@@ -26,6 +26,17 @@ func TestOpenEnablesWAL(t *testing.T) {
 	}
 }
 
+func TestOpenSetsWalAutocheckpoint(t *testing.T) {
+	s := openTemp(t)
+	var pages int
+	if err := s.DB().QueryRow("PRAGMA wal_autocheckpoint").Scan(&pages); err != nil {
+		t.Fatalf("query wal_autocheckpoint: %v", err)
+	}
+	if pages != 1000 {
+		t.Fatalf("want wal_autocheckpoint=1000, got %d", pages)
+	}
+}
+
 func TestInsertAndSince(t *testing.T) {
 	s := openTemp(t)
 	good := Sample{TSUnixUS: 1000, ProbeType: "icmp", SrcHost: "a", DstHost: "b", Direction: "rtt", RTTus: 1500, Lost: false}

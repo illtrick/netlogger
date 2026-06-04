@@ -8,43 +8,58 @@ table{border-collapse:collapse;font-size:13px;margin-top:.5rem}td,th{padding:6px
 <body>
   <h1>NetLogger <span class="v" id="ver"></span></h1>
   <p><span class="k">host:</span> <span class="v" id="host"></span> &nbsp; <span class="k">service:</span> <span class="v" id="svc"></span></p>
-  <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
   <h2>Components</h2><table id="components"><thead><tr><th>component</th><th>health</th><th>coverage</th><th>tested</th><th>failing</th></tr></thead><tbody></tbody></table>
+  <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
   <h2>Readiness</h2><div id="readiness"></div>
   <h2>Load test</h2>
   <p><input id="lt-target" placeholder="target node host" size="20"> <button onclick="runLoad()">Run iperf3</button></p>
   <pre id="lt-out" class="v"></pre>
 <script>
+// All cell content is set via textContent (never innerHTML), so values that
+// originate from other agents' responses (errors, labels, details) cannot
+// inject HTML/script into the operator's dashboard.
+function cell(text, cls){ const td=document.createElement('td'); td.textContent=text==null?'':String(text); if(cls) td.className=cls; return td; }
+function row(cells){ const tr=document.createElement('tr'); cells.forEach(c=>tr.appendChild(c)); return tr; }
+
+fetch('/api/status').then(r=>r.json()).then(s=>{
+  document.getElementById('ver').textContent=s.version;
+  document.getElementById('host').textContent=s.host;
+  document.getElementById('svc').textContent=s.service_state;
+});
+
+fetch('/api/components').then(r=>r.json()).then(rows=>{
+  const tb=document.querySelector('#components tbody');
+  rows.forEach(c=>{
+    const cls=c.health==='good'?'ok':(c.health==='untested'?'':'bad');
+    tb.appendChild(row([cell(c.label||c.id), cell(c.health,cls), cell(c.coverage), cell(c.tested_paths), cell(c.failing_paths)]));
+  });
+});
+
+fetch('/api/agents').then(r=>r.json()).then(rows=>{
+  const tb=document.querySelector('#agents tbody');
+  rows.forEach(a=>{
+    tb.appendChild(row([cell(a.id), cell(a.online?'yes':'no', a.online?'ok':'bad'), cell(a.last_seen_unix_us||'-'), cell(a.last_err||'')]));
+  });
+});
+
+fetch('/api/readiness').then(r=>r.json()).then(list=>{
+  const root=document.getElementById('readiness');
+  list.forEach(n=>{
+    const h=document.createElement('div');
+    const title=document.createElement('b'); title.textContent=n.node_id; h.appendChild(title);
+    h.appendChild(document.createTextNode(' ('+n.issues+' issue'+(n.issues===1?'':'s')+')'));
+    const tbl=document.createElement('table'); const tb=document.createElement('tbody'); tbl.appendChild(tb);
+    (n.checks||[]).forEach(c=>{ tb.appendChild(row([cell(c.name), cell(c.ok?'OK':'FAIL', c.ok?'ok':'bad'), cell(c.detail||'')])); });
+    h.appendChild(tbl); root.appendChild(h);
+  });
+});
+
 function runLoad(){
   const t=document.getElementById('lt-target').value||'127.0.0.1';
   document.getElementById('lt-out').textContent='running...';
   fetch('/api/loadtest?target='+encodeURIComponent(t)+'&duration=5')
     .then(r=>r.json()).then(j=>{document.getElementById('lt-out').textContent=JSON.stringify(j,null,2);});
 }
-fetch('/api/components').then(r=>r.json()).then(rows=>{
-  const tb=document.querySelector('#components tbody');
-  rows.forEach(c=>{const tr=document.createElement('tr');
-    const cls=c.health==='good'?'ok':(c.health==='untested'?'':'bad');
-    tr.innerHTML=`<td>${c.label||c.id}</td><td class="${cls}">${c.health}</td><td>${c.coverage}</td><td>${c.tested_paths}</td><td>${c.failing_paths}</td>`;
-    tb.appendChild(tr);});
-});
-fetch('/api/status').then(r=>r.json()).then(s=>{
-  ver.textContent=s.version; host.textContent=s.host; svc.textContent=s.service_state;
-});
-fetch('/api/agents').then(r=>r.json()).then(rows=>{
-  const tb=document.querySelector('#agents tbody');
-  rows.forEach(a=>{const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${a.id}</td><td class="${a.online?'ok':'bad'}">${a.online?'yes':'no'}</td>`+
-      `<td>${a.last_seen_unix_us||'-'}</td><td>${a.last_err||''}</td>`;
-    tb.appendChild(tr);});
-});
-fetch('/api/readiness').then(r=>r.json()).then(list=>{
-  const root=document.getElementById('readiness');
-  list.forEach(n=>{const h=document.createElement('div');
-    let rows=n.checks.map(c=>`<tr><td>${c.name}</td><td class="${c.ok?'ok':'bad'}">${c.ok?'OK':'FAIL'}</td><td>${c.detail||''}</td></tr>`).join('');
-    h.innerHTML=`<b>${n.node_id}</b> (${n.issues} issue${n.issues===1?'':'s'})<table>${rows}</table>`;
-    root.appendChild(h);});
-});
 </script>
 </body>
 </html>

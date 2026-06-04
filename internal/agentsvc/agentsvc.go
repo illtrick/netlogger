@@ -79,7 +79,14 @@ func (p *Program) Start(s service.Service) error {
 	root := http.NewServeMux()
 	api.Register(root) // /api/info, /api/samples
 	root.Handle("/", ws.Handler())
-	p.srv = &http.Server{Addr: p.Listen, Handler: root}
+	p.srv = &http.Server{
+		Addr:              p.Listen,
+		Handler:           root,
+		ReadHeaderTimeout: 10 * time.Second, // cheap Slowloris defense
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout left 0: /api/loadtest streams for the iperf3 duration.
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel

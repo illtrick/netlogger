@@ -69,6 +69,7 @@ var pragmas = []string{
 	"PRAGMA synchronous=NORMAL",
 	"PRAGMA busy_timeout=5000",
 	"PRAGMA journal_size_limit=67108864",
+	"PRAGMA wal_autocheckpoint=1000",
 	"PRAGMA temp_store=MEMORY",
 	"PRAGMA auto_vacuum=INCREMENTAL",
 }
