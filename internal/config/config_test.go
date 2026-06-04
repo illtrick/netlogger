@@ -48,6 +48,32 @@ func TestWriteStarterCreatesLoadableConfig(t *testing.T) {
 	}
 }
 
+func TestSaveRoundTripAndRejectsInvalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "net.yaml")
+	c := &Config{
+		Nodes: []Node{
+			{ID: "a", Type: NodeEndpoint, Label: "A", Address: "127.0.0.1:8088", Role: "coordinator"},
+			{ID: "b", Type: NodeSwitch, Label: "B"},
+		},
+		Links: [][]string{{"a", "b"}},
+	}
+	if err := Save(path, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(got.Nodes) != 2 || len(got.Links) != 1 {
+		t.Fatalf("round trip lost data: %+v", got)
+	}
+	// Invalid config must be rejected, not written.
+	bad := &Config{Nodes: []Node{{ID: "x"}}, Links: [][]string{{"x", "ghost"}}}
+	if err := Save(filepath.Join(t.TempDir(), "bad.yaml"), bad); err == nil {
+		t.Fatal("Save must reject an invalid config")
+	}
+}
+
 func TestValidateRejectsUnknownLinkNode(t *testing.T) {
 	c := &Config{
 		Nodes: []Node{{ID: "a", Type: NodeEndpoint}},

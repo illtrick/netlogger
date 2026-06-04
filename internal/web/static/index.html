@@ -61,7 +61,14 @@
   .mnode.poor{border-color:var(--red);box-shadow:0 0 16px rgba(248,81,73,.4)}.mnode.untested{border-color:var(--grey);border-style:dashed;opacity:.8}
   .btn{background:var(--accent);color:#06121f;border:none;border-radius:7px;padding:8px 14px;font-weight:600;font-size:12.5px;cursor:pointer;font-family:inherit}
   .btn:hover{filter:brightness(1.08)}.btn:disabled{opacity:.5;cursor:default}
-  select,input{background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:12.5px}
+  .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--border)}
+  .btn.sm{padding:5px 9px;font-size:11.5px}
+  .btn.danger{background:transparent;color:var(--red);border:1px solid rgba(248,81,73,.4);padding:4px 8px;font-size:11px}
+  select,input,textarea{background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:12.5px}
+  textarea{font-family:var(--mono);font-size:11.5px;resize:vertical}
+  h3{font-size:12px;font-weight:650;margin:14px 0 6px;color:var(--muted)}
+  .nodeRow{display:grid;grid-template-columns:1.1fr .9fr 1.2fr 1.4fr 1fr auto;gap:6px;margin-bottom:6px;align-items:center}
+  .nodeRow input,.nodeRow select{padding:5px 8px;font-size:11.5px;width:100%}
   pre{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;background:var(--panel2);border-radius:8px;padding:12px;margin-top:10px}
   .rd b{color:var(--txt)}
 </style>
@@ -98,6 +105,22 @@
       <section class="view" id="config">
         <h1>Configuration</h1>
         <div id="readiness"></div>
+        <div class="card">
+          <h2>Edit network <span class="dim" style="font-weight:400">— changes apply after a restart</span></h2>
+          <div class="nodeRow" style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px">
+            <span>id</span><span>type</span><span>label</span><span>address (host:port)</span><span>role / model</span><span></span>
+          </div>
+          <div id="editorNodes"></div>
+          <button class="btn ghost sm" onclick="addNode()">+ Add node</button>
+          <h3>Links — one <span class="mono">a,b</span> per line</h3>
+          <textarea id="editorLinks" rows="6" style="width:100%"></textarea>
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+            <button class="btn" onclick="saveConfig(false)">Save</button>
+            <button class="btn" onclick="saveConfig(true)">Save &amp; restart</button>
+            <button class="btn ghost sm" onclick="loadEditor()">Reload</button>
+            <span id="editorMsg" class="dim"></span>
+          </div>
+        </div>
       </section>
       <section class="view" id="tests">
         <h1>Tests</h1>
@@ -241,6 +264,40 @@ function renderMap(){
     area.appendChild(d);});
 }
 
+// ---- config editor ----
+const NODE_TYPES=['endpoint','switch','router','modem','passive','cloud'];
+let editorLoaded=false;
+function nodeRow(n){
+  n=n||{type:'endpoint'};
+  const row=el('div',null,'nodeRow');
+  const inp=(ph,val)=>{const e=el('input');e.placeholder=ph;e.value=val||'';return e;};
+  const id=inp('id',n.id), label=inp('label',n.label), addr=inp('host:port',n.address), role=inp('role/model',n.role||n.model);
+  const type=el('select');NODE_TYPES.forEach(t=>{const o=el('option',t);o.value=t;if(t===n.type)o.selected=true;type.appendChild(o);});
+  const del=el('button','✕','btn danger');del.onclick=()=>row.remove();
+  row._get=()=>({id:id.value.trim(),type:type.value,label:label.value.trim()||id.value.trim(),address:addr.value.trim(),role:role.value.trim()});
+  [id,type,label,addr,role,del].forEach(e=>row.appendChild(e));
+  return row;
+}
+function addNode(){$('#editorNodes').appendChild(nodeRow());}
+async function loadEditor(){
+  const c=await getJSON('/api/config');if(!c){$('#editorMsg').textContent='could not load config';return;}
+  const host=$('#editorNodes');host.replaceChildren();
+  (c.nodes||[]).forEach(n=>host.appendChild(nodeRow(n)));
+  $('#editorLinks').value=(c.links||[]).map(l=>l.join(',')).join('\n');
+  editorLoaded=true;$('#editorMsg').textContent='';
+}
+async function saveConfig(restart){
+  const nodes=[...$('#editorNodes').children].map(r=>r._get()).filter(n=>n.id);
+  // role doubles as model for non-endpoints; keep it simple: put it in role.
+  const links=$('#editorLinks').value.split('\n').map(l=>l.split(',').map(s=>s.trim()).filter(Boolean)).filter(a=>a.length===2);
+  const msg=$('#editorMsg');msg.textContent='saving…';msg.className='dim';
+  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nodes,links})});
+  const j=await r.json();
+  if(!j.ok){msg.textContent='✗ '+(j.error||'save failed');msg.className='bad';return;}
+  msg.textContent='✓ saved';msg.className='ok';
+  if(restart){msg.textContent='✓ saved — restarting…';await fetch('/api/restart',{method:'POST'});}
+}
+
 async function runLoad(){
   const t=$('#ltTarget').value;if(!t){$('#ltOut').textContent='No target available.';return;}
   const dur=$('#ltDur').value||5,udp=$('#ltUdp').checked;
@@ -253,6 +310,7 @@ document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
   document.querySelectorAll('.nav a').forEach(x=>x.classList.toggle('active',x===a));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===a.dataset.v));
   if(a.dataset.v==='map')renderMap();
+  if(a.dataset.v==='config'&&!editorLoaded)loadEditor();
 });
 refresh();setInterval(refresh,3000);
 </script>

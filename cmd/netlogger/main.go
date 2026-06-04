@@ -82,11 +82,14 @@ func main() {
 	// starter config for this machine if none exists, and open the dashboard.
 	// When launched by the service manager, service.Interactive() is false, so
 	// we run headless without spawning a browser.
-	if service.Interactive() {
+	prog.Interactive = service.Interactive()
+	if prog.Interactive {
 		if err := config.WriteStarter(*cfgPath, node, launch.HostPort(*listen)); err != nil {
 			fmt.Fprintln(os.Stderr, "netlogger: could not create starter config:", err)
 		}
-		prog.OpenBrowser = true
+		// Suppress the browser pop on a self-restart child (the operator's tab
+		// is already open and reconnecting).
+		prog.OpenBrowser = os.Getenv("NETLOGGER_NO_BROWSER") == ""
 	}
 
 	if err := s.Run(); err != nil {

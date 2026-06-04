@@ -4,10 +4,12 @@ package agentsvc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -34,6 +36,7 @@ type Program struct {
 	DBPath      string
 	Listen      string // host:port for this node's control server
 	OpenBrowser bool   // open the dashboard in a browser after start (interactive launch)
+	Interactive bool   // true for a foreground/double-click launch (enables self-restart)
 
 	store      *store.Store
 	srv        *http.Server
@@ -42,6 +45,9 @@ type Program struct {
 	httpClient *http.Client
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+
+	cfgMu sync.Mutex
+	cfg   *config.Config
 }
 
 // Start is called by the service manager; it must not block.
@@ -50,6 +56,9 @@ func (p *Program) Start(s service.Service) error {
 	if err != nil {
 		return err
 	}
+	p.cfgMu.Lock()
+	p.cfg = cfg
+	p.cfgMu.Unlock()
 	self, peers, err := cfg.Resolve(p.NodeID)
 	if err != nil {
 		return err
@@ -78,6 +87,8 @@ func (p *Program) Start(s service.Service) error {
 		DataWritable:  sysinfo.DataDirWritable(dataDir),
 	}
 	ws := &web.Server{Host: host, ServiceState: "running"}
+	ws.ConfigHandler = p.handleConfig   // GET/POST the network config (any node)
+	ws.RestartHandler = p.handleRestart // apply config changes
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
@@ -109,8 +120,16 @@ func (p *Program) Start(s service.Service) error {
 	}
 
 	// Bind synchronously so a bad address / port-in-use fails service startup
-	// loudly instead of leaving a "started" service with a dead control server.
-	ln, err := net.Listen("tcp", p.Listen)
+	// loudly. Retry briefly to tolerate the hand-off during a self-restart
+	// (the old process needs a moment to release the port).
+	var ln net.Listener
+	for i := 0; i < 10; i++ {
+		ln, err = net.Listen("tcp", p.Listen)
+		if err == nil {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 	if err != nil {
 		st.Close()
 		return fmt.Errorf("bind %s: %w", p.Listen, err)
@@ -253,6 +272,70 @@ func (p *Program) pullLoop(ctx context.Context, nodes []config.TargetRef) {
 			pullAll()
 		}
 	}
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleConfig serves GET (current config) and POST (validate + save) for the
+// in-GUI editor. Saved changes apply on the next restart.
+func (p *Program) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		p.cfgMu.Lock()
+		c := p.cfg
+		p.cfgMu.Unlock()
+		writeJSON(w, c)
+	case http.MethodPost:
+		var c config.Config
+		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "invalid json: " + err.Error()})
+			return
+		}
+		if err := config.Save(p.ConfigPath, &c); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		p.cfgMu.Lock()
+		p.cfg = &c
+		p.cfgMu.Unlock()
+		writeJSON(w, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleRestart relaunches the process to apply config changes (interactive
+// launches only; under a service manager the service should be restarted).
+func (p *Program) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.Interactive {
+		writeJSON(w, map[string]any{"ok": false, "error": "running as a service — restart the NetLogger service to apply"})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "restarting": true})
+	go p.restart()
+}
+
+// restart spawns a fresh copy of this process (which re-binds the same port via
+// the bind-retry), then exits so the new one takes over. The child suppresses
+// the browser pop so the operator's existing tab simply reconnects.
+func (p *Program) restart() {
+	time.Sleep(300 * time.Millisecond) // let the HTTP response flush
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Env = append(os.Environ(), "NETLOGGER_NO_BROWSER=1")
+	_ = cmd.Start()
+	_ = p.Stop(nil)
+	os.Exit(0)
 }
 
 // Stop is called by the service manager on shutdown.

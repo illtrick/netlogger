@@ -71,6 +71,24 @@ func WriteStarter(path, nodeID, address string) error {
 	return nil
 }
 
+// Save validates c and writes it to path as YAML (used by the in-GUI editor).
+func Save(path string, c *Config) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir for config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
 // Load reads and validates a network config file from path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

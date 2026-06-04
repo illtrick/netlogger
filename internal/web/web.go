@@ -31,6 +31,10 @@ type Server struct {
 	LoadTestHandler    http.HandlerFunc // optional; nil -> empty array
 	ClassifyHandler    http.HandlerFunc // optional; nil -> empty array
 	TopologyHandler    http.HandlerFunc // optional; nil -> empty array
+	ConfigHandler      http.HandlerFunc // optional; nil -> 404 (GET/POST config)
+	RestartHandler     http.HandlerFunc // optional; nil -> 404
+	ServiceHandler     http.HandlerFunc // optional; nil -> 404
+	QuitHandler        http.HandlerFunc // optional; nil -> 404
 }
 
 // Handler returns the HTTP handler (status API, agents/readiness, static files).
@@ -51,6 +55,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/loadtest", orEmptyArray(s.LoadTestHandler))
 	mux.HandleFunc("/api/classify", orEmptyArray(s.ClassifyHandler))
 	mux.HandleFunc("/api/topology", orEmptyArray(s.TopologyHandler))
+	mux.HandleFunc("/api/config", orNotFound(s.ConfigHandler))
+	mux.HandleFunc("/api/restart", orNotFound(s.RestartHandler))
+	mux.HandleFunc("/api/service", orNotFound(s.ServiceHandler))
+	mux.HandleFunc("/api/quit", orNotFound(s.QuitHandler))
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)
@@ -66,5 +74,16 @@ func orEmptyArray(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("[]"))
+	}
+}
+
+// orNotFound returns h, or a 404 handler when h is nil (used for
+// coordinator-only action endpoints that agents don't serve).
+func orNotFound(h http.HandlerFunc) http.HandlerFunc {
+	if h != nil {
+		return h
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not available on this node", http.StatusNotFound)
 	}
 }
