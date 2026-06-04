@@ -207,3 +207,27 @@ func (s *Store) CountAgentSamples(agentID string) (int, error) {
 	}
 	return n, nil
 }
+
+// AgentSamplesAll returns all aggregated rows for agentID ordered by seq.
+func (s *Store) AgentSamplesAll(agentID string) ([]Sample, error) {
+	rows, err := s.db.Query(
+		`SELECT seq,ts_unix_us,probe_type,src_host,dst_host,
+		        COALESCE(direction,''),COALESCE(rtt_us,0),COALESCE(jitter_us,0),lost
+		 FROM agent_samples WHERE agent_id=? ORDER BY seq`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("agent samples all: %w", err)
+	}
+	defer rows.Close()
+	var out []Sample
+	for rows.Next() {
+		var sm Sample
+		var lostInt int
+		if err := rows.Scan(&sm.Seq, &sm.TSUnixUS, &sm.ProbeType, &sm.SrcHost,
+			&sm.DstHost, &sm.Direction, &sm.RTTus, &sm.JitterUS, &lostInt); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		sm.Lost = lostInt == 1
+		out = append(out, sm)
+	}
+	return out, rows.Err()
+}

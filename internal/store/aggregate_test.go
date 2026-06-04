@@ -59,3 +59,24 @@ func TestCursorRoundTrip(t *testing.T) {
 		t.Fatalf("want 99, got %d", got)
 	}
 }
+
+func TestAgentSamplesAll(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "all.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	for i := 1; i <= 3; i++ {
+		_ = s.Upsert("ncase", Sample{Seq: int64(i), TSUnixUS: int64(i * 10), ProbeType: "icmp", SrcHost: "ncase", DstHost: "ryzen", Lost: i == 2})
+	}
+	rows, err := s.AgentSamplesAll("ncase")
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("want 3, got %d", len(rows))
+	}
+	if !rows[1].Lost || rows[1].Seq != 2 {
+		t.Fatalf("row 2 should be the lost one: %+v", rows[1])
+	}
+}
