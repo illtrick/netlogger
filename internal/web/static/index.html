@@ -1,17 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>NetLogger</title>
-<style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;padding:2rem}
-.k{color:#677483}.v{font-family:monospace}</style></head>
+<style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;padding:2rem;line-height:1.5}
+.k{color:#677483}.v{font-family:monospace}h2{font-size:14px;margin-top:1.5rem}
+table{border-collapse:collapse;font-size:13px;margin-top:.5rem}td,th{padding:6px 12px;border-bottom:1px solid #222b36;text-align:left}
+.ok{color:#3fb950}.bad{color:#f85149}</style></head>
 <body>
   <h1>NetLogger <span class="v" id="ver"></span></h1>
-  <p><span class="k">host:</span> <span class="v" id="host"></span></p>
-  <p><span class="k">service:</span> <span class="v" id="svc"></span></p>
+  <p><span class="k">host:</span> <span class="v" id="host"></span> &nbsp; <span class="k">service:</span> <span class="v" id="svc"></span></p>
+  <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
+  <h2>Readiness</h2><div id="readiness"></div>
 <script>
 fetch('/api/status').then(r=>r.json()).then(s=>{
-  document.getElementById('ver').textContent=s.version;
-  document.getElementById('host').textContent=s.host;
-  document.getElementById('svc').textContent=s.service_state;
+  ver.textContent=s.version; host.textContent=s.host; svc.textContent=s.service_state;
+});
+fetch('/api/agents').then(r=>r.json()).then(rows=>{
+  const tb=document.querySelector('#agents tbody');
+  rows.forEach(a=>{const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${a.id}</td><td class="${a.online?'ok':'bad'}">${a.online?'yes':'no'}</td>`+
+      `<td>${a.last_seen_unix_us||'-'}</td><td>${a.last_err||''}</td>`;
+    tb.appendChild(tr);});
+});
+fetch('/api/readiness').then(r=>r.json()).then(list=>{
+  const root=document.getElementById('readiness');
+  list.forEach(n=>{const h=document.createElement('div');
+    let rows=n.checks.map(c=>`<tr><td>${c.name}</td><td class="${c.ok?'ok':'bad'}">${c.ok?'OK':'FAIL'}</td><td>${c.detail||''}</td></tr>`).join('');
+    h.innerHTML=`<b>${n.node_id}</b> (${n.issues} issue${n.issues===1?'':'s'})<table>${rows}</table>`;
+    root.appendChild(h);});
 });
 </script>
 </body>

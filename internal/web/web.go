@@ -20,13 +20,15 @@ type Status struct {
 	ServiceState string `json:"service_state"`
 }
 
-// Server holds the live state shown on the status page.
+// Server holds the live state and optional coordinator data handlers.
 type Server struct {
-	Host         string
-	ServiceState string
+	Host             string
+	ServiceState     string
+	AgentsHandler    http.HandlerFunc // optional; nil -> empty array
+	ReadinessHandler http.HandlerFunc // optional; nil -> empty array
 }
 
-// Handler returns the HTTP handler (status API + embedded static files).
+// Handler returns the HTTP handler (status API, agents/readiness, static files).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +39,22 @@ func (s *Server) Handler() http.Handler {
 			ServiceState: s.ServiceState,
 		})
 	})
+	mux.HandleFunc("/api/agents", orEmptyArray(s.AgentsHandler))
+	mux.HandleFunc("/api/readiness", orEmptyArray(s.ReadinessHandler))
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return mux
+}
+
+func orEmptyArray(h http.HandlerFunc) http.HandlerFunc {
+	if h != nil {
+		return h
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+	}
 }

@@ -41,3 +41,24 @@ func TestServesIndex(t *testing.T) {
 		t.Fatalf("index did not render NetLogger title")
 	}
 }
+
+func TestAgentsEndpointDefaultsToEmptyArray(t *testing.T) {
+	srv := &Server{Host: "h", ServiceState: "running"} // no handlers injected
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/agents", nil))
+	if strings.TrimSpace(rr.Body.String()) != "[]" {
+		t.Fatalf("want [], got %q", rr.Body.String())
+	}
+}
+
+func TestInjectedReadinessHandlerIsUsed(t *testing.T) {
+	called := false
+	srv := &Server{
+		ReadinessHandler: func(w http.ResponseWriter, r *http.Request) { called = true; w.Write([]byte("[1]")) },
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/readiness", nil))
+	if !called {
+		t.Fatal("injected readiness handler was not called")
+	}
+}
