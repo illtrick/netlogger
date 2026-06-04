@@ -19,8 +19,14 @@ type Offset struct {
 }
 
 // HalfUncUS is the clock-uncertainty half-width contributed by this offset
-// (δ/2), used to widen correlation intervals.
-func (o Offset) HalfUncUS() int64 { return o.RTTus / 2 }
+// (δ/2), used to widen correlation intervals. It rounds UP so the band is never
+// understated, and guards against a negative δ (which would widen inward).
+func (o Offset) HalfUncUS() int64 {
+	if o.RTTus <= 0 {
+		return 0
+	}
+	return (o.RTTus + 1) / 2
+}
 
 // MeasureOffset runs n round-trips to baseURL/api/time and returns the offset
 // from the sample with the smallest delay (least queuing — most trustworthy).
@@ -44,6 +50,9 @@ func MeasureOffset(client *http.Client, baseURL string, n int) (Offset, error) {
 			return Offset{}, derr
 		}
 		delta := (t4 - t1) - (tp.T3UnixUS - tp.T2UnixUS)
+		if delta < 0 {
+			delta = 0 // asymmetric path / granularity can produce a negative δ
+		}
 		offset := ((tp.T2UnixUS - t1) + (tp.T3UnixUS - t4)) / 2
 		if delta < best.RTTus {
 			best = Offset{OffsetUS: offset, RTTus: delta}

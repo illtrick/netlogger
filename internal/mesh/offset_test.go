@@ -39,6 +39,20 @@ func TestMeasureOffsetRecoversSkew(t *testing.T) {
 	}
 }
 
+func TestHalfUncRoundsUpAndGuardsNegative(t *testing.T) {
+	// Rounds up so the uncertainty band is never understated (spec §6).
+	if got := (Offset{RTTus: 201}).HalfUncUS(); got != 101 {
+		t.Fatalf("want 101 (round up), got %d", got)
+	}
+	if got := (Offset{RTTus: 200}).HalfUncUS(); got != 100 {
+		t.Fatalf("want 100, got %d", got)
+	}
+	// A negative delta (clock jitter / granularity) must never widen-inward.
+	if got := (Offset{RTTus: -4}).HalfUncUS(); got != 0 {
+		t.Fatalf("negative RTT must yield 0 half-uncertainty, got %d", got)
+	}
+}
+
 func TestMeasureOffsetClampsAbsurd(t *testing.T) {
 	srv := timeServerWithOffset(t, 60*time.Second)
 	off, err := MeasureOffset(srv.Client(), srv.URL, 4)
