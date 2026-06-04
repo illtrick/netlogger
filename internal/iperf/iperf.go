@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 )
 
 // Interval is one 1-second iperf3 interval (the high-signal fields, spec §5.4).
@@ -86,4 +87,42 @@ func Parse(data []byte) (Result, error) {
 func Available() bool {
 	_, err := exec.LookPath("iperf3")
 	return err == nil
+}
+
+// Opts configures a load test run.
+type Opts struct {
+	DurationS   int
+	UDP         bool
+	BitrateMbit int // UDP target bitrate in Mbit/s; 0 = iperf3 default
+	Port        int // 0 = iperf3 default (5201)
+}
+
+func buildArgs(target string, o Opts) []string {
+	if o.DurationS <= 0 {
+		o.DurationS = 10
+	}
+	args := []string{"-c", target, "--json", "-i", "1", "-t", strconv.Itoa(o.DurationS)}
+	if o.Port > 0 {
+		args = append(args, "-p", strconv.Itoa(o.Port))
+	}
+	if o.UDP {
+		args = append(args, "-u")
+		if o.BitrateMbit > 0 {
+			args = append(args, "-b", strconv.Itoa(o.BitrateMbit)+"M")
+		}
+	}
+	return args
+}
+
+// RunClient runs `iperf3 -c target ...` and parses the result. It returns a
+// clear error if iperf3 is not installed.
+func RunClient(target string, o Opts) (Result, error) {
+	if !Available() {
+		return Result{}, fmt.Errorf("iperf3 not installed (PATH) — cannot run load test")
+	}
+	out, err := exec.Command("iperf3", buildArgs(target, o)...).Output()
+	if err != nil && len(out) == 0 {
+		return Result{}, fmt.Errorf("iperf3 run: %w", err)
+	}
+	return Parse(out)
 }
