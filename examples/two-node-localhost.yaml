@@ -1,0 +1,12 @@
+nodes:
+  - id: coord
+    type: endpoint
+    label: "Coordinator"
+    address: "127.0.0.1:8088"
+    role: coordinator
+  - id: agent1
+    type: endpoint
+    label: "Agent 1"
+    address: "127.0.0.1:8089"
+links:
+  - [coord, agent1]

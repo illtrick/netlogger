@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,22 +21,37 @@ func dataDir() string {
 }
 
 func main() {
-	if len(os.Args) >= 2 && os.Args[1] == "version" {
+	cfgPath := flag.String("config", filepath.Join(dataDir(), "network.yaml"), "path to network config file")
+	nodeID := flag.String("node", "", "this machine's node id in the config (defaults to hostname)")
+	listen := flag.String("listen", "127.0.0.1:8088", "control server host:port")
+	dbName := flag.String("db", "netlogger.db", "sqlite db filename under the data dir")
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) >= 1 && args[0] == "version" {
 		fmt.Println("netlogger", version.Version)
 		return
+	}
+
+	node := *nodeID
+	if node == "" {
+		node, _ = os.Hostname()
 	}
 
 	dir := dataDir()
 	_ = os.MkdirAll(dir, 0o755)
 
 	prog := &agentsvc.Program{
-		DBPath: filepath.Join(dir, "netlogger.db"),
-		Listen: "127.0.0.1:8088",
+		ConfigPath: *cfgPath,
+		NodeID:     node,
+		DBPath:     filepath.Join(dir, *dbName),
+		Listen:     *listen,
 	}
 	svcConfig := &service.Config{
 		Name:        "NetLogger",
 		DisplayName: "NetLogger Agent",
 		Description: "NetLogger network diagnostic agent.",
+		Arguments:   []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
 	}
 	s, err := service.New(prog, svcConfig)
 	if err != nil {
@@ -43,19 +59,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
+	if len(args) >= 1 {
+		switch args[0] {
 		case "install", "uninstall", "start", "stop":
-			if err := service.Control(s, os.Args[1]); err != nil {
-				fmt.Fprintln(os.Stderr, os.Args[1], "failed:", err)
+			if err := service.Control(s, args[0]); err != nil {
+				fmt.Fprintln(os.Stderr, args[0], "failed:", err)
 				os.Exit(1)
 			}
-			fmt.Println("netlogger:", os.Args[1], "ok")
+			fmt.Println("netlogger:", args[0], "ok")
 			return
 		case "run":
-			// run in foreground (Ctrl+C to stop)
+			// foreground
 		default:
-			fmt.Fprintln(os.Stderr, "usage: netlogger [version|install|uninstall|start|stop|run]")
+			fmt.Fprintln(os.Stderr, "usage: netlogger [flags] [version|install|uninstall|start|stop|run]")
 			os.Exit(2)
 		}
 	}
