@@ -90,6 +90,27 @@ func TestPullIsIdempotentAcrossRepeatsAndOverlap(t *testing.T) {
 	}
 }
 
+func TestPullRecordsConnectivityTransitions(t *testing.T) {
+	srv := liveAgent(t, 2)
+	agg := newAgg(t)
+	p := NewPuller(agg)
+	ref := AgentRef{ID: "ncase", BaseURL: srv.URL}
+
+	if _, err := p.PullOnce(ref); err != nil { // first success -> online event
+		t.Fatalf("pull online: %v", err)
+	}
+	srv.Close()                  // agent goes away
+	_, _ = p.PullOnce(ref)       // failure -> offline event
+
+	evs, err := agg.ConnectivityEvents("ncase")
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(evs) != 2 || !evs[0].Online || evs[1].Online {
+		t.Fatalf("want [online, offline] transitions, got %+v", evs)
+	}
+}
+
 func TestPullMarksOfflineOnError(t *testing.T) {
 	agg := newAgg(t)
 	p := NewPuller(agg)

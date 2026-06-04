@@ -4,6 +4,7 @@ package coordinator
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -16,6 +17,13 @@ import (
 	"netlogger/internal/score"
 	"netlogger/internal/store"
 )
+
+// serverError logs the full error and returns a generic message (no internal
+// detail leak — review security I3).
+func serverError(w http.ResponseWriter, where string, err error) {
+	log.Printf("netlogger: %s: %v", where, err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
+}
 
 // AgentView is the per-agent liveness row for /api/agents.
 type AgentView struct {
@@ -73,7 +81,7 @@ func CorrelationHandler(agg *store.Store, agentIDs []string, offsets *mesh.Offse
 			}
 			rows, err := agg.AgentSamplesAll(id)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				serverError(w, "correlation", err)
 				return
 			}
 			events = append(events, correlate.DetectEvents(id, rows)...)
@@ -100,7 +108,7 @@ func ComponentsHandler(agg *store.Store, cfg *config.Config) http.HandlerFunc {
 			}
 			rows, err := agg.AgentSamplesAll(n.ID)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				serverError(w, "components", err)
 				return
 			}
 			for _, s := range rows {
@@ -123,14 +131,39 @@ type LoadTestResponse struct {
 	UDPLostPercent float64 `json:"udp_lost_percent,omitempty"`
 }
 
-// LoadTestHandler runs an iperf3 load test to ?target= and returns the summary,
-// or a clean error payload if iperf3 is unavailable / the run fails.
-func LoadTestHandler() http.HandlerFunc {
+// RunFunc executes a load test (injectable so the handler is testable without
+// a real iperf3 binary).
+type RunFunc func(target string, o iperf.Opts) (iperf.Result, error)
+
+const maxLoadTestDurationS = 120
+
+// LoadTestHandler runs an iperf3 load test against ?target= (which must be a
+// configured node id — the allowlist resolves it to a host, so a free-form or
+// flag-injecting target is rejected). POST only; duration is clamped. run=nil
+// uses the real iperf3 client.
+func LoadTestHandler(allowed map[string]string, run RunFunc) http.HandlerFunc {
+	if run == nil {
+		run = iperf.RunClient
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		target := r.URL.Query().Get("target")
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		host, ok := allowed[r.URL.Query().Get("target")]
+		if !ok {
+			writeJSON(w, LoadTestResponse{OK: false, Error: "unknown target (must be a configured node id)"})
+			return
+		}
 		dur, _ := strconv.Atoi(r.URL.Query().Get("duration"))
+		if dur <= 0 {
+			dur = 10
+		}
+		if dur > maxLoadTestDurationS {
+			dur = maxLoadTestDurationS
+		}
 		udp := r.URL.Query().Get("udp") == "true"
-		res, err := iperf.RunClient(target, iperf.Opts{DurationS: dur, UDP: udp})
+		res, err := run(host, iperf.Opts{DurationS: dur, UDP: udp})
 		if err != nil {
 			writeJSON(w, LoadTestResponse{OK: false, Error: err.Error()})
 			return

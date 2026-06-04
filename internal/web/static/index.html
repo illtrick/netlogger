@@ -12,7 +12,7 @@ table{border-collapse:collapse;font-size:13px;margin-top:.5rem}td,th{padding:6px
   <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
   <h2>Readiness</h2><div id="readiness"></div>
   <h2>Load test</h2>
-  <p><input id="lt-target" placeholder="target node host" size="20"> <button onclick="runLoad()">Run iperf3</button></p>
+  <p><input id="lt-target" placeholder="target node id" size="20"> <button onclick="runLoad()">Run iperf3</button></p>
   <pre id="lt-out" class="v"></pre>
 <script>
 // All cell content is set via textContent (never innerHTML), so values that
@@ -55,9 +55,9 @@ fetch('/api/readiness').then(r=>r.json()).then(list=>{
 });
 
 function runLoad(){
-  const t=document.getElementById('lt-target').value||'127.0.0.1';
+  const t=document.getElementById('lt-target').value;
   document.getElementById('lt-out').textContent='running...';
-  fetch('/api/loadtest?target='+encodeURIComponent(t)+'&duration=5')
+  fetch('/api/loadtest?target='+encodeURIComponent(t)+'&duration=5',{method:'POST'})
     .then(r=>r.json()).then(j=>{document.getElementById('lt-out').textContent=JSON.stringify(j,null,2);});
 }
 </script>

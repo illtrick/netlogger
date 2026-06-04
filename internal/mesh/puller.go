@@ -42,6 +42,9 @@ func NewPuller(agg *store.Store) *Puller {
 	}
 }
 
+// SetClient overrides the HTTP client (e.g. to attach an auth token).
+func (p *Puller) SetClient(c *http.Client) { p.client = c }
+
 // State returns the last-known state for agentID.
 func (p *Puller) State(id string) AgentState {
 	p.mu.Lock()
@@ -49,10 +52,22 @@ func (p *Puller) State(id string) AgentState {
 	return p.state[id]
 }
 
-func (p *Puller) setState(id string, st AgentState) {
+// transition updates an agent's state and, on an online<->offline change (or
+// the first observation), records a connectivity event so the correlation
+// engine can later use link-loss as a signal (spec §7).
+func (p *Puller) transition(id string, online bool, errMsg string) {
 	p.mu.Lock()
+	prev, known := p.state[id]
+	st := AgentState{Online: online, LastErr: errMsg}
+	if online {
+		st.LastSeen = time.Now()
+	}
 	p.state[id] = st
 	p.mu.Unlock()
+
+	if (!known || prev.Online != online) && p.agg != nil {
+		_ = p.agg.InsertConnectivityEvent(time.Now().UTC().UnixMicro(), id, online, errMsg)
+	}
 }
 
 // PullOnce fetches everything since the stored cursor for a, upserts it
@@ -65,19 +80,19 @@ func (p *Puller) PullOnce(a AgentRef) (int, error) {
 	url := a.BaseURL + "/api/samples?since=" + strconv.FormatInt(cursor, 10) + "&limit=500"
 	resp, err := p.client.Get(url)
 	if err != nil {
-		p.setState(a.ID, AgentState{Online: false, LastErr: err.Error()})
+		p.transition(a.ID, false, err.Error())
 		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		e := fmt.Errorf("agent %s returned %d", a.ID, resp.StatusCode)
-		p.setState(a.ID, AgentState{Online: false, LastErr: e.Error()})
+		p.transition(a.ID, false, e.Error())
 		return 0, e
 	}
 
 	var samples []store.Sample
 	if err := json.NewDecoder(resp.Body).Decode(&samples); err != nil {
-		p.setState(a.ID, AgentState{Online: false, LastErr: err.Error()})
+		p.transition(a.ID, false, err.Error())
 		return 0, err
 	}
 
@@ -96,6 +111,6 @@ func (p *Puller) PullOnce(a AgentRef) (int, error) {
 			return len(samples), err
 		}
 	}
-	p.setState(a.ID, AgentState{Online: true, LastSeen: time.Now()})
+	p.transition(a.ID, true, "")
 	return len(samples), nil
 }

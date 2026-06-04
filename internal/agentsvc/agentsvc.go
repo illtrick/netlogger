@@ -4,9 +4,12 @@ package agentsvc
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/kardianos/service"
@@ -14,6 +17,7 @@ import (
 	"netlogger/internal/clock"
 	"netlogger/internal/config"
 	"netlogger/internal/coordinator"
+	"netlogger/internal/httpauth"
 	"netlogger/internal/mesh"
 	"netlogger/internal/probe"
 	"netlogger/internal/readiness"
@@ -29,11 +33,13 @@ type Program struct {
 	DBPath     string
 	Listen     string // host:port for this node's control server
 
-	store   *store.Store
-	srv     *http.Server
-	puller  *mesh.Puller
-	offsets *mesh.Offsets
-	cancel  context.CancelFunc
+	store      *store.Store
+	srv        *http.Server
+	puller     *mesh.Puller
+	offsets    *mesh.Offsets
+	httpClient *http.Client
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // Start is called by the service manager; it must not block.
@@ -53,6 +59,13 @@ func (p *Program) Start(s service.Service) error {
 	}
 	p.store = st
 
+	// Shared control-plane token (same value on every node). Empty disables auth.
+	token := os.Getenv("NETLOGGER_TOKEN")
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "netlogger: NETLOGGER_TOKEN not set — control plane is unauthenticated (loopback only is safe)")
+	}
+	p.httpClient = mesh.AuthClient(token, 5*time.Second)
+
 	host, _ := os.Hostname()
 	dataDir := filepath.Dir(p.DBPath)
 	api := &mesh.AgentAPI{
@@ -66,38 +79,65 @@ func (p *Program) Start(s service.Service) error {
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
+		p.puller.SetClient(p.httpClient)
 		p.offsets = mesh.NewOffsets()
 		ids := agentIDs(cfg)
+		checker := readiness.NewChecker()
+		checker.Client = p.httpClient
 		ws.AgentsHandler = coordinator.AgentsHandler(p.puller, cfg.AddressedNodes())
-		ws.ReadinessHandler = coordinator.ReadinessHandler(readiness.NewChecker(), endpointNodes(cfg))
+		ws.ReadinessHandler = coordinator.ReadinessHandler(checker, endpointNodes(cfg))
 		ws.CorrelationHandler = coordinator.CorrelationHandler(st, ids, p.offsets)
 		ws.ComponentsHandler = coordinator.ComponentsHandler(st, cfg)
-		ws.LoadTestHandler = coordinator.LoadTestHandler()
+		ws.LoadTestHandler = coordinator.LoadTestHandler(loadTargets(cfg), nil)
 		ws.ClassifyHandler = coordinator.ClassifyHandler()
 	}
 
 	root := http.NewServeMux()
 	api.Register(root) // /api/info, /api/samples
 	root.Handle("/", ws.Handler())
+	handler := httpauth.Middleware(token)(root)
 	p.srv = &http.Server{
 		Addr:              p.Listen,
-		Handler:           root,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second, // cheap Slowloris defense
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// WriteTimeout left 0: /api/loadtest streams for the iperf3 duration.
 	}
 
+	// Bind synchronously so a bad address / port-in-use fails service startup
+	// loudly instead of leaving a "started" service with a dead control server.
+	ln, err := net.Listen("tcp", p.Listen)
+	if err != nil {
+		st.Close()
+		return fmt.Errorf("bind %s: %w", p.Listen, err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 
-	go p.srv.ListenAndServe()
-	go p.probeLoop(ctx, self.ID, peers)
+	go func() { _ = p.srv.Serve(ln) }()
+	p.spawn(func() { p.probeLoop(ctx, self.ID, peers) })
 	if self.Role == "coordinator" {
-		go p.pullLoop(ctx, cfg.AddressedNodes())
-		go p.offsetLoop(ctx, cfg.AddressedNodes())
+		p.spawn(func() { p.pullLoop(ctx, cfg.AddressedNodes()) })
+		p.spawn(func() { p.offsetLoop(ctx, cfg.AddressedNodes()) })
 	}
 	return nil
+}
+
+// spawn runs fn in a tracked goroutine so Stop can join it before closing the store.
+func (p *Program) spawn(fn func()) {
+	p.wg.Add(1)
+	go func() { defer p.wg.Done(); fn() }()
+}
+
+// loadTargets maps each addressed node id -> its probe host, for the load-test allowlist.
+func loadTargets(cfg *config.Config) map[string]string {
+	m := map[string]string{}
+	for _, t := range cfg.AddressedNodes() {
+		m[t.ID] = t.ProbeHost()
+	}
+	return m
 }
 
 // endpointNodes returns the config nodes that have a control address.
@@ -120,15 +160,20 @@ func agentIDs(cfg *config.Config) []string {
 }
 
 func (p *Program) offsetLoop(ctx context.Context, nodes []config.TargetRef) {
-	client := &http.Client{Timeout: 4 * time.Second}
 	tick := time.NewTicker(60 * time.Second)
 	defer tick.Stop()
 	measure := func() {
+		var wg sync.WaitGroup
 		for _, n := range nodes {
-			if off, err := mesh.MeasureOffset(client, n.BaseURL(), 8); err == nil {
-				p.offsets.Set(n.ID, off)
-			}
+			wg.Add(1)
+			go func(n config.TargetRef) {
+				defer wg.Done()
+				if off, err := mesh.MeasureOffset(p.httpClient, n.BaseURL(), 8); err == nil {
+					p.offsets.Set(n.ID, off)
+				}
+			}(n)
 		}
+		wg.Wait()
 	}
 	measure() // once at startup
 	for {
@@ -180,14 +225,24 @@ func (p *Program) probeLoop(ctx context.Context, src string, peers []config.Targ
 func (p *Program) pullLoop(ctx context.Context, nodes []config.TargetRef) {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
+	pullAll := func() {
+		// Fan out so one slow/dead agent can't delay pulls from the others.
+		var wg sync.WaitGroup
+		for _, n := range nodes {
+			wg.Add(1)
+			go func(n config.TargetRef) {
+				defer wg.Done()
+				_, _ = p.puller.PullOnce(mesh.AgentRef{ID: n.ID, BaseURL: n.BaseURL()})
+			}(n)
+		}
+		wg.Wait()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			for _, n := range nodes {
-				_, _ = p.puller.PullOnce(mesh.AgentRef{ID: n.ID, BaseURL: n.BaseURL()})
-			}
+			pullAll()
 		}
 	}
 }
@@ -202,6 +257,7 @@ func (p *Program) Stop(s service.Service) error {
 		defer cancel()
 		_ = p.srv.Shutdown(ctx)
 	}
+	p.wg.Wait() // join probe/pull/offset loops so no goroutine is mid-write at Close
 	if p.store != nil {
 		_ = p.store.Close()
 	}
