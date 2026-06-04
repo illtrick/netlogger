@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>NetLogger</title>
+<style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;padding:2rem}
+.k{color:#677483}.v{font-family:monospace}</style></head>
+<body>
+  <h1>NetLogger <span class="v" id="ver"></span></h1>
+  <p><span class="k">host:</span> <span class="v" id="host"></span></p>
+  <p><span class="k">service:</span> <span class="v" id="svc"></span></p>
+<script>
+fetch('/api/status').then(r=>r.json()).then(s=>{
+  document.getElementById('ver').textContent=s.version;
+  document.getElementById('host').textContent=s.host;
+  document.getElementById('svc').textContent=s.service_state;
+});
+</script>
+</body>
+</html>
