@@ -71,3 +71,42 @@ func TestScoreCleanPathIsGoodAndUntestedIsUntested(t *testing.T) {
 		t.Fatalf("lonely node should be untested, got %q", h)
 	}
 }
+
+// star: four endpoints (e1..e4) all hang off a single hub switch, so all 6
+// endpoint pairs cross the hub.
+func starConfig() *config.Config {
+	c := &config.Config{Nodes: []config.Node{{ID: "hub", Type: config.NodeSwitch, Label: "Hub"}}}
+	for _, id := range []string{"e1", "e2", "e3", "e4"} {
+		c.Nodes = append(c.Nodes, config.Node{ID: id, Type: config.NodeEndpoint, Label: id, Address: "127.0.0.1:1"})
+		c.Links = append(c.Links, []string{id, "hub"})
+	}
+	return c
+}
+
+func TestScoreFairAndCoverageTiers(t *testing.T) {
+	cfg := starConfig()
+	pairs := []string{
+		key("e1", "e2"), key("e1", "e3"), key("e1", "e4"),
+		key("e2", "e3"), key("e2", "e4"), key("e3", "e4"),
+	}
+	tested := map[string]bool{}
+	for _, p := range pairs {
+		tested[p] = true
+	}
+	failing := map[string]bool{key("e1", "e2"): true, key("e1", "e3"): true}
+
+	cs := Score(cfg, tested, failing)
+
+	hub := find(cs, "hub")
+	if hub.Health != "fair" { // 2 of 6 crossing paths fail -> mixed -> fair
+		t.Fatalf("hub should be fair, got %q (%+v)", hub.Health, hub)
+	}
+	if hub.Coverage != "thorough" { // 6 tested paths cross it
+		t.Fatalf("hub coverage should be thorough, got %q", hub.Coverage)
+	}
+	// e4 is on 3 tested paths, none failing -> good / partial.
+	e4 := find(cs, "e4")
+	if e4.Health != "good" || e4.Coverage != "partial" {
+		t.Fatalf("e4 should be good/partial, got %s/%s", e4.Health, e4.Coverage)
+	}
+}

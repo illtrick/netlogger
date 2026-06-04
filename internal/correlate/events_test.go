@@ -31,6 +31,21 @@ func TestDetectEventsMergesConsecutiveLosses(t *testing.T) {
 	}
 }
 
+func TestDetectEventsAllLostIsOneEventToEnd(t *testing.T) {
+	samples := []store.Sample{
+		sample(1, 100, "ryzen", true),
+		sample(2, 200, "ryzen", true),
+		sample(3, 300, "ryzen", true),
+	}
+	ev := DetectEvents("ncase", samples)
+	if len(ev) != 1 {
+		t.Fatalf("an all-lost series is one open-ended event, got %d", len(ev))
+	}
+	if ev[0].StartUS != 100 || ev[0].EndUS != 300 || ev[0].DurationUS != 200 {
+		t.Fatalf("all-lost event bounds wrong: %+v", ev[0])
+	}
+}
+
 func TestDetectEventsSeparatesPathsByDst(t *testing.T) {
 	samples := []store.Sample{
 		sample(1, 100, "ryzen", true),

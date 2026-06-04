@@ -90,6 +90,65 @@ func TestPullIsIdempotentAcrossRepeatsAndOverlap(t *testing.T) {
 	}
 }
 
+func TestPullResumesAfterCoordinatorRestart(t *testing.T) {
+	// A live agent we can keep writing to.
+	agentStore, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("open agent: %v", err)
+	}
+	t.Cleanup(func() { agentStore.Close() })
+	ins := func(ts int64) {
+		if _, err := agentStore.Insert(store.Sample{TSUnixUS: ts, ProbeType: "icmp", SrcHost: "ncase", DstHost: "ryzen", RTTus: 700}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		ins(int64(i))
+	}
+	api := &AgentAPI{Store: agentStore, NodeID: "ncase", Host: "ncase"}
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ref := AgentRef{ID: "ncase", BaseURL: srv.URL}
+
+	aggPath := filepath.Join(t.TempDir(), "agg.db")
+
+	// Coordinator #1 pulls the first 3, advancing the durable cursor, then exits.
+	agg1, err := store.Open(aggPath)
+	if err != nil {
+		t.Fatalf("open agg1: %v", err)
+	}
+	if got, _ := NewPuller(agg1).PullOnce(ref); got != 3 {
+		t.Fatalf("first pull want 3, got %d", got)
+	}
+	agg1.Close() // coordinator shuts down
+
+	// Agent keeps recording while the coordinator is down.
+	ins(100)
+	ins(101)
+
+	// Coordinator #2: fresh puller on the SAME agg DB (cursor read back from disk).
+	agg2, err := store.Open(aggPath)
+	if err != nil {
+		t.Fatalf("open agg2: %v", err)
+	}
+	t.Cleanup(func() { agg2.Close() })
+	p2 := NewPuller(agg2)
+	if got, _ := p2.PullOnce(ref); got != 2 {
+		t.Fatalf("resume should fetch only the 2 new rows, got %d", got)
+	}
+	if total, _ := agg2.CountAgentSamples("ncase"); total != 5 {
+		t.Fatalf("want 5 total rows after resume, got %d (no dups)", total)
+	}
+	if c, _ := agg2.Cursor("ncase"); c != 5 {
+		t.Fatalf("cursor should be 5, got %d", c)
+	}
+	if got, _ := p2.PullOnce(ref); got != 0 {
+		t.Fatalf("a follow-up pull should fetch 0, got %d", got)
+	}
+}
+
 func TestPullRecordsConnectivityTransitions(t *testing.T) {
 	srv := liveAgent(t, 2)
 	agg := newAgg(t)

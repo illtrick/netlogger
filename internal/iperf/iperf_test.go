@@ -29,6 +29,26 @@ func TestParseTCP(t *testing.T) {
 	}
 }
 
+func TestParseUDP(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "udp.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	res, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.UDPLostPercent != 11.6 || res.UDPJitterMs != 14.2 {
+		t.Fatalf("UDP summary wrong: lost=%v jitter=%v", res.UDPLostPercent, res.UDPJitterMs)
+	}
+	if len(res.Intervals) != 2 {
+		t.Fatalf("want 2 intervals, got %d", len(res.Intervals))
+	}
+	if res.Intervals[1].LostPercent != 11.6 || res.Intervals[1].JitterMs != 14.2 {
+		t.Fatalf("per-interval UDP fields wrong: %+v", res.Intervals[1])
+	}
+}
+
 func TestParseErrorField(t *testing.T) {
 	_, err := Parse([]byte(`{"error":"unable to connect to server"}`))
 	if err == nil {

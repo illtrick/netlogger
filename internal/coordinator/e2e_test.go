@@ -11,6 +11,7 @@ import (
 	"netlogger/internal/config"
 	"netlogger/internal/mesh"
 	"netlogger/internal/readiness"
+	"netlogger/internal/score"
 	"netlogger/internal/store"
 )
 
@@ -69,5 +70,57 @@ func TestEndToEndReadinessAndAgents(t *testing.T) {
 	}
 	if n, _ := agg.CountAgentSamples("ncase"); n != 3 {
 		t.Fatalf("want 3 aggregated rows, got %d", n)
+	}
+}
+
+// End-to-end across the seam: an agent emits a LOSS sample, the coordinator
+// pulls it, and ComponentsHandler surfaces the shared switch as degraded.
+func TestEndToEndPullThenComponents(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	_, _ = s.Insert(store.Sample{TSUnixUS: 1, ProbeType: "icmp", SrcHost: "ncase", DstHost: "ryzen", Lost: true})
+	_, _ = s.Insert(store.Sample{TSUnixUS: 2, ProbeType: "icmp", SrcHost: "ncase", DstHost: "ryzen", Lost: true})
+
+	api := &mesh.AgentAPI{Store: s, NodeID: "ncase", Host: "ncase"}
+	amux := http.NewServeMux()
+	api.Register(amux)
+	agent := httptest.NewServer(amux)
+	t.Cleanup(agent.Close)
+
+	cfg := &config.Config{
+		Nodes: []config.Node{
+			{ID: "ncase", Type: config.NodeEndpoint, Address: "127.0.0.1:1"},
+			{ID: "switch1", Type: config.NodeSwitch},
+			{ID: "ryzen", Type: config.NodeEndpoint, Address: "127.0.0.1:2"},
+		},
+		Links: [][]string{{"ncase", "switch1"}, {"switch1", "ryzen"}},
+	}
+
+	agg, err := store.Open(filepath.Join(t.TempDir(), "agg.db"))
+	if err != nil {
+		t.Fatalf("open agg: %v", err)
+	}
+	t.Cleanup(func() { agg.Close() })
+	if _, err := mesh.NewPuller(agg).PullOnce(mesh.AgentRef{ID: "ncase", BaseURL: agent.URL}); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	ComponentsHandler(agg, cfg)(rr, httptest.NewRequest(http.MethodGet, "/api/components", nil))
+	var comps []score.Component
+	if err := json.Unmarshal(rr.Body.Bytes(), &comps); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var sw score.Component
+	for _, c := range comps {
+		if c.ID == "switch1" {
+			sw = c
+		}
+	}
+	if sw.Health != "poor" {
+		t.Fatalf("switch1 should be poor after pulling the loss: %q (%+v)", sw.Health, comps)
 	}
 }

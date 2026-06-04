@@ -73,6 +73,18 @@ func TestCorrelateSameAgentChainNotSimultaneous(t *testing.T) {
 	}
 }
 
+func TestCorrelateTouchingIntervalsOverlap(t *testing.T) {
+	// One agent's Hi exactly equals the other's Lo: touching counts as overlap.
+	events := []Event{
+		{AgentID: "ncase", StartUS: 1000, EndUS: 1100},
+		{AgentID: "nas", StartUS: 1100, EndUS: 1200},
+	}
+	groups := Correlate(events, zeroOffset)
+	if len(groups) != 1 || !groups[0].Simultaneous {
+		t.Fatalf("touching intervals from 2 agents should be one simultaneous group: %+v", groups)
+	}
+}
+
 func TestCorrelateEmptyReturnsNonNilSlice(t *testing.T) {
 	groups := Correlate(nil, noOffset)
 	if groups == nil {
