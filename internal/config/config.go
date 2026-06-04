@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -64,6 +65,9 @@ func (c *Config) Validate() error {
 	for _, n := range c.Nodes {
 		if n.ID == "" {
 			return fmt.Errorf("node with empty id")
+		}
+		if strings.Contains(n.ID, "|") {
+			return fmt.Errorf("node id %q must not contain '|' (reserved as a key separator)", n.ID)
 		}
 		if ids[n.ID] {
 			return fmt.Errorf("duplicate node id %q", n.ID)

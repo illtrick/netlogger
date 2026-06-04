@@ -80,3 +80,27 @@ func TestAgentSamplesAll(t *testing.T) {
 		t.Fatalf("row 2 should be the lost one: %+v", rows[1])
 	}
 }
+
+func TestConnectivityEvents(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "conn.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	if err := s.InsertConnectivityEvent(1000, "nas", false, "timeout"); err != nil {
+		t.Fatalf("insert offline: %v", err)
+	}
+	if err := s.InsertConnectivityEvent(2000, "nas", true, ""); err != nil {
+		t.Fatalf("insert online: %v", err)
+	}
+	evs, err := s.ConnectivityEvents("nas")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(evs) != 2 || evs[0].Online || !evs[1].Online {
+		t.Fatalf("connectivity events wrong: %+v", evs)
+	}
+	if evs[0].Detail != "timeout" {
+		t.Fatalf("offline detail lost: %+v", evs[0])
+	}
+}

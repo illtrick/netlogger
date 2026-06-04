@@ -48,3 +48,10 @@ func TestAddressedNodesIncludesAllWithAddress(t *testing.T) {
 		t.Fatalf("want 2 addressed nodes, got %d (%+v)", len(got), got)
 	}
 }
+
+func TestValidateRejectsPipeInNodeID(t *testing.T) {
+	c := &Config{Nodes: []Node{{ID: "a|b", Type: NodeEndpoint}}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("a node id containing '|' must be rejected (it would collide score keys)")
+	}
+}

@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS sync_cursors (
   agent_id TEXT PRIMARY KEY,
   last_seq INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS connectivity_events (
+  ts_unix_us INTEGER NOT NULL,
+  agent_id   TEXT NOT NULL,
+  online     INTEGER NOT NULL,
+  detail     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_conn_agent_ts ON connectivity_events(agent_id, ts_unix_us);
 `
 
 var pragmas = []string{
@@ -197,6 +204,51 @@ func (s *Store) SetCursor(agentID string, seq int64) error {
 		return fmt.Errorf("set cursor: %w", err)
 	}
 	return nil
+}
+
+// ConnEvent is a coordinator-observed agent connectivity transition.
+type ConnEvent struct {
+	TSUnixUS int64  `json:"ts_unix_us"`
+	AgentID  string `json:"agent_id"`
+	Online   bool   `json:"online"`
+	Detail   string `json:"detail"`
+}
+
+// InsertConnectivityEvent records an online/offline transition for agentID.
+func (s *Store) InsertConnectivityEvent(tsUnixUS int64, agentID string, online bool, detail string) error {
+	o := 0
+	if online {
+		o = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO connectivity_events (ts_unix_us,agent_id,online,detail) VALUES (?,?,?,?)`,
+		tsUnixUS, agentID, o, detail)
+	if err != nil {
+		return fmt.Errorf("insert connectivity event: %w", err)
+	}
+	return nil
+}
+
+// ConnectivityEvents returns agentID's connectivity transitions, oldest first.
+func (s *Store) ConnectivityEvents(agentID string) ([]ConnEvent, error) {
+	rows, err := s.db.Query(
+		`SELECT ts_unix_us,agent_id,online,COALESCE(detail,'') FROM connectivity_events
+		 WHERE agent_id=? ORDER BY ts_unix_us`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("query connectivity events: %w", err)
+	}
+	defer rows.Close()
+	var out []ConnEvent
+	for rows.Next() {
+		var e ConnEvent
+		var on int
+		if err := rows.Scan(&e.TSUnixUS, &e.AgentID, &on, &e.Detail); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		e.Online = on == 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // CountAgentSamples returns the number of aggregated rows for agentID.
