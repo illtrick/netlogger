@@ -97,6 +97,42 @@ func TestHandleSettingsPostEmptyClearsOverride(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsPostListenValidates(t *testing.T) {
+	dir := t.TempDir()
+	p := &Program{
+		SettingsPath:   localsettings.Path(dir),
+		DBPath:         filepath.Join(dir, "netlogger.db"),
+		DefaultDataDir: dir,
+		Listen:         "0.0.0.0:8088",
+		Interactive:    true,
+	}
+	// Bad address is rejected and nothing is persisted.
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{"listen":"not-an-address"}`))
+	rec := httptest.NewRecorder()
+	p.handleSettings(rec, req)
+	var bad map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &bad)
+	if bad["ok"] != false {
+		t.Fatalf("expected rejection of bad address, got %v", bad)
+	}
+
+	// Valid address persists.
+	req = httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{"listen":"0.0.0.0:8088"}`))
+	rec = httptest.NewRecorder()
+	p.handleSettings(rec, req)
+	ls, err := localsettings.Load(p.SettingsPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if ls.Listen != "0.0.0.0:8088" {
+		t.Fatalf("persisted Listen = %q, want 0.0.0.0:8088", ls.Listen)
+	}
+	// db_dir was not in the body, so it must remain unset.
+	if ls.DBDir != "" {
+		t.Fatalf("DBDir should be untouched, got %q", ls.DBDir)
+	}
+}
+
 // jsonStr produces a JSON-quoted string literal so path separators (backslashes
 // on Windows) are escaped correctly in the request body.
 func jsonStr(s string) string {

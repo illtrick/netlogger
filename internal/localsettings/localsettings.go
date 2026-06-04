@@ -18,6 +18,10 @@ type Settings struct {
 	// DBDir overrides the directory that holds this node's SQLite database.
 	// Empty means "use the default data dir".
 	DBDir string `json:"db_dir,omitempty"`
+	// Listen overrides the control server bind address (host:port). Empty means
+	// "use the default". Set to 0.0.0.0:8088 to make this node reachable by
+	// peers; 127.0.0.1:8088 keeps it loopback-only.
+	Listen string `json:"listen,omitempty"`
 }
 
 // Path returns the settings file location under the fixed data dir. The settings
@@ -66,4 +70,17 @@ func ResolveDBPath(defaultDir, dbName string, s *Settings) string {
 		dir = s.DBDir
 	}
 	return filepath.Join(dir, dbName)
+}
+
+// ResolveListen returns the control server bind address. An explicit flag value
+// wins; otherwise a saved Listen override; otherwise the default. This lets the
+// GUI set the bind address (persisted in settings) without a command-line flag.
+func ResolveListen(flagVal, defaultVal string, s *Settings) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if s != nil && s.Listen != "" {
+		return s.Listen
+	}
+	return defaultVal
 }

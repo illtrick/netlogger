@@ -14,7 +14,7 @@ A cross-platform LAN diagnostic tool (Go) that deploys agents to each machine, r
 ## Architecture (one Go binary per host)
 Every node runs the agent; one is `role: coordinator` (serves the GUI + aggregates). Control plane = star (coordinator pulls), data plane = peer-to-peer probes.
 - `internal/config` — network YAML (nodes + links); Load/Save/WriteStarter/ToYAML; Resolve(node)→self+peers. Shared with peers.
-- `internal/localsettings` — per-machine `settings.json` (db dir override); Load/Save/Path/ResolveDBPath. Machine-local, **never** shared with peers.
+- `internal/localsettings` — per-machine `settings.json` (db dir + bind-address overrides); Load/Save/Path/ResolveDBPath/ResolveListen. Machine-local, **never** shared with peers.
 - `internal/store` — local WAL SQLite; per-agent samples, idempotent `Upsert` on `(agent_id,seq)`, sync cursors, connectivity_events.
 - `internal/probe` — ICMP (pro-bing, unprivileged on Win) + isochronous UDP; runner.
 - `internal/mesh` — agent sync API (`/api/info,/samples,/time`), coordinator `Puller` (cursor-based, idempotent, liveness), NTP-style offset handshake, `Offsets`, `AuthClient`.
@@ -27,9 +27,9 @@ Every node runs the agent; one is `role: coordinator` (serves the GUI + aggregat
 - `internal/launch` — browser-open + address normalize. `internal/agentsvc` — wires it all into a kardianos service. `cmd/netlogger` — CLI/flags.
 
 ## The app experience (no terminal)
-Double-click `netlogger.exe` → starter config + dashboard opens. GUI does: edit network (Configuration), set the local **Data storage** directory (Configuration → `/api/settings`; blank = default data dir, change applies on restart, fresh DB starts in the new location), Install/Start/Stop service (UAC), run load tests, **Deploy to another machine** (Agents → copy a one-paste elevated-PowerShell bootstrap that pulls `/download/agent` + `/download/config.yaml` and installs on the peer), Quit. Auto-refreshes 3s.
+Double-click `netlogger.exe` → starter config + dashboard opens. GUI does: edit network (Configuration), set the local **Network access** bind address and **Data storage** directory (Configuration → `/api/settings`; changes apply on restart), Install/Start/Stop service (UAC), run load tests, **Deploy to another machine** (Agents → copy a one-paste elevated-PowerShell bootstrap that pulls `/download/agent` + `/download/config.yaml` and installs on the peer), Quit (service-aware: offers to stop an installed service too). Auto-refreshes 3s. Layout reflows + scrolls on narrow/zoomed windows.
 
-DB location is resolved at startup from `localsettings` (honored by interactive, service, and self-restart launches). Default data dir: `%ProgramData%\NetLogger` (Windows) / `~/.netlogger` (else). `settings.json` always lives in the default dir even when it points the DB elsewhere.
+DB path and bind address are resolved at startup from `localsettings` (honored by interactive, service, and self-restart launches). **Default bind is `0.0.0.0:8088`** so peers can reach a node out of the box (the loopback auth bypass keeps the local dashboard usable without a token); set `127.0.0.1:8088` in the GUI to make a node private. `--listen` flag overrides the saved setting. Default data dir: `%ProgramData%\NetLogger` (Windows) / `~/.netlogger` (else); `settings.json` always lives there even when it points the DB elsewhere.
 
 ## Design docs
 - Spec: `docs/superpowers/specs/2026-06-04-netlogger-design.md` (the authoritative design; §-numbered).

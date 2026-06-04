@@ -26,7 +26,7 @@ func dataDir() string {
 func main() {
 	cfgPath := flag.String("config", filepath.Join(dataDir(), "network.yaml"), "path to network config file")
 	nodeID := flag.String("node", "", "this machine's node id in the config (defaults to hostname)")
-	listen := flag.String("listen", "127.0.0.1:8088", "control server host:port")
+	listen := flag.String("listen", "", "control server host:port (overrides the saved setting; default 0.0.0.0:8088)")
 	dbName := flag.String("db", "netlogger.db", "sqlite db filename under the data dir")
 	flag.Parse()
 
@@ -56,20 +56,25 @@ func main() {
 	dbPath := localsettings.ResolveDBPath(dir, *dbName, ls)
 	_ = os.MkdirAll(filepath.Dir(dbPath), 0o755)
 
+	// Bind address: explicit --listen flag wins; else the saved setting; else
+	// 0.0.0.0:8088 so peers can reach this node out of the box (the loopback
+	// auth bypass still keeps the local dashboard usable without a token).
+	listenAddr := localsettings.ResolveListen(*listen, "0.0.0.0:8088", ls)
+
 	prog := &agentsvc.Program{
 		ConfigPath:     *cfgPath,
 		NodeID:         node,
 		DBPath:         dbPath,
 		SettingsPath:   settingsPath,
 		DefaultDataDir: dir,
-		Listen:         *listen,
-		ServiceArgs:    []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
+		Listen:         listenAddr,
+		ServiceArgs:    []string{"--config", *cfgPath, "--node", node, "--listen", listenAddr, "--db", *dbName},
 	}
 	svcConfig := &service.Config{
 		Name:        "NetLogger",
 		DisplayName: "NetLogger Agent",
 		Description: "NetLogger network diagnostic agent.",
-		Arguments:   []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
+		Arguments:   []string{"--config", *cfgPath, "--node", node, "--listen", listenAddr, "--db", *dbName},
 	}
 	s, err := service.New(prog, svcConfig)
 	if err != nil {
@@ -100,7 +105,7 @@ func main() {
 	// we run headless without spawning a browser.
 	prog.Interactive = service.Interactive()
 	if prog.Interactive {
-		if err := config.WriteStarter(*cfgPath, node, launch.HostPort(*listen)); err != nil {
+		if err := config.WriteStarter(*cfgPath, node, launch.HostPort(listenAddr)); err != nil {
 			fmt.Fprintln(os.Stderr, "netlogger: could not create starter config:", err)
 		}
 		// Suppress the browser pop on a self-restart child (the operator's tab

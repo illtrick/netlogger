@@ -319,9 +319,10 @@ func (p *Program) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSettings serves machine-local preferences for the in-GUI editor. GET
-// reports where the database currently lives; POST sets a new db directory
-// (validated as writable) and persists it. The change applies on the next
-// restart, since the database is opened once at startup.
+// reports where the database currently lives and the current bind address; POST
+// sets a new db directory (validated writable) and/or bind address (validated
+// host:port), persisting only the fields present in the request body. Changes
+// apply on the next restart, since both are read once at startup.
 func (p *Program) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -331,29 +332,45 @@ func (p *Program) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"db_dir":      filepath.Dir(p.DBPath),
 			"default_dir": p.DefaultDataDir,
 			"configured":  ls.DBDir,
+			"listen":      p.Listen,
+			"listen_set":  ls.Listen,
 			"interactive": p.Interactive,
 		})
 	case http.MethodPost:
+		// Pointer fields so we only touch settings a form actually sent.
 		var body struct {
-			DBDir string `json:"db_dir"`
+			DBDir  *string `json:"db_dir"`
+			Listen *string `json:"listen"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "invalid json: " + err.Error()})
 			return
 		}
-		dir := strings.TrimSpace(body.DBDir)
-		if dir != "" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				writeJSON(w, map[string]any{"ok": false, "error": "cannot create directory: " + err.Error()})
-				return
-			}
-			if !sysinfo.DataDirWritable(dir) {
-				writeJSON(w, map[string]any{"ok": false, "error": "directory is not writable: " + dir})
-				return
-			}
-		}
 		ls, _ := localsettings.Load(p.SettingsPath)
-		ls.DBDir = dir
+		if body.DBDir != nil {
+			dir := strings.TrimSpace(*body.DBDir)
+			if dir != "" {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					writeJSON(w, map[string]any{"ok": false, "error": "cannot create directory: " + err.Error()})
+					return
+				}
+				if !sysinfo.DataDirWritable(dir) {
+					writeJSON(w, map[string]any{"ok": false, "error": "directory is not writable: " + dir})
+					return
+				}
+			}
+			ls.DBDir = dir
+		}
+		if body.Listen != nil {
+			addr := strings.TrimSpace(*body.Listen)
+			if addr != "" {
+				if _, _, err := net.SplitHostPort(addr); err != nil {
+					writeJSON(w, map[string]any{"ok": false, "error": "bind address must be host:port (e.g. 0.0.0.0:8088)"})
+					return
+				}
+			}
+			ls.Listen = addr
+		}
 		if err := localsettings.Save(p.SettingsPath, ls); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 			return
