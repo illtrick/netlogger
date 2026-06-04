@@ -6,15 +6,19 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/kardianos/service"
 
 	"netlogger/internal/clock"
 	"netlogger/internal/config"
+	"netlogger/internal/coordinator"
 	"netlogger/internal/mesh"
 	"netlogger/internal/probe"
+	"netlogger/internal/readiness"
 	"netlogger/internal/store"
+	"netlogger/internal/sysinfo"
 	"netlogger/internal/web"
 )
 
@@ -49,8 +53,21 @@ func (p *Program) Start(s service.Service) error {
 	p.store = st
 
 	host, _ := os.Hostname()
-	api := &mesh.AgentAPI{Store: st, NodeID: self.ID, Host: host}
+	dataDir := filepath.Dir(p.DBPath)
+	api := &mesh.AgentAPI{
+		Store:         st,
+		NodeID:        self.ID,
+		Host:          host,
+		Iperf3Version: sysinfo.Iperf3Version(),
+		DataWritable:  sysinfo.DataDirWritable(dataDir),
+	}
 	ws := &web.Server{Host: host, ServiceState: "running"}
+
+	if self.Role == "coordinator" {
+		p.puller = mesh.NewPuller(st)
+		ws.AgentsHandler = coordinator.AgentsHandler(p.puller, cfg.AddressedNodes())
+		ws.ReadinessHandler = coordinator.ReadinessHandler(readiness.NewChecker(), endpointNodes(cfg))
+	}
 
 	root := http.NewServeMux()
 	api.Register(root) // /api/info, /api/samples
@@ -62,12 +79,21 @@ func (p *Program) Start(s service.Service) error {
 
 	go p.srv.ListenAndServe()
 	go p.probeLoop(ctx, self.ID, peers)
-
 	if self.Role == "coordinator" {
-		p.puller = mesh.NewPuller(st)
 		go p.pullLoop(ctx, cfg.AddressedNodes())
 	}
 	return nil
+}
+
+// endpointNodes returns the config nodes that have a control address.
+func endpointNodes(cfg *config.Config) []config.Node {
+	var out []config.Node
+	for _, n := range cfg.Nodes {
+		if n.Address != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (p *Program) probeLoop(ctx context.Context, src string, peers []config.TargetRef) {
