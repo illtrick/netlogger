@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -90,4 +91,50 @@ func (c *Config) Node(id string) (Node, bool) {
 		}
 	}
 	return Node{}, false
+}
+
+// TargetRef is a config node that has a control address — a probe target and a
+// node the coordinator can pull from.
+type TargetRef struct {
+	ID      string
+	Address string // control endpoint host:port, e.g. "127.0.0.1:8088"
+}
+
+// BaseURL is the coordinator-facing HTTP base for this target.
+func (t TargetRef) BaseURL() string { return "http://" + t.Address }
+
+// ProbeHost is the host portion of the address (what ICMP/UDP probes target).
+func (t TargetRef) ProbeHost() string {
+	host, _, err := net.SplitHostPort(t.Address)
+	if err != nil {
+		return t.Address
+	}
+	return host
+}
+
+// AddressedNodes returns every node that has a control address (probe + pull set).
+func (c *Config) AddressedNodes() []TargetRef {
+	var out []TargetRef
+	for _, n := range c.Nodes {
+		if n.Address != "" {
+			out = append(out, TargetRef{ID: n.ID, Address: n.Address})
+		}
+	}
+	return out
+}
+
+// Resolve returns the node with id nodeID and the list of its peers to probe
+// (all addressed nodes except itself).
+func (c *Config) Resolve(nodeID string) (Node, []TargetRef, error) {
+	self, ok := c.Node(nodeID)
+	if !ok {
+		return Node{}, nil, fmt.Errorf("node %q not found in config", nodeID)
+	}
+	var peers []TargetRef
+	for _, t := range c.AddressedNodes() {
+		if t.ID != self.ID {
+			peers = append(peers, t)
+		}
+	}
+	return self, peers, nil
 }
