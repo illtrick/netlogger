@@ -104,6 +104,17 @@
       </section>
       <section class="view" id="config">
         <h1>Configuration</h1>
+        <div class="card" id="serviceCard">
+          <h2>Run as a background service <span class="dim" style="font-weight:400" id="svcState"></span></h2>
+          <p class="dim" style="font-size:11.5px;margin-bottom:10px">Installs NetLogger so it starts automatically and survives reboots. Each action shows a Windows permission (UAC) prompt.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn sm" onclick="svcAction('install')">Install</button>
+            <button class="btn sm" onclick="svcAction('start')">Start</button>
+            <button class="btn ghost sm" onclick="svcAction('stop')">Stop</button>
+            <button class="btn danger" onclick="svcAction('uninstall')">Uninstall</button>
+            <span id="svcMsg" class="dim"></span>
+          </div>
+        </div>
         <div id="readiness"></div>
         <div class="card">
           <h2>Edit network <span class="dim" style="font-weight:400">— changes apply after a restart</span></h2>
@@ -264,6 +275,20 @@ function renderMap(){
     area.appendChild(d);});
 }
 
+// ---- service control ----
+async function loadService(){
+  const s=await getJSON('/api/service');const st=$('#svcState'),card=$('#serviceCard');
+  if(!s||!s.supported){card.style.display='none';return;}
+  card.style.display='';st.textContent='· '+(s.state||'');
+}
+async function svcAction(action){
+  const msg=$('#svcMsg');msg.textContent='requesting permission…';msg.className='dim';
+  const r=await fetch('/api/service',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+  const j=await r.json();
+  msg.textContent=j.ok?('✓ '+(j.note||'done')):('✗ '+(j.error||'failed'));msg.className=j.ok?'ok':'bad';
+  setTimeout(loadService,3000);
+}
+
 // ---- config editor ----
 const NODE_TYPES=['endpoint','switch','router','modem','passive','cloud'];
 let editorLoaded=false;
@@ -310,7 +335,7 @@ document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
   document.querySelectorAll('.nav a').forEach(x=>x.classList.toggle('active',x===a));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===a.dataset.v));
   if(a.dataset.v==='map')renderMap();
-  if(a.dataset.v==='config'&&!editorLoaded)loadEditor();
+  if(a.dataset.v==='config'){loadService();if(!editorLoaded)loadEditor();}
 });
 refresh();setInterval(refresh,3000);
 </script>

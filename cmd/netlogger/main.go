@@ -44,10 +44,11 @@ func main() {
 	_ = os.MkdirAll(dir, 0o755)
 
 	prog := &agentsvc.Program{
-		ConfigPath: *cfgPath,
-		NodeID:     node,
-		DBPath:     filepath.Join(dir, *dbName),
-		Listen:     *listen,
+		ConfigPath:  *cfgPath,
+		NodeID:      node,
+		DBPath:      filepath.Join(dir, *dbName),
+		Listen:      *listen,
+		ServiceArgs: []string{"--config", *cfgPath, "--node", node, "--listen", *listen, "--db", *dbName},
 	}
 	svcConfig := &service.Config{
 		Name:        "NetLogger",

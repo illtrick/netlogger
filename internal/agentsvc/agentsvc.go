@@ -25,6 +25,7 @@ import (
 	"netlogger/internal/probe"
 	"netlogger/internal/readiness"
 	"netlogger/internal/store"
+	"netlogger/internal/svcctl"
 	"netlogger/internal/sysinfo"
 	"netlogger/internal/web"
 )
@@ -35,8 +36,9 @@ type Program struct {
 	NodeID      string
 	DBPath      string
 	Listen      string // host:port for this node's control server
-	OpenBrowser bool   // open the dashboard in a browser after start (interactive launch)
-	Interactive bool   // true for a foreground/double-click launch (enables self-restart)
+	OpenBrowser bool     // open the dashboard in a browser after start (interactive launch)
+	Interactive bool     // true for a foreground/double-click launch (enables self-restart)
+	ServiceArgs []string // flags to pass to elevated service-control commands
 
 	store      *store.Store
 	srv        *http.Server
@@ -89,6 +91,7 @@ func (p *Program) Start(s service.Service) error {
 	ws := &web.Server{Host: host, ServiceState: "running"}
 	ws.ConfigHandler = p.handleConfig   // GET/POST the network config (any node)
 	ws.RestartHandler = p.handleRestart // apply config changes
+	ws.ServiceHandler = p.handleService // install/start/stop/uninstall (elevated)
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
@@ -302,6 +305,40 @@ func (p *Program) handleConfig(w http.ResponseWriter, r *http.Request) {
 		p.cfg = &c
 		p.cfgMu.Unlock()
 		writeJSON(w, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleService reports the service state (GET) and runs an elevated
+// install/start/stop/uninstall via a UAC prompt (POST {action}).
+func (p *Program) handleService(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]any{
+			"supported": svcctl.Supported(),
+			"state":     svcctl.Status(),
+		})
+	case http.MethodPost:
+		var body struct {
+			Action string `json:"action"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !svcctl.ValidAction(body.Action) {
+			writeJSON(w, map[string]any{"ok": false, "error": "invalid action"})
+			return
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		args := append(append([]string{}, p.ServiceArgs...), body.Action)
+		if err := svcctl.RunElevated(exe, args); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "note": "approve the UAC prompt to " + body.Action + " the service"})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
