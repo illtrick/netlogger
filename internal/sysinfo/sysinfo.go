@@ -38,3 +38,9 @@ func DataDirWritable(dir string) bool {
 	_ = os.Remove(filepath.Clean(name))
 	return true
 }
+
+// readFile reads a whole file as a string (small system files only).
+func readFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	return string(b), err
+}
