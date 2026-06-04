@@ -35,6 +35,16 @@ func TestCorrelateIndependentWhenDisjoint(t *testing.T) {
 	}
 }
 
+func TestCorrelateEmptyReturnsNonNilSlice(t *testing.T) {
+	groups := Correlate(nil, noOffset)
+	if groups == nil {
+		t.Fatal("Correlate(nil) must return a non-nil (empty) slice so JSON is [] not null")
+	}
+	if len(groups) != 0 {
+		t.Fatalf("want 0 groups, got %d", len(groups))
+	}
+}
+
 func TestCorrelateOffsetAlignsClocks(t *testing.T) {
 	// nas clock is +2000us ahead; after correction the events line up.
 	off := func(id string) (int64, int64) {

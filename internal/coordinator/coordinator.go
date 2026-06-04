@@ -7,8 +7,11 @@ import (
 	"net/http"
 
 	"netlogger/internal/config"
+	"netlogger/internal/correlate"
 	"netlogger/internal/mesh"
 	"netlogger/internal/readiness"
+	"netlogger/internal/score"
+	"netlogger/internal/store"
 )
 
 // AgentView is the per-agent liveness row for /api/agents.
@@ -50,5 +53,54 @@ func ReadinessHandler(c *readiness.Checker, nodes []config.Node) http.HandlerFun
 			out = append(out, c.Check(n))
 		}
 		writeJSON(w, out)
+	}
+}
+
+// CorrelationHandler detects events across all aggregated agents and correlates
+// them, returning the groups as JSON.
+func CorrelationHandler(agg *store.Store, agentIDs []string, offsets *mesh.Offsets) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var events []correlate.Event
+		for _, id := range agentIDs {
+			rows, err := agg.AgentSamplesAll(id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			events = append(events, correlate.DetectEvents(id, rows)...)
+		}
+		groups := correlate.Correlate(events, func(id string) (int64, int64) {
+			if off, ok := offsets.Get(id); ok && off.Reliable {
+				return off.OffsetUS, off.HalfUncUS()
+			}
+			return 0, 1000 // unknown clock: 1ms floor
+		})
+		writeJSON(w, groups)
+	}
+}
+
+// ComponentsHandler scores every component from the aggregated samples: a
+// host-pair is "tested" if it has any sample and "failing" if it has any event.
+func ComponentsHandler(agg *store.Store, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tested := map[string]bool{}
+		failing := map[string]bool{}
+		for _, n := range cfg.Nodes {
+			if n.Address == "" {
+				continue
+			}
+			rows, err := agg.AgentSamplesAll(n.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for _, s := range rows {
+				tested[score.Key(s.SrcHost, s.DstHost)] = true
+			}
+			for _, e := range correlate.DetectEvents(n.ID, rows) {
+				failing[score.Key(e.Src, e.Dst)] = true
+			}
+		}
+		writeJSON(w, score.Score(cfg, tested, failing))
 	}
 }

@@ -24,8 +24,10 @@ type Status struct {
 type Server struct {
 	Host             string
 	ServiceState     string
-	AgentsHandler    http.HandlerFunc // optional; nil -> empty array
-	ReadinessHandler http.HandlerFunc // optional; nil -> empty array
+	AgentsHandler      http.HandlerFunc // optional; nil -> empty array
+	ReadinessHandler   http.HandlerFunc // optional; nil -> empty array
+	CorrelationHandler http.HandlerFunc // optional; nil -> empty array
+	ComponentsHandler  http.HandlerFunc // optional; nil -> empty array
 }
 
 // Handler returns the HTTP handler (status API, agents/readiness, static files).
@@ -41,6 +43,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/api/agents", orEmptyArray(s.AgentsHandler))
 	mux.HandleFunc("/api/readiness", orEmptyArray(s.ReadinessHandler))
+	mux.HandleFunc("/api/correlation", orEmptyArray(s.CorrelationHandler))
+	mux.HandleFunc("/api/components", orEmptyArray(s.ComponentsHandler))
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)

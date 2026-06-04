@@ -31,7 +31,7 @@ func Correlate(events []Event, off OffsetFunc) []Group {
 	}
 	sort.Slice(corr, func(i, j int) bool { return corr[i].LoUS < corr[j].LoUS })
 
-	var groups []Group
+	groups := []Group{}
 	for _, c := range corr {
 		if n := len(groups); n > 0 && c.LoUS <= groupHi(groups[n-1]) {
 			groups[n-1].Events = append(groups[n-1].Events, c)

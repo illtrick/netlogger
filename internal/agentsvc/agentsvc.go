@@ -29,10 +29,11 @@ type Program struct {
 	DBPath     string
 	Listen     string // host:port for this node's control server
 
-	store  *store.Store
-	srv    *http.Server
-	puller *mesh.Puller
-	cancel context.CancelFunc
+	store   *store.Store
+	srv     *http.Server
+	puller  *mesh.Puller
+	offsets *mesh.Offsets
+	cancel  context.CancelFunc
 }
 
 // Start is called by the service manager; it must not block.
@@ -65,8 +66,12 @@ func (p *Program) Start(s service.Service) error {
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
+		p.offsets = mesh.NewOffsets()
+		ids := agentIDs(cfg)
 		ws.AgentsHandler = coordinator.AgentsHandler(p.puller, cfg.AddressedNodes())
 		ws.ReadinessHandler = coordinator.ReadinessHandler(readiness.NewChecker(), endpointNodes(cfg))
+		ws.CorrelationHandler = coordinator.CorrelationHandler(st, ids, p.offsets)
+		ws.ComponentsHandler = coordinator.ComponentsHandler(st, cfg)
 	}
 
 	root := http.NewServeMux()
@@ -81,6 +86,7 @@ func (p *Program) Start(s service.Service) error {
 	go p.probeLoop(ctx, self.ID, peers)
 	if self.Role == "coordinator" {
 		go p.pullLoop(ctx, cfg.AddressedNodes())
+		go p.offsetLoop(ctx, cfg.AddressedNodes())
 	}
 	return nil
 }
@@ -96,20 +102,58 @@ func endpointNodes(cfg *config.Config) []config.Node {
 	return out
 }
 
+func agentIDs(cfg *config.Config) []string {
+	var ids []string
+	for _, t := range cfg.AddressedNodes() {
+		ids = append(ids, t.ID)
+	}
+	return ids
+}
+
+func (p *Program) offsetLoop(ctx context.Context, nodes []config.TargetRef) {
+	client := &http.Client{Timeout: 4 * time.Second}
+	tick := time.NewTicker(60 * time.Second)
+	defer tick.Stop()
+	measure := func() {
+		for _, n := range nodes {
+			if off, err := mesh.MeasureOffset(client, n.BaseURL(), 8); err == nil {
+				p.offsets.Set(n.ID, off)
+			}
+		}
+	}
+	measure() // once at startup
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			measure()
+		}
+	}
+}
+
 func (p *Program) probeLoop(ctx context.Context, src string, peers []config.TargetRef) {
+	hostByID := make(map[string]string, len(peers))
 	targets := make([]string, 0, len(peers))
 	for _, t := range peers {
-		targets = append(targets, t.ProbeHost())
+		hostByID[t.ID] = t.ProbeHost()
+		targets = append(targets, t.ID)
 	}
 	if len(targets) == 0 {
-		targets = []string{"127.0.0.1"} // lone node: self-ping proof of life
+		hostByID["self"] = "127.0.0.1" // lone node: self-ping proof of life
+		targets = []string{"self"}
+	}
+	// Ping resolves a node id to its host and pings it; the sample is labeled
+	// with the node id (what scoring/correlation key off).
+	ping := func(nodeID string, timeout time.Duration) (probe.Result, error) {
+		return probe.PingICMP(hostByID[nodeID], timeout)
 	}
 	runner := &probe.Runner{
 		Store:   p.store,
 		Clock:   clock.System{},
 		Src:     src,
 		Targets: targets,
-		Ping:    probe.PingICMP,
+		Ping:    ping,
 		Timeout: 2 * time.Second,
 	}
 	tick := time.NewTicker(time.Second)
