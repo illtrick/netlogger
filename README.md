@@ -12,25 +12,39 @@ A cross-platform LAN diagnostic tool for isolating intermittent, load-triggered 
 - **Self-installing background service** — one Go binary per host (Windows Service / QNAP Docker / macOS LaunchDaemon).
 - **Topology as data** — the network map and device list come from a config file (`config.Load`), not hardcoded.
 
-## Build & run (Windows)
+## Run it as an app (no terminal)
+
+**Double-click `netlogger.exe`.** On first run it creates a starter config for
+this machine and opens the dashboard in your browser. From the GUI you can:
+
+- **Configuration → Edit network** — add machines, set roles/addresses, draw
+  links, and Save (no YAML editing). "Save & restart" applies changes.
+- **Configuration → Run as a background service** — Install / Start / Stop /
+  Uninstall the Windows Service via a UAC prompt.
+- **Tests** — run an iperf3 load test between any two nodes.
+- **⏻ Quit** (top bar) — stop the app.
+
+Everything auto-refreshes live. Data + the SQLite store live under
+`%ProgramData%\NetLogger\`.
+
+## Build
 
 Requires Go 1.22+.
 
 ```powershell
+# dev build (console)
 go build -o bin/netlogger.exe ./cmd/netlogger
 go test ./...
 
-# foreground (Ctrl+C to stop) — serves http://127.0.0.1:8088
-.\bin\netlogger.exe run
-
-# as a Windows Service (elevated shell)
-.\bin\netlogger.exe install
-.\bin\netlogger.exe start
-.\bin\netlogger.exe stop
-.\bin\netlogger.exe uninstall
+# release build: Windows GUI app (no console) + Linux (incl. QNAP arm64) + macOS
+./scripts/build.ps1
 ```
 
-Data + the SQLite store live under `%ProgramData%\NetLogger\`.
+To bundle iperf3, drop `iperf3.exe` next to `netlogger.exe` — NetLogger prefers
+a co-located iperf3 over PATH. Set the same `NETLOGGER_TOKEN` env var on every
+node to require auth on the LAN control plane (see Security below).
+
+CLI still works for scripting: `netlogger install|start|stop|uninstall|run`.
 
 **Security:** set the same `NETLOGGER_TOKEN` env var on every node to require a bearer token on the control plane (coordinator↔agent calls carry it automatically). Loopback and the local dashboard are exempt; a Host-header allowlist blocks DNS-rebinding. With the token unset the control plane is open (safe only on the loopback default bind). The load-test endpoint is POST-only and only accepts a configured node id as its target.
 

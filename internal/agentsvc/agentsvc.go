@@ -92,6 +92,7 @@ func (p *Program) Start(s service.Service) error {
 	ws.ConfigHandler = p.handleConfig   // GET/POST the network config (any node)
 	ws.RestartHandler = p.handleRestart // apply config changes
 	ws.ServiceHandler = p.handleService // install/start/stop/uninstall (elevated)
+	ws.QuitHandler = p.handleQuit       // stop this foreground app from the GUI
 
 	if self.Role == "coordinator" {
 		p.puller = mesh.NewPuller(st)
@@ -342,6 +343,21 @@ func (p *Program) handleService(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleQuit stops a foreground (double-click) app from the GUI. Under a
+// service manager it refuses — use Stop instead.
+func (p *Program) handleQuit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.Interactive {
+		writeJSON(w, map[string]any{"ok": false, "error": "running as a service — use Stop"})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+	go func() { time.Sleep(200 * time.Millisecond); _ = p.Stop(nil); os.Exit(0) }()
 }
 
 // handleRestart relaunches the process to apply config changes (interactive

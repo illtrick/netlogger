@@ -1,6 +1,7 @@
 package iperf
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -34,4 +35,31 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestPickPrefersBundled(t *testing.T) {
+	// A binary sitting next to the app wins over PATH (use filepath.Join so the
+	// expected path matches the OS separator).
+	want := filepath.Join("/app", "iperf3")
+	exists := func(p string) bool { return p == want }
+	look := func(string) (string, bool) { return "/usr/bin/iperf3", true }
+	if got := pick("/app", "iperf3", exists, look); got != want {
+		t.Fatalf("bundled should win, got %q want %q", got, want)
+	}
+}
+
+func TestPickFallsBackToPath(t *testing.T) {
+	exists := func(string) bool { return false }
+	look := func(string) (string, bool) { return "/usr/bin/iperf3", true }
+	if got := pick("/app", "iperf3", exists, look); got != "/usr/bin/iperf3" {
+		t.Fatalf("should fall back to PATH, got %q", got)
+	}
+}
+
+func TestPickNoneFound(t *testing.T) {
+	exists := func(string) bool { return false }
+	look := func(string) (string, bool) { return "", false }
+	if got := pick("/app", "iperf3", exists, look); got != "" {
+		t.Fatalf("none found should be empty, got %q", got)
+	}
 }

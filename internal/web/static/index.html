@@ -78,6 +78,7 @@
     <div class="logo"><span class="dot"></span>Net<span class="sub">Logger</span></div>
     <div class="sep"></div>
     <div class="live" id="live"><span class="rdot"></span><span id="liveText">connecting…</span></div>
+    <button class="btn ghost sm" onclick="quitApp()" title="Stop NetLogger">⏻ Quit</button>
   </div>
   <div class="shell">
     <nav class="nav">
@@ -273,6 +274,13 @@ function renderMap(){
     d.appendChild(el('div',n.label||n.id,'nm'));
     if(n.model||n.nic)d.appendChild(el('div',(n.model||n.nic),'md'));
     area.appendChild(d);});
+}
+
+async function quitApp(){
+  if(!confirm('Stop NetLogger on this machine?'))return;
+  try{const r=await fetch('/api/quit',{method:'POST'});const j=await r.json();
+    if(j.ok){document.body.innerHTML='<div style="padding:3rem;font-family:system-ui;color:#9aa7b3">NetLogger stopped. You can close this tab.</div>';}
+    else alert(j.error||'could not quit');}catch(e){document.body.innerHTML='<div style="padding:3rem;font-family:system-ui;color:#9aa7b3">NetLogger stopped. You can close this tab.</div>';}
 }
 
 // ---- service control ----

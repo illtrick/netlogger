@@ -5,7 +5,10 @@ package iperf
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 )
 
@@ -83,11 +86,36 @@ func Parse(data []byte) (Result, error) {
 	return res, nil
 }
 
-// Available reports whether the iperf3 binary is on PATH.
-func Available() bool {
-	_, err := exec.LookPath("iperf3")
-	return err == nil
+// pick resolves the iperf3 binary: prefer one bundled next to the app, else
+// fall back to PATH. Pure helper for testability.
+func pick(exeDir, name string, exists func(string) bool, look func(string) (string, bool)) string {
+	cand := filepath.Join(exeDir, name)
+	if exists(cand) {
+		return cand
+	}
+	if p, ok := look("iperf3"); ok {
+		return p
+	}
+	return ""
 }
+
+// binary returns the path to the iperf3 executable, or "" if none is found.
+func binary() string {
+	name := "iperf3"
+	if runtime.GOOS == "windows" {
+		name = "iperf3.exe"
+	}
+	exeDir := ""
+	if exe, err := os.Executable(); err == nil {
+		exeDir = filepath.Dir(exe)
+	}
+	exists := func(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
+	look := func(n string) (string, bool) { p, err := exec.LookPath(n); return p, err == nil }
+	return pick(exeDir, name, exists, look)
+}
+
+// Available reports whether an iperf3 binary is bundled or on PATH.
+func Available() bool { return binary() != "" }
 
 // Opts configures a load test run.
 type Opts struct {
@@ -114,13 +142,14 @@ func buildArgs(target string, o Opts) []string {
 	return args
 }
 
-// RunClient runs `iperf3 -c target ...` and parses the result. It returns a
-// clear error if iperf3 is not installed.
+// RunClient runs iperf3 (bundled or on PATH) and parses the result. It returns
+// a clear error if no iperf3 binary is found.
 func RunClient(target string, o Opts) (Result, error) {
-	if !Available() {
-		return Result{}, fmt.Errorf("iperf3 not installed (PATH) — cannot run load test")
+	bin := binary()
+	if bin == "" {
+		return Result{}, fmt.Errorf("iperf3 not found (bundle it next to NetLogger or install it) — cannot run load test")
 	}
-	out, err := exec.Command("iperf3", buildArgs(target, o)...).Output()
+	out, err := exec.Command(bin, buildArgs(target, o)...).Output()
 	if err != nil && len(out) == 0 {
 		return Result{}, fmt.Errorf("iperf3 run: %w", err)
 	}
