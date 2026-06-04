@@ -32,6 +32,8 @@ go test ./...
 
 Data + the SQLite store live under `%ProgramData%\NetLogger\`.
 
+**Security:** set the same `NETLOGGER_TOKEN` env var on every node to require a bearer token on the control plane (coordinator↔agent calls carry it automatically). Loopback and the local dashboard are exempt; a Host-header allowlist blocks DNS-rebinding. With the token unset the control plane is open (safe only on the loopback default bind). The load-test endpoint is POST-only and only accepts a configured node id as its target.
+
 ## Architecture
 
 One Go module. `internal/` packages each own one responsibility:
