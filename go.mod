@@ -3,6 +3,7 @@ module netlogger
 go 1.26.4
 
 require (
+	github.com/kardianos/service v1.2.4
 	github.com/prometheus-community/pro-bing v0.8.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.51.0
