@@ -65,6 +65,12 @@ func CorrelationHandler(agg *store.Store, agentIDs []string, offsets *mesh.Offse
 	return func(w http.ResponseWriter, r *http.Request) {
 		var events []correlate.Event
 		for _, id := range agentIDs {
+			// Exclude agents whose clock was measured but deemed unreliable
+			// (clamped, spec §6) — they cannot be trusted for cross-host timing
+			// and must not contribute to shared-device inference.
+			if off, ok := offsets.Get(id); ok && !off.Reliable {
+				continue
+			}
 			rows, err := agg.AgentSamplesAll(id)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
