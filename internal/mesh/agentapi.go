@@ -4,6 +4,7 @@ package mesh
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,27 +15,33 @@ import (
 
 // Info is the agent identity/health payload at /api/info.
 type Info struct {
-	NodeID     string `json:"node_id"`
-	Host       string `json:"host"`
-	Version    string `json:"version"`
-	TimeUnixUS int64  `json:"time_unix_us"`
+	NodeID        string `json:"node_id"`
+	Host          string `json:"host"`
+	Version       string `json:"version"`
+	TimeUnixUS    int64  `json:"time_unix_us"`
+	Iperf3Version string `json:"iperf3_version"` // "" if not installed
+	DataWritable  bool   `json:"data_writable"`
 }
 
 // AgentAPI serves an agent's local samples and identity to the coordinator.
 type AgentAPI struct {
-	Store  *store.Store
-	NodeID string
-	Host   string
+	Store         *store.Store
+	NodeID        string
+	Host          string
+	Iperf3Version string
+	DataWritable  bool
 }
 
 // Info handles GET /api/info.
 func (a *AgentAPI) Info(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(Info{
-		NodeID:     a.NodeID,
-		Host:       a.Host,
-		Version:    version.Version,
-		TimeUnixUS: time.Now().UTC().UnixMicro(),
+		NodeID:        a.NodeID,
+		Host:          a.Host,
+		Version:       version.Version,
+		TimeUnixUS:    time.Now().UTC().UnixMicro(),
+		Iperf3Version: a.Iperf3Version,
+		DataWritable:  a.DataWritable,
 	})
 }
 
@@ -61,4 +68,21 @@ func (a *AgentAPI) Samples(w http.ResponseWriter, r *http.Request) {
 func (a *AgentAPI) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/info", a.Info)
 	mux.HandleFunc("/api/samples", a.Samples)
+}
+
+// FetchInfo GETs {baseURL}/api/info and decodes it.
+func FetchInfo(client *http.Client, baseURL string) (Info, error) {
+	resp, err := client.Get(baseURL + "/api/info")
+	if err != nil {
+		return Info{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Info{}, fmt.Errorf("info status %d", resp.StatusCode)
+	}
+	var info Info
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return Info{}, err
+	}
+	return info, nil
 }

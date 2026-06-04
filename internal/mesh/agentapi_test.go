@@ -66,3 +66,25 @@ func TestAgentSamplesSince(t *testing.T) {
 		t.Fatalf("want only seq 3, got %+v", rest)
 	}
 }
+
+func TestAgentInfoReportsSelfChecks(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	api := &AgentAPI{Store: s, NodeID: "ncase", Host: "h", Iperf3Version: "iperf 3.18", DataWritable: true}
+
+	mux := http.NewServeMux()
+	api.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	info, err := FetchInfo(srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if info.Iperf3Version != "iperf 3.18" || !info.DataWritable {
+		t.Fatalf("self-checks not reported: %+v", info)
+	}
+}
