@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -41,6 +42,33 @@ type Node struct {
 type Config struct {
 	Nodes []Node     `yaml:"nodes"`
 	Links [][]string `yaml:"links"`
+}
+
+// WriteStarter creates a minimal single-node coordinator config at path (used
+// on first run so the dashboard comes up immediately). It does nothing if the
+// file already exists.
+func WriteStarter(path, nodeID, address string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	c := Config{Nodes: []Node{{
+		ID:      nodeID,
+		Type:    NodeEndpoint,
+		Label:   nodeID,
+		Role:    "coordinator",
+		Address: address,
+	}}}
+	data, err := yaml.Marshal(&c)
+	if err != nil {
+		return fmt.Errorf("marshal starter config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir for config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write starter config: %w", err)
+	}
+	return nil
 }
 
 // Load reads and validates a network config file from path.

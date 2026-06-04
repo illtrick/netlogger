@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestLoadValid(t *testing.T) {
 	c, err := Load("testdata/network.yaml")
@@ -19,6 +22,29 @@ func TestLoadValid(t *testing.T) {
 	}
 	if n.Role != "coordinator" || n.LinkSpeed != "2.5G" {
 		t.Fatalf("ryzen fields wrong: %+v", n)
+	}
+}
+
+func TestWriteStarterCreatesLoadableConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "network.yaml")
+	if err := WriteStarter(path, "ryzen", "127.0.0.1:8088"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("load starter: %v", err)
+	}
+	n, ok := c.Node("ryzen")
+	if !ok || n.Role != "coordinator" || n.Address != "127.0.0.1:8088" {
+		t.Fatalf("starter node wrong: %+v ok=%v", n, ok)
+	}
+	// Second call must not clobber an existing file.
+	if err := WriteStarter(path, "other", "127.0.0.1:9999"); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	c2, _ := Load(path)
+	if _, ok := c2.Node("ryzen"); !ok {
+		t.Fatal("existing config was overwritten")
 	}
 }
 

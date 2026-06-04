@@ -18,6 +18,7 @@ import (
 	"netlogger/internal/config"
 	"netlogger/internal/coordinator"
 	"netlogger/internal/httpauth"
+	"netlogger/internal/launch"
 	"netlogger/internal/mesh"
 	"netlogger/internal/probe"
 	"netlogger/internal/readiness"
@@ -28,10 +29,11 @@ import (
 
 // Program is the long-running node: probe loop + sync API + optional puller.
 type Program struct {
-	ConfigPath string
-	NodeID     string
-	DBPath     string
-	Listen     string // host:port for this node's control server
+	ConfigPath  string
+	NodeID      string
+	DBPath      string
+	Listen      string // host:port for this node's control server
+	OpenBrowser bool   // open the dashboard in a browser after start (interactive launch)
 
 	store      *store.Store
 	srv        *http.Server
@@ -117,6 +119,11 @@ func (p *Program) Start(s service.Service) error {
 	p.cancel = cancel
 
 	go func() { _ = p.srv.Serve(ln) }()
+	if p.OpenBrowser {
+		url := launch.BrowserURL(p.Listen)
+		fmt.Fprintln(os.Stderr, "netlogger: dashboard at", url)
+		go func() { _ = launch.OpenBrowser(url) }()
+	}
 	p.spawn(func() { p.probeLoop(ctx, self.ID, peers) })
 	if self.Role == "coordinator" {
 		p.spawn(func() { p.pullLoop(ctx, cfg.AddressedNodes()) })

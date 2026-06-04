@@ -9,6 +9,8 @@ import (
 	"github.com/kardianos/service"
 
 	"netlogger/internal/agentsvc"
+	"netlogger/internal/config"
+	"netlogger/internal/launch"
 	"netlogger/internal/version"
 )
 
@@ -74,6 +76,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: netlogger [flags] [version|install|uninstall|start|stop|run]")
 			os.Exit(2)
 		}
+	}
+
+	// Interactive launch (double-click or `run`): make it just work — create a
+	// starter config for this machine if none exists, and open the dashboard.
+	// When launched by the service manager, service.Interactive() is false, so
+	// we run headless without spawning a browser.
+	if service.Interactive() {
+		if err := config.WriteStarter(*cfgPath, node, launch.HostPort(*listen)); err != nil {
+			fmt.Fprintln(os.Stderr, "netlogger: could not create starter config:", err)
+		}
+		prog.OpenBrowser = true
 	}
 
 	if err := s.Run(); err != nil {
