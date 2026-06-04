@@ -64,10 +64,26 @@ func (a *AgentAPI) Samples(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(rows)
 }
 
+// TimePair carries the agent's receive (T2) and send (T3) timestamps for the
+// NTP-style 4-timestamp offset handshake.
+type TimePair struct {
+	T2UnixUS int64 `json:"t2_unix_us"`
+	T3UnixUS int64 `json:"t3_unix_us"`
+}
+
+// Time handles GET /api/time. T2 is recorded on entry, T3 just before sending.
+func (a *AgentAPI) Time(w http.ResponseWriter, r *http.Request) {
+	t2 := time.Now().UTC().UnixMicro()
+	w.Header().Set("Content-Type", "application/json")
+	t3 := time.Now().UTC().UnixMicro()
+	_ = json.NewEncoder(w).Encode(TimePair{T2UnixUS: t2, T3UnixUS: t3})
+}
+
 // Register mounts the agent API routes on mux.
 func (a *AgentAPI) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/info", a.Info)
 	mux.HandleFunc("/api/samples", a.Samples)
+	mux.HandleFunc("/api/time", a.Time)
 }
 
 // FetchInfo GETs {baseURL}/api/info and decodes it.
