@@ -93,4 +93,3 @@ func groupHi(g Group) int64 {
 	}
 	return max
 }
-

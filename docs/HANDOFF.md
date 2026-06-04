@@ -5,15 +5,16 @@ Single entry point for resuming work. Repo: https://github.com/illtrick/netlogge
 ## What this is
 A cross-platform LAN diagnostic tool (Go) that deploys agents to each machine, runs a peer-to-peer probe mesh + iperf3 load tests, correlates drops across hosts, and scores per-component health + coverage — to isolate intermittent, load-triggered drops (the original symptom: Moonlight stutter Ryzen→ProjectorPC across an unmanaged switch). Operator-driven, GUI-first, no terminal required.
 
-## Status: M1–M4 complete + full code review fixes + UX1–UX6 (app polish). All committed/pushed.
-- ~90 test functions, 16 packages, all green. cgo-free (so `go test -race` can't run).
+## Status: M1–M4 complete + full code review fixes + UX1–UX7 (app polish). All committed/pushed.
+- 106 test functions across 17 test packages, all green (`go test -count=1 ./...`). cgo-free (so `go test -race` can't run).
 - Dev build: `go build -o bin/netlogger.exe ./cmd/netlogger`. Release/app build: `./scripts/build.ps1` (windowsgui no-console app + Linux incl. QNAP arm64 + macOS).
 - Go is at `C:\Program Files\Go\bin` (not on default PATH; prepend it). Commit footer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - PowerShell here-strings for commit messages: **avoid `"` and `>`** in the body (they break parsing).
 
 ## Architecture (one Go binary per host)
 Every node runs the agent; one is `role: coordinator` (serves the GUI + aggregates). Control plane = star (coordinator pulls), data plane = peer-to-peer probes.
-- `internal/config` — network YAML (nodes + links); Load/Save/WriteStarter/ToYAML; Resolve(node)→self+peers.
+- `internal/config` — network YAML (nodes + links); Load/Save/WriteStarter/ToYAML; Resolve(node)→self+peers. Shared with peers.
+- `internal/localsettings` — per-machine `settings.json` (db dir override); Load/Save/Path/ResolveDBPath. Machine-local, **never** shared with peers.
 - `internal/store` — local WAL SQLite; per-agent samples, idempotent `Upsert` on `(agent_id,seq)`, sync cursors, connectivity_events.
 - `internal/probe` — ICMP (pro-bing, unprivileged on Win) + isochronous UDP; runner.
 - `internal/mesh` — agent sync API (`/api/info,/samples,/time`), coordinator `Puller` (cursor-based, idempotent, liveness), NTP-style offset handshake, `Offsets`, `AuthClient`.
@@ -26,7 +27,9 @@ Every node runs the agent; one is `role: coordinator` (serves the GUI + aggregat
 - `internal/launch` — browser-open + address normalize. `internal/agentsvc` — wires it all into a kardianos service. `cmd/netlogger` — CLI/flags.
 
 ## The app experience (no terminal)
-Double-click `netlogger.exe` → starter config + dashboard opens. GUI does: edit network (Configuration), Install/Start/Stop service (UAC), run load tests, **Deploy to another machine** (Agents → copy a one-paste elevated-PowerShell bootstrap that pulls `/download/agent` + `/download/config.yaml` and installs on the peer), Quit. Auto-refreshes 3s.
+Double-click `netlogger.exe` → starter config + dashboard opens. GUI does: edit network (Configuration), set the local **Data storage** directory (Configuration → `/api/settings`; blank = default data dir, change applies on restart, fresh DB starts in the new location), Install/Start/Stop service (UAC), run load tests, **Deploy to another machine** (Agents → copy a one-paste elevated-PowerShell bootstrap that pulls `/download/agent` + `/download/config.yaml` and installs on the peer), Quit. Auto-refreshes 3s.
+
+DB location is resolved at startup from `localsettings` (honored by interactive, service, and self-restart launches). Default data dir: `%ProgramData%\NetLogger` (Windows) / `~/.netlogger` (else). `settings.json` always lives in the default dir even when it points the DB elsewhere.
 
 ## Design docs
 - Spec: `docs/superpowers/specs/2026-06-04-netlogger-design.md` (the authoritative design; §-numbered).

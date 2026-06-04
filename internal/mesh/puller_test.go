@@ -158,8 +158,8 @@ func TestPullRecordsConnectivityTransitions(t *testing.T) {
 	if _, err := p.PullOnce(ref); err != nil { // first success -> online event
 		t.Fatalf("pull online: %v", err)
 	}
-	srv.Close()                  // agent goes away
-	_, _ = p.PullOnce(ref)       // failure -> offline event
+	srv.Close()            // agent goes away
+	_, _ = p.PullOnce(ref) // failure -> offline event
 
 	evs, err := agg.ConnectivityEvents("ncase")
 	if err != nil {
