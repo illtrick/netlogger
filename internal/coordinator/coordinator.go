@@ -5,9 +5,12 @@ package coordinator
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
+	"netlogger/internal/classify"
 	"netlogger/internal/config"
 	"netlogger/internal/correlate"
+	"netlogger/internal/iperf"
 	"netlogger/internal/mesh"
 	"netlogger/internal/readiness"
 	"netlogger/internal/score"
@@ -102,5 +105,49 @@ func ComponentsHandler(agg *store.Store, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 		writeJSON(w, score.Score(cfg, tested, failing))
+	}
+}
+
+// LoadTestResponse is the result of an /api/loadtest run.
+type LoadTestResponse struct {
+	OK             bool    `json:"ok"`
+	Error          string  `json:"error,omitempty"`
+	SumBitsPerSec  float64 `json:"sum_bits_per_second,omitempty"`
+	SumRetransmits int     `json:"sum_retransmits,omitempty"`
+	UDPLostPercent float64 `json:"udp_lost_percent,omitempty"`
+}
+
+// LoadTestHandler runs an iperf3 load test to ?target= and returns the summary,
+// or a clean error payload if iperf3 is unavailable / the run fails.
+func LoadTestHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Query().Get("target")
+		dur, _ := strconv.Atoi(r.URL.Query().Get("duration"))
+		udp := r.URL.Query().Get("udp") == "true"
+		res, err := iperf.RunClient(target, iperf.Opts{DurationS: dur, UDP: udp})
+		if err != nil {
+			writeJSON(w, LoadTestResponse{OK: false, Error: err.Error()})
+			return
+		}
+		writeJSON(w, LoadTestResponse{
+			OK:             true,
+			SumBitsPerSec:  res.SumBitsPerSec,
+			SumRetransmits: res.SumRetransmits,
+			UDPLostPercent: res.UDPLostPercent,
+		})
+	}
+}
+
+// ClassifyResponse carries the classifier verdicts.
+type ClassifyResponse struct {
+	LANvsWAN string `json:"lan_vs_wan"`
+}
+
+// ClassifyHandler exposes the LAN-vs-WAN classifier over query params.
+func ClassifyHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		gw := r.URL.Query().Get("gateway_failed") == "true"
+		ext := r.URL.Query().Get("external_failed") == "true"
+		writeJSON(w, ClassifyResponse{LANvsWAN: classify.LANvsWAN(gw, ext)})
 	}
 }

@@ -11,7 +11,16 @@ table{border-collapse:collapse;font-size:13px;margin-top:.5rem}td,th{padding:6px
   <h2>Agents</h2><table id="agents"><thead><tr><th>node</th><th>online</th><th>last seen</th><th>error</th></tr></thead><tbody></tbody></table>
   <h2>Components</h2><table id="components"><thead><tr><th>component</th><th>health</th><th>coverage</th><th>tested</th><th>failing</th></tr></thead><tbody></tbody></table>
   <h2>Readiness</h2><div id="readiness"></div>
+  <h2>Load test</h2>
+  <p><input id="lt-target" placeholder="target node host" size="20"> <button onclick="runLoad()">Run iperf3</button></p>
+  <pre id="lt-out" class="v"></pre>
 <script>
+function runLoad(){
+  const t=document.getElementById('lt-target').value||'127.0.0.1';
+  document.getElementById('lt-out').textContent='running...';
+  fetch('/api/loadtest?target='+encodeURIComponent(t)+'&duration=5')
+    .then(r=>r.json()).then(j=>{document.getElementById('lt-out').textContent=JSON.stringify(j,null,2);});
+}
 fetch('/api/components').then(r=>r.json()).then(rows=>{
   const tb=document.querySelector('#components tbody');
   rows.forEach(c=>{const tr=document.createElement('tr');

@@ -72,6 +72,8 @@ func (p *Program) Start(s service.Service) error {
 		ws.ReadinessHandler = coordinator.ReadinessHandler(readiness.NewChecker(), endpointNodes(cfg))
 		ws.CorrelationHandler = coordinator.CorrelationHandler(st, ids, p.offsets)
 		ws.ComponentsHandler = coordinator.ComponentsHandler(st, cfg)
+		ws.LoadTestHandler = coordinator.LoadTestHandler()
+		ws.ClassifyHandler = coordinator.ClassifyHandler()
 	}
 
 	root := http.NewServeMux()
