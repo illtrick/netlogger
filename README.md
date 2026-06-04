@@ -50,7 +50,8 @@ Stack: pure-Go SQLite (`modernc.org/sqlite`, no cgo), `prometheus-community/pro-
 ## Roadmap
 
 - **M1 — Windows core vertical slice** ✅ probe → store → service → status page
-- **M2** — coordinator role, resilient agent↔coordinator sync, configuration-readiness checks, multi-host mesh
+- **M2a — config-driven mesh + resilient sync** ✅ cursor-based idempotent agent→coordinator aggregation
+- **M2b — readiness checks + Agents/Config views** ✅ device-agnostic per-node checks + `/api/agents` & `/api/readiness`
 - **M3** — clock-offset correlation + the per-component health/coverage board
 - **M4** — iperf3 load tests + LAN/WAN & bufferbloat-vs-fault classifiers
 - **M5** — QNAP agent (Docker) + analysis-bundle export
