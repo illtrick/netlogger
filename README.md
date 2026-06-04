@@ -52,9 +52,11 @@ Stack: pure-Go SQLite (`modernc.org/sqlite`, no cgo), `prometheus-community/pro-
 - **M1 — Windows core vertical slice** ✅ probe → store → service → status page
 - **M2a — config-driven mesh + resilient sync** ✅ cursor-based idempotent agent→coordinator aggregation
 - **M2b — readiness checks + Agents/Config views** ✅ device-agnostic per-node checks + `/api/agents` & `/api/readiness`
-- **M3** — clock-offset correlation + the per-component health/coverage board
-- **M4** — iperf3 load tests + LAN/WAN & bufferbloat-vs-fault classifiers
+- **M3 — clock-offset correlation + per-component scoring** ✅ NTP-style offset, interval-overlap correlation, `/api/correlation` & `/api/components`
+- **M4 — iperf3 load tests + classifiers** ✅ iperf3 wrap/parse, bufferbloat-vs-fault & LAN-vs-WAN, NIC counters, `/api/loadtest` & `/api/classify`
 - **M5** — QNAP agent (Docker) + analysis-bundle export
 - **M6** — macOS agent + optional packet capture
+
+> **M1–M4 complete.** Next step is a live deploy to the real machines + a real `network.yaml` (install iperf3 where load tests are wanted), then a full diagnosis run.
 
 Design spec: [`docs/superpowers/specs/2026-06-04-netlogger-design.md`](docs/superpowers/specs/2026-06-04-netlogger-design.md) · M1 plan: [`docs/superpowers/plans/2026-06-04-netlogger-m1-windows-core.md`](docs/superpowers/plans/2026-06-04-netlogger-m1-windows-core.md)
