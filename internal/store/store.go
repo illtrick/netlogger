@@ -12,15 +12,15 @@ import (
 // Sample is one probe measurement. A lost probe has Lost=true and RTTus=0
 // (persisted as NULL — never a sentinel, per spec §8).
 type Sample struct {
-	Seq       int64
-	TSUnixUS  int64
-	ProbeType string // "icmp" | "udp_iso" | "tcp_connect"
-	SrcHost   string
-	DstHost   string
-	Direction string // "up" | "down" | "rtt"
-	RTTus     int64  // microseconds; 0 when Lost
-	JitterUS  int64
-	Lost      bool
+	Seq       int64  `json:"seq"`
+	TSUnixUS  int64  `json:"ts_unix_us"`
+	ProbeType string `json:"probe_type"` // "icmp" | "udp_iso" | "tcp_connect"
+	SrcHost   string `json:"src_host"`
+	DstHost   string `json:"dst_host"`
+	Direction string `json:"direction"` // "up" | "down" | "rtt"
+	RTTus     int64  `json:"rtt_us"`    // microseconds; 0 when Lost
+	JitterUS  int64  `json:"jitter_us"`
+	Lost      bool   `json:"lost"`
 }
 
 // Store wraps the SQLite database.
@@ -43,6 +43,25 @@ CREATE TABLE IF NOT EXISTS probe_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_probe_ts ON probe_samples(ts_unix_us);
 CREATE INDEX IF NOT EXISTS idx_probe_target_ts ON probe_samples(dst_host, ts_unix_us);
+
+CREATE TABLE IF NOT EXISTS agent_samples (
+  agent_id   TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  ts_unix_us INTEGER NOT NULL,
+  probe_type TEXT NOT NULL,
+  src_host   TEXT NOT NULL,
+  dst_host   TEXT NOT NULL,
+  direction  TEXT,
+  rtt_us     INTEGER,
+  jitter_us  INTEGER,
+  lost       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (agent_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_ts ON agent_samples(agent_id, ts_unix_us);
+CREATE TABLE IF NOT EXISTS sync_cursors (
+  agent_id TEXT PRIMARY KEY,
+  last_seq INTEGER NOT NULL
+);
 `
 
 var pragmas = []string{
@@ -125,4 +144,66 @@ func (s *Store) Since(afterSeq int64, limit int) ([]Sample, error) {
 		out = append(out, sm)
 	}
 	return out, rows.Err()
+}
+
+// Upsert inserts an aggregated sample from agentID, keyed (agent_id, seq).
+// A repeated (agent_id, seq) is ignored — idempotent, so retry/overlap is safe.
+func (s *Store) Upsert(agentID string, sm Sample) error {
+	var rtt, jitter any
+	if sm.Lost {
+		rtt = nil
+	} else {
+		rtt = sm.RTTus
+	}
+	if sm.JitterUS != 0 {
+		jitter = sm.JitterUS
+	}
+	lost := 0
+	if sm.Lost {
+		lost = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO agent_samples
+		   (agent_id,seq,ts_unix_us,probe_type,src_host,dst_host,direction,rtt_us,jitter_us,lost)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		agentID, sm.Seq, sm.TSUnixUS, sm.ProbeType, sm.SrcHost, sm.DstHost, sm.Direction, rtt, jitter, lost)
+	if err != nil {
+		return fmt.Errorf("upsert agent sample: %w", err)
+	}
+	return nil
+}
+
+// Cursor returns the last durably-synced seq for agentID (0 if none yet).
+func (s *Store) Cursor(agentID string) (int64, error) {
+	var seq int64
+	err := s.db.QueryRow(`SELECT last_seq FROM sync_cursors WHERE agent_id=?`, agentID).Scan(&seq)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read cursor: %w", err)
+	}
+	return seq, nil
+}
+
+// SetCursor stores the last durably-synced seq for agentID.
+func (s *Store) SetCursor(agentID string, seq int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sync_cursors (agent_id,last_seq) VALUES (?,?)
+		 ON CONFLICT(agent_id) DO UPDATE SET last_seq=excluded.last_seq`,
+		agentID, seq)
+	if err != nil {
+		return fmt.Errorf("set cursor: %w", err)
+	}
+	return nil
+}
+
+// CountAgentSamples returns the number of aggregated rows for agentID.
+func (s *Store) CountAgentSamples(agentID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM agent_samples WHERE agent_id=?`, agentID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count agent samples: %w", err)
+	}
+	return n, nil
 }
