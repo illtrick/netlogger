@@ -27,6 +27,30 @@ func TestProbeUDPLoopbackNoLoss(t *testing.T) {
 	}
 }
 
+func TestProbeUDPComputesSaneRTTAndJitter(t *testing.T) {
+	echo, err := StartUDPEcho("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("start echo: %v", err)
+	}
+	defer echo.Close()
+
+	stats, err := ProbeUDP(echo.Addr(), 8, 5*time.Millisecond, 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if stats.Received != 8 {
+		t.Fatalf("want 8 received, got %d", stats.Received)
+	}
+	// RTT is computed from the in-packet send timestamp; over loopback it must
+	// be small but non-negative, and jitter (IPDV) must be non-negative.
+	if stats.AvgRTT < 0 || stats.AvgRTT > 200*time.Millisecond {
+		t.Fatalf("AvgRTT out of sane range: %v", stats.AvgRTT)
+	}
+	if stats.Jitter < 0 {
+		t.Fatalf("jitter must be non-negative, got %v", stats.Jitter)
+	}
+}
+
 func TestProbeUDPNoServerIsFullLoss(t *testing.T) {
 	// Nothing listening on this port -> all packets lost.
 	stats, err := ProbeUDP("127.0.0.1:59999", 4, 5*time.Millisecond, 300*time.Millisecond)

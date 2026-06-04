@@ -52,6 +52,11 @@ func (e *UDPEcho) serve() {
 
 // ProbeUDP sends count packets at a fixed interval (isochronous — it does not
 // wait for replies between sends) and measures loss and jitter from the echoes.
+//
+// Each packet carries its own send timestamp (seq | sendUnixNano), so the
+// reader computes RTT purely from data it received — there is no slice shared
+// across goroutines. `received`/`rtts` are touched only by the reader and read
+// by the caller after the `<-done` barrier, so the access is race-free.
 func ProbeUDP(target string, count int, interval, timeout time.Duration) (UDPStats, error) {
 	raddr, err := net.ResolveUDPAddr("udp", target)
 	if err != nil {
@@ -61,9 +66,7 @@ func ProbeUDP(target string, count int, interval, timeout time.Duration) (UDPSta
 	if err != nil {
 		return UDPStats{}, err
 	}
-	defer conn.Close()
 
-	sendTimes := make([]time.Time, count)
 	received := make([]bool, count)
 	var rtts []time.Duration
 	done := make(chan struct{})
@@ -71,17 +74,17 @@ func ProbeUDP(target string, count int, interval, timeout time.Duration) (UDPSta
 	go func() {
 		buf := make([]byte, 64)
 		for {
-			_ = conn.SetReadDeadline(time.Now().Add(timeout))
 			n, err := conn.Read(buf)
 			if err != nil {
 				close(done)
 				return
 			}
-			if n >= 4 {
+			if n >= 12 {
 				seq := int(binary.BigEndian.Uint32(buf[:4]))
+				sentNano := int64(binary.BigEndian.Uint64(buf[4:12]))
 				if seq >= 0 && seq < count && !received[seq] {
 					received[seq] = true
-					rtts = append(rtts, time.Since(sendTimes[seq]))
+					rtts = append(rtts, time.Duration(time.Now().UnixNano()-sentNano))
 				}
 			}
 		}
@@ -92,16 +95,16 @@ func ProbeUDP(target string, count int, interval, timeout time.Duration) (UDPSta
 	defer ticker.Stop()
 	for i := 0; i < count; i++ {
 		binary.BigEndian.PutUint32(pkt[:4], uint32(i))
-		sendTimes[i] = time.Now()
+		binary.BigEndian.PutUint64(pkt[4:12], uint64(time.Now().UnixNano()))
 		_, _ = conn.Write(pkt)
 		if i < count-1 {
 			<-ticker.C
 		}
 	}
 
-	time.Sleep(timeout)                  // let stragglers arrive
-	_ = conn.SetReadDeadline(time.Now()) // unblock the reader
-	<-done                               // reader has stopped; safe to read results
+	time.Sleep(timeout) // let stragglers arrive
+	_ = conn.Close()    // unblock the reader cleanly (no deadline race)
+	<-done              // reader has stopped; safe to read results
 
 	recv := 0
 	for _, r := range received {
