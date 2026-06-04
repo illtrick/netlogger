@@ -1,0 +1,91 @@
+# NetLogger config for the real home network.
+#
+# Fill in the real LAN IPs for the addressed (agent) nodes, then deploy the
+# agent to each Windows box. The coordinator (ryzen) pulls from every node that
+# has an `address`. Non-agent elements (modem, wall jacks, router, switches,
+# connector) carry no address — they're scored by inference from the paths that
+# cross them.
+#
+# NOTE: NAS (QNAP) and any WiFi clients become agents in M5/M6. For the first
+# live run, the three Windows boxes (ryzen + ncase + projectorpc) are the mesh
+# that reproduces the Moonlight stutter.
+
+nodes:
+  - id: modem
+    type: modem
+    label: "Fiber Modem"
+    model: "Calix C5500XK"
+
+  - id: walljack1
+    type: passive
+    label: "Wall Jack (modem side)"
+
+  - id: walljack2
+    type: passive
+    label: "Wall Jack (router side)"
+
+  - id: router
+    type: router
+    label: "Router"
+    model: "TP-Link BE9300"
+    # gateway IP, used as a probe target for LAN-vs-WAN (not an agent):
+    address: ""        # leave blank — no agent runs here
+
+  - id: switch1
+    type: switch
+    label: "Switch 1"
+    model: "Tenda TEM2010F"
+    managed: false
+
+  - id: switch2
+    type: switch
+    label: "Switch 2"
+    model: "Tenda TEM2010F"
+    managed: false
+
+  - id: connector
+    type: passive
+    label: "Connector"
+    model: "UGREEN 10G coupler"
+
+  - id: ryzen
+    type: endpoint
+    label: "Ryzen"
+    nic: "Killer E3100G"
+    link_speed: "2.5G"
+    role: coordinator
+    address: "192.168.0.11:8088"   # <-- set Ryzen's real LAN IP
+
+  - id: ncase
+    type: endpoint
+    label: "NCASE"
+    nic: "Intel I226-V"
+    link_speed: "2.5G"
+    address: "192.168.0.12:8088"   # <-- set NCASE's real LAN IP
+
+  - id: projectorpc
+    type: endpoint
+    label: "ProjectorPC"
+    nic: "Intel I219-V"
+    link_speed: "1G"
+    address: "192.168.0.31:8088"   # <-- set ProjectorPC's real LAN IP
+
+  - id: nas
+    type: endpoint
+    label: "NAS"
+    nic: "QNAP TS-563"
+    link_speed: "1G"
+    clock_res: "1s"
+    address: ""        # <-- M5: set when the QNAP agent (Docker) is deployed
+
+links:
+  - [modem, walljack1]
+  - [walljack1, walljack2]
+  - [walljack2, router]
+  - [router, switch1]
+  - [switch1, nas]
+  - [switch1, connector]
+  - [connector, projectorpc]
+  - [switch1, switch2]
+  - [switch2, ryzen]
+  - [switch2, ncase]
