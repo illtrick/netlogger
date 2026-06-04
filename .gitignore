@@ -1,0 +1,10 @@
+# build output
+/bin/
+*.exe
+# local data / databases
+*.db
+*.db-wal
+*.db-shm
+data/
+# go
+/vendor/

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetLogger — UI Mockup v4</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --raised:#222b38; --border:#2a3340;
+    --txt:#e6edf3; --muted:#9aa7b3; --dim:#677483;
+    --accent:#4cc2ff; --green:#3fb950; --amber:#e3a82b; --red:#f85149; --purple:#a371f7; --grey:#5c6773;
+    --grid:#1e2731;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:13.5px;display:flex;flex-direction:column;overflow:hidden;line-height:1.5}
+  .topbar{height:52px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:14px;flex-shrink:0}
+  .logo{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+  .logo .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .logo .sub{color:var(--accent)}
+  .topbar .sep{flex:1}
+  .live{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .spin{display:inline-block;animation:spin 2.4s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  .btn{background:var(--accent);color:#06121f;border:none;border-radius:7px;padding:8px 15px;font-weight:600;font-size:12.5px;cursor:pointer;font-family:inherit}
+  .btn:hover{filter:brightness(1.08)}.btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--border)}.btn.sm{padding:5px 11px;font-size:11.5px}
+
+  .shell{flex:1;display:flex;min-height:0}
+  .nav{width:206px;background:var(--panel);border-right:1px solid var(--border);padding:14px 10px;flex-shrink:0}
+  .nav .grp{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.8px;padding:14px 10px 6px}
+  .nav a{display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:8px;color:var(--muted);cursor:pointer;font-weight:500;margin-bottom:2px}
+  .nav a:hover{background:var(--panel2);color:var(--txt)}
+  .nav a.active{background:rgba(76,194,255,.13);color:var(--accent)}
+  .nav a .ico{width:17px;text-align:center;font-size:15px}
+  .nav a .badge{margin-left:auto;border-radius:10px;font-size:10px;padding:1px 7px;font-weight:700}
+  .badge.red{background:var(--red);color:#fff}.badge.amber{background:var(--amber);color:#1a1205}
+
+  .main{flex:1;overflow:auto;padding:24px 30px;max-width:1140px}
+  .view{display:none;animation:fade .25s ease}.view.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  h1{font-size:19px;font-weight:650;margin-bottom:3px}
+  .lead{color:var(--muted);font-size:13px;margin-bottom:18px;max-width:760px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .card h2{font-size:13.5px;font-weight:650;margin-bottom:3px;display:flex;align-items:center;gap:8px}
+  .card .sub{color:var(--dim);font-size:11.5px;margin-bottom:14px}
+  .row{display:flex;gap:16px}.row>*{flex:1}
+  .det{color:var(--dim);font-size:11px;font-style:italic}
+
+  .banner{display:flex;gap:14px;align-items:flex-start;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:18px}
+  .banner .i{font-size:20px}
+  .banner b{color:var(--txt)}
+
+  /* coverage meter */
+  .cov{display:inline-flex;gap:3px;align-items:center}
+  .cov .seg{width:13px;height:7px;border-radius:2px;background:var(--grid)}
+  .cov.l1 .seg:nth-child(1){background:var(--amber)}
+  .cov.l2 .seg:nth-child(-n+2){background:var(--amber)}
+  .cov.l3 .seg:nth-child(-n+3){background:#7bce5a}
+  .cov.l4 .seg{background:var(--green)}
+  .covlbl{font-size:10px;color:var(--dim);margin-left:6px}
+
+  /* quality board */
+  .qrow{display:grid;grid-template-columns:230px 80px 150px 1fr;gap:16px;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:13px 16px;border-left-width:4px;margin-bottom:9px}
+  .qrow.q-poor{border-left-color:var(--red)}.qrow.q-fair{border-left-color:var(--amber)}.qrow.q-good{border-left-color:var(--green)}.qrow.q-unknown{border-left-color:var(--grey)}
+  .qname{font-weight:650;font-size:13.5px}.qname .kind{display:block;font-size:10.5px;color:var(--dim);font-weight:400;margin-top:1px;font-family:var(--mono)}
+  .qgrade{font-size:12px;font-weight:700;text-align:center;padding:3px 0;border-radius:6px}
+  .g-poor{color:var(--red);background:rgba(248,81,73,.12)}.g-fair{color:var(--amber);background:rgba(227,168,43,.12)}.g-good{color:var(--green);background:rgba(63,185,80,.12)}.g-unknown{color:var(--grey);background:rgba(120,134,148,.12)}
+  .qreason{font-size:12px;color:var(--muted)}
+  .flag{display:inline-block;background:rgba(163,113,247,.15);color:var(--purple);font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;margin-top:5px}
+  .statline{font-size:12.5px;color:var(--muted);margin-bottom:16px;font-family:var(--mono)}
+  .statline b{color:var(--txt)}.statline b.x{color:var(--red)}
+  table.metrics td,table.metrics th{padding:9px 12px}
+  table.metrics .num{font-family:var(--mono);text-align:right;font-size:11.5px}
+  table.metrics th.num{text-align:right}
+  table.metrics .cmp{font-weight:650;font-size:13px}
+  table.metrics .cmp .m{display:block;font-size:10px;color:var(--dim);font-weight:400;font-family:var(--mono)}
+  .h{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px}
+  .h.good{color:var(--green);background:rgba(63,185,80,.12)}.h.fair{color:var(--amber);background:rgba(227,168,43,.12)}
+  .h.poor{color:var(--red);background:rgba(248,81,73,.12)}.h.unk{color:var(--grey);background:rgba(120,134,148,.12)}
+
+  /* map */
+  .map{position:relative;height:600px;background:radial-gradient(circle at 52% 50%,#10202d 0,var(--panel) 78%);border-radius:12px;border:1px solid var(--border);overflow:hidden}
+  .n{position:absolute;transform:translate(-50%,-50%);border-radius:9px;padding:6px 10px;text-align:center;z-index:2;font-size:12px;font-weight:600;border:2px solid;background:var(--panel2);min-width:78px}
+  .n .md{font-size:8.5px;color:var(--dim);font-weight:400;margin-top:1px;font-family:var(--mono)}
+  .n .cov{margin-top:4px;justify-content:center}
+  .n.bar{min-width:154px;border-radius:7px}
+  .n.q-good{border-color:var(--green)}.n.q-fair{border-color:var(--amber)}.n.q-poor{border-color:var(--red)}.n.q-unknown{border-color:var(--grey);border-style:dashed}
+  .n.untested{border-style:dashed;opacity:.78}
+  .n .kf{position:absolute;top:-8px;right:-8px;font-size:8px;font-weight:700;padding:1px 5px;border-radius:7px;background:var(--purple);color:#fff;white-space:nowrap}
+  .cloud{border-radius:40px!important;border-style:dashed}
+  .maplegend{position:absolute;bottom:10px;left:14px;display:flex;gap:13px;font-size:10px;color:var(--muted);z-index:5;flex-wrap:wrap;max-width:66%}
+  .maplegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle;border:2px solid}
+  .mapnote{position:absolute;top:12px;right:14px;font-size:10.5px;color:var(--muted);z-index:5;background:rgba(13,17,23,.7);padding:6px 11px;border-radius:11px;max-width:240px;text-align:right}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:9px 10px;border-bottom:1px solid var(--border)}
+  td{padding:10px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:none}
+  .mono{font-family:var(--mono);font-size:11.5px}
+  .chip{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:2px 9px;font-size:10.5px;font-weight:600}
+  .chip.green{background:rgba(63,185,80,.14);color:var(--green)}.chip.red{background:rgba(248,81,73,.14);color:var(--red)}.chip.amber{background:rgba(227,168,43,.14);color:var(--amber)}.chip.grey{background:rgba(120,134,148,.14);color:var(--dim)}.chip.blue{background:rgba(76,194,255,.14);color:var(--accent)}.chip.purple{background:rgba(163,113,247,.15);color:var(--purple)}
+  .ck{color:var(--green);font-weight:700}.x{color:var(--red);font-weight:700}.warn{color:var(--amber);font-weight:700}
+  details summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:600;list-style:none}
+  details summary::-webkit-details-marker{display:none}details summary:before{content:'▸ '}details[open] summary:before{content:'▾ '}
+  svg text{font-family:var(--sans);fill:var(--muted)}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo"><span class="dot"></span>Net<span class="sub">Logger</span></div>
+    <div class="sep"></div>
+    <span class="live"><span class="spin">⟳</span> 4 of 4 agents online · coverage 58% · clocks ±1.0s</span>
+    <button class="btn ghost sm">Run test suite</button>
+    <button class="btn sm">Save report</button>
+  </div>
+
+  <div class="shell">
+    <nav class="nav">
+      <a data-v="overview" class="active"><span class="ico">📊</span> Overview</a>
+      <a data-v="map"><span class="ico">🗺️</span> Network map</a>
+      <div class="grp">Operate</div>
+      <a data-v="agents"><span class="ico">🖥️</span> Agents</a>
+      <a data-v="config"><span class="ico">⚙️</span> Configuration <span class="badge red">2</span></a>
+      <a data-v="tests"><span class="ico">⚡</span> Tests</a>
+      <div class="grp">Data</div>
+      <a data-v="activity"><span class="ico">📈</span> Activity</a>
+      <a data-v="report"><span class="ico">📦</span> Report</a>
+    </nav>
+
+    <main class="main">
+
+      <!-- ================= OVERVIEW ================= -->
+      <section class="view active" id="overview">
+        <h1>Component metrics</h1>
+        <div class="statline">Coverage <b>58%</b> · isolated <b class="x">no</b> · failing paths <b>2</b> · LAN <b>2.5G</b> · clocks <b>±1.0s</b></div>
+        <table class="metrics">
+          <tr>
+            <th>Component</th><th>Health</th><th>Coverage</th>
+            <th class="num">Loss↑</th><th class="num">p95↑</th><th class="num">Jitter</th>
+            <th class="num">RTT</th><th class="num">Fail/paths</th><th class="num">NIC err</th>
+          </tr>
+          <tr>
+            <td class="cmp">Switch 1<span class="m">Tenda TEM2010F 2.5G</span></td>
+            <td><span class="h fair">FAIR</span></td>
+            <td><span class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num" style="color:var(--red)">11.6%</td><td class="num">38ms</td><td class="num">14.2ms</td><td class="num">1.4ms</td><td class="num">2/3</td><td class="num">—</td>
+          </tr>
+          <tr>
+            <td class="cmp">Connector<span class="m">UGREEN coupler · 1G</span></td>
+            <td><span class="h fair">FAIR</span></td>
+            <td><span class="cov l1"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num" style="color:var(--red)">11.6%</td><td class="num">38ms</td><td class="num">14.2ms</td><td class="num">1.4ms</td><td class="num">1/1</td><td class="num">—</td>
+          </tr>
+          <tr>
+            <td class="cmp">NAS<span class="m">QNAP TS-563 · I-1G</span></td>
+            <td><span class="h fair">FAIR</span></td>
+            <td><span class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num" style="color:var(--amber)">9.8%</td><td class="num">22ms</td><td class="num">6.1ms</td><td class="num">0.9ms</td><td class="num">1/2</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <td class="cmp">NCASE<span class="m">Intel I226-V 2.5G</span></td>
+            <td><span class="h good">GOOD</span></td>
+            <td><span class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">0%</td><td class="num">1.6ms</td><td class="num">0.2ms</td><td class="num">1.3ms</td><td class="num">0/2</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <td class="cmp">Ryzen<span class="m">Killer E3100G 2.5G</span></td>
+            <td><span class="h good">GOOD</span></td>
+            <td><span class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">0%</td><td class="num">1.6ms</td><td class="num">0.2ms</td><td class="num">1.3ms</td><td class="num">0/2</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <td class="cmp">ProjectorPC<span class="m">Intel I219-V 1G</span></td>
+            <td><span class="h good">GOOD</span></td>
+            <td><span class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num" style="color:var(--red)">11.6%</td><td class="num">38ms</td><td class="num">14.2ms</td><td class="num">1.4ms</td><td class="num">1/1</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <td class="cmp">Switch 2<span class="m">Tenda TEM2010F 2.5G</span></td>
+            <td><span class="h good">GOOD</span> <span class="det">inf</span></td>
+            <td><span class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">0%</td><td class="num">1.6ms</td><td class="num">0.2ms</td><td class="num">1.3ms</td><td class="num">0/1</td><td class="num">—</td>
+          </tr>
+          <tr>
+            <td class="cmp">Router<span class="m">TP-Link BE9300</span></td>
+            <td><span class="h good">GOOD</span></td>
+            <td><span class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">0%</td><td class="num">2.1ms</td><td class="num">0.3ms</td><td class="num">1.0ms</td><td class="num">0/4</td><td class="num">—</td>
+          </tr>
+          <tr>
+            <td class="cmp">Modem<span class="m">Calix C5500XK · WAN</span></td>
+            <td><span class="h good">GOOD</span></td>
+            <td><span class="cov l1"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">8ms</td><td class="num">0/1</td><td class="num">—</td>
+          </tr>
+          <tr style="opacity:.6">
+            <td class="cmp">WiFi clients<span class="m">AX1675x/AX210/AX211</span></td>
+            <td><span class="h unk">UNTESTED</span></td>
+            <td><span class="cov l0"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">0/0</td><td class="num">—</td>
+          </tr>
+          <tr style="opacity:.6">
+            <td class="cmp">Wall Jacks ×2<span class="m">passive</span></td>
+            <td><span class="h unk">UNTESTED</span></td>
+            <td><span class="cov l0"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></span></td>
+            <td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">0/0</td><td class="num">—</td>
+          </tr>
+        </table>
+        <div class="det" style="margin-top:10px">↑ = under load · Fail/paths = failing vs total paths crossing this component · inf = health inferred from endpoint coverage · component list loaded from network config file</div>
+      </section>
+
+      <!-- ================= MAP ================= -->
+      <section class="view" id="map">
+        <h1>Network map</h1>
+        <p class="lead">Topology and device list are loaded from the network config file. <b>Color</b> = health, <b>line weight</b> = how well that connection is tested. A thin dashed link is untested; a thick solid one is exercised under load. Segments between two well-tested endpoints are covered by inference.</p>
+        <div class="map">
+          <div class="mapnote">2.5G LAN throughout. Failing paths share Switch 1, but its endpoints aren't yet covered under load — not isolated.</div>
+          <svg width="100%" height="100%" style="position:absolute;inset:0;z-index:1">
+            <!-- untested/light links: thin grey dashed -->
+            <g stroke="#3a4757" stroke-width="2" stroke-dasharray="5 5" fill="none">
+              <line x1="36%" y1="58" x2="36%" y2="104"/>
+              <line x1="36%" y1="132" x2="36%" y2="188"/>
+              <line x1="36%" y1="216" x2="36%" y2="270"/>
+              <line x1="20%" y1="296" x2="30%" y2="296"/>
+            </g>
+            <!-- tested-clean link (Switch2 segment): thick green -->
+            <g stroke="var(--green)" stroke-width="4" fill="none" opacity=".8">
+              <line x1="50%" y1="396" x2="50%" y2="452"/>
+              <line x1="42%" y1="476" x2="35%" y2="528"/>
+              <line x1="58%" y1="476" x2="64%" y2="528"/>
+            </g>
+            <!-- exercised-but-failing path: thick red animated -->
+            <g stroke="#f85149" stroke-width="4" stroke-dasharray="9 7" fill="none">
+              <line x1="35%" y1="528" x2="42%" y2="476"><animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.1s" repeatCount="indefinite"/></line>
+              <line x1="50%" y1="452" x2="50%" y2="396"><animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.1s" repeatCount="indefinite"/></line>
+              <line x1="62%" y1="372" x2="78%" y2="300"><animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.1s" repeatCount="indefinite"/></line>
+              <line x1="78%" y1="270" x2="78%" y2="128"><animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.1s" repeatCount="indefinite"/></line>
+            </g>
+            <!-- partially tested: medium amber -->
+            <g stroke="var(--amber)" stroke-width="3" fill="none" opacity=".7">
+              <line x1="36%" y1="316" x2="48%" y2="372"/>
+              <line x1="64%" y1="384" x2="86%" y2="384"/>
+            </g>
+          </svg>
+
+          <div class="n q-unknown untested" style="left:36%;top:42px">Fiber Modem<div class="md">Calix C5500XK</div></div>
+          <div class="n q-unknown untested" style="left:36%;top:118px">Wall Jack<div class="md">passive</div></div>
+          <div class="n q-unknown untested" style="left:36%;top:202px">Wall Jack<div class="md">passive</div></div>
+          <div class="n q-good" style="left:36%;top:288px">Router<div class="md">TP-Link BE9300</div><div class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-unknown untested cloud" style="left:13%;top:296px">WiFi clients<div class="md">untested</div></div>
+          <div class="n bar q-fair" style="left:50%;top:384px">Switch 1<div class="md">Tenda TEM2010F · 2.5G</div><div class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-fair untested" style="left:78%;top:292px">Connector<div class="md">UGREEN coupler</div><div class="cov l1"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-good" style="left:78%;top:92px">ProjectorPC<div class="md">I219-V · 1G</div><div class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-fair" style="left:90%;top:384px">NAS<div class="md">TS-563 · 1G</div><div class="cov l2"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n bar q-good" style="left:50%;top:464px">Switch 2<div class="md">Tenda TEM2010F · 2.5G</div><div class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-good" style="left:32%;top:540px">Ryzen<div class="md">Killer E3100G · 2.5G</div><div class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+          <div class="n q-good" style="left:64%;top:540px">NCASE<div class="md">I226-V · 2.5G</div><div class="cov l3"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div></div>
+
+          <div class="maplegend">
+            <span><i style="border-color:var(--green)"></i>good</span>
+            <span><i style="border-color:var(--amber)"></i>fair / watch</span>
+            <span><i style="border-color:var(--red)"></i>poor</span>
+            <span><i style="border-color:var(--grey);border-style:dashed"></i>untested</span>
+            <span style="color:var(--green)">▬ tested clean</span>
+            <span style="color:var(--red)">▬ failing</span>
+            <span style="color:var(--dim)">┈ untested link</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= AGENTS ================= -->
+      <section class="view" id="agents">
+        <h1>Agents</h1>
+        <p class="lead">Deploy the agent to each machine and keep it running. One binary per platform; it installs itself as a background service that survives reboots. Each PC has both Ethernet and WiFi 6E — deploy on either (or both) to cover that path.</p>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <h2 style="margin:0">Deployed machines</h2>
+            <div><button class="btn ghost sm">+ Add machine</button> <button class="btn sm">Deploy / update all</button></div>
+          </div>
+          <table>
+            <tr><th>Machine</th><th>NIC under test</th><th>Platform</th><th>Install</th><th>Service</th><th>Ver</th><th>Seen</th></tr>
+            <tr><td><b>Ryzen</b> <span class="chip blue">coordinator</span></td><td class="mono">Killer E3100G (2.5G)</td><td>Win 11</td><td><span class="ck">✓</span></td><td><span class="ck">running</span></td><td class="mono">0.4.1</td><td class="mono">now</td></tr>
+            <tr><td><b>NCASE</b></td><td class="mono">Intel I226-V (2.5G)</td><td>Win 11</td><td><span class="ck">✓</span></td><td><span class="ck">running</span></td><td class="mono">0.4.1</td><td class="mono">2s</td></tr>
+            <tr><td><b>ProjectorPC</b></td><td class="mono">Intel I219-V (1G)</td><td>Win 11</td><td><span class="ck">✓</span></td><td><span class="ck">running</span></td><td class="mono">0.4.1</td><td class="mono">3s</td></tr>
+            <tr><td><b>NAS</b></td><td class="mono">TS-563 Intel 1G</td><td>QNAP (Docker)</td><td><span class="warn">⚠ update</span></td><td><span class="ck">running</span></td><td class="mono">0.3.9</td><td class="mono">4s</td></tr>
+            <tr style="opacity:.6"><td><b>Mac (WiFi)</b></td><td class="mono">—</td><td>macOS</td><td><span class="x">not deployed</span></td><td>—</td><td>—</td><td>—</td></tr>
+          </table>
+        </div>
+        <div class="row">
+          <div class="card" style="background:var(--panel2)"><b>Windows</b><div class="det" style="margin:6px 0"><code>netlogger install</code> → low-priv Windows Service. No admin needed for normal probes.</div><button class="btn sm">Get installer</button></div>
+          <div class="card" style="background:var(--panel2)"><b>QNAP</b><div class="det" style="margin:6px 0">Docker via Container Station, <code>--restart always</code> — survives reboots &amp; firmware updates.</div><button class="btn sm">Get compose</button></div>
+          <div class="card" style="background:var(--panel2)"><b>macOS</b><div class="det" style="margin:6px 0">signed .pkg → LaunchDaemon. Adds a WiFi client to the mesh.</div><button class="btn sm">Get .pkg</button></div>
+        </div>
+      </section>
+
+      <!-- ================= CONFIGURATION ================= -->
+      <section class="view" id="config">
+        <h1>Configuration</h1>
+        <p class="lead">Results only mean something if each machine is set up right. NetLogger checks that the agent is running, reachable, time-synced, and able to probe — and flags anything that would corrupt the measurements.</p>
+        <div class="card">
+          <h2>Readiness checks</h2><div class="sub">per machine · re-checked continuously · <span class="x">2 issues</span></div>
+          <table>
+            <tr><th>Check</th><th>Ryzen</th><th>NCASE</th><th>ProjectorPC</th><th>NAS</th></tr>
+            <tr><td>Service running &amp; reachable</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+            <tr><td>Clock sync within tolerance</td><td class="ck">✓ ±1ms</td><td class="ck">✓ ±1ms</td><td class="ck">✓ ±1ms</td><td class="warn">⚠ ±1.0s</td></tr>
+            <tr><td>Probe ports open (firewall)</td><td class="ck">✓</td><td class="ck">✓</td><td class="x">✗ blocked</td><td class="ck">✓</td></tr>
+            <tr><td>iperf3 present &amp; correct version</td><td class="ck">✓ 3.18</td><td class="ck">✓ 3.18</td><td class="ck">✓ 3.18</td><td class="x">✗ missing</td></tr>
+            <tr><td>Link speed matches config</td><td class="ck">✓ 2.5G</td><td class="ck">✓ 2.5G</td><td class="ck">✓ 1G</td><td class="ck">✓ 1G</td></tr>
+            <tr><td>Data directory writable</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓ /share/Public</td></tr>
+            <tr><td>Probe role &amp; targets assigned</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+          </table>
+        </div>
+        <div class="card" style="border-color:rgba(248,81,73,.3)">
+          <h2>Issues to fix (2)</h2>
+          <table>
+            <tr><th>Machine</th><th>Problem</th><th>Effect on results</th><th></th></tr>
+            <tr><td>ProjectorPC</td><td>Probe port blocked by firewall</td><td>peer tests to/from this PC fail or look like drops</td><td><button class="btn sm">Add rule</button></td></tr>
+            <tr><td>NAS</td><td>iperf3 not installed</td><td>can't run load tests on the NAS path</td><td><button class="btn sm">Install</button></td></tr>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= TESTS ================= -->
+      <section class="view" id="tests">
+        <h1>Tests</h1>
+        <p class="lead">Run the probes that build coverage. Continuous probes run in the background; load tests you trigger against a chosen path. Each load test that crosses a segment raises that segment's coverage.</p>
+        <div class="row">
+          <div class="card"><h2>Continuous mesh</h2><div class="sub">always-on probing between every pair</div>
+            <table>
+              <tr><td>Status</td><td><span class="chip green">● running</span></td></tr>
+              <tr><td>Probe types</td><td>UDP (timing/loss) · ICMP baseline · TCP reachability</td></tr>
+              <tr><td>Rate</td><td class="mono">10 Hz active · 1 Hz idle</td></tr>
+            </table>
+          </div>
+          <div class="card"><h2>Load (stress) test</h2><div class="sub">flood a path to provoke load-triggered drops</div>
+            <table>
+              <tr><td>Path</td><td>Ryzen → ProjectorPC <span class="det">(via Switch 1)</span></td></tr>
+              <tr><td>Profile</td><td class="mono">UDP 30 Mbit/s · 1300B · 60s · bidir</td></tr>
+              <tr><td>Last result</td><td><span class="chip red">11.6% loss</span></td></tr>
+            </table>
+            <button class="btn sm" style="margin-top:10px">Run stress test</button>
+          </div>
+        </div>
+        <div class="card"><h2>Coverage-building queue</h2><div class="sub">tests chosen to fill the gaps on the Overview board</div>
+          <table>
+            <tr><th>Test</th><th>Raises coverage of</th><th>Status</th></tr>
+            <tr><td>Load — Ryzen→ProjectorPC (via Sw1)</td><td>Switch 1, Connector</td><td><span class="chip green">done</span></td></tr>
+            <tr><td>Load — Ryzen→ProjectorPC, bypass Switch 1 <span class="det">(re-cable)</span></td><td>isolates Switch 1</td><td><span class="chip grey">queued</span></td></tr>
+            <tr><td>Load — NCASE→NAS</td><td>NAS path, I226-V under load</td><td><span class="chip grey">queued</span></td></tr>
+            <tr><td>WiFi path — ProjectorPC (AX210)</td><td>WiFi segment (currently untested)</td><td><span class="chip grey">suggested</span></td></tr>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= ACTIVITY ================= -->
+      <section class="view" id="activity">
+        <h1>Activity</h1>
+        <p class="lead">Response time and loss over time. Shaded band = healthy range; red zone = the drop captured under load.</p>
+        <div class="card">
+          <h2>Response time — peer paths</h2>
+          <div class="sub"><span style="color:var(--green)">Ryzen→NCASE (Switch 2 only)</span> vs <span style="color:var(--red)">Ryzen→ProjectorPC (via Switch 1)</span></div>
+          <svg width="100%" viewBox="0 0 880 230" preserveAspectRatio="none" style="display:block">
+            <rect x="40" y="150" width="800" height="40" fill="rgba(63,185,80,.10)"/><text x="46" y="165" font-size="9" fill="var(--green)">healthy range</text>
+            <g stroke="var(--grid)"><line x1="40" y1="20" x2="40" y2="190"/><line x1="40" y1="190" x2="840" y2="190"/></g>
+            <rect x="500" y="20" width="230" height="170" fill="rgba(76,194,255,.06)"/><text x="506" y="33" font-size="9" fill="var(--accent)">load test</text>
+            <rect x="572" y="20" width="66" height="170" fill="rgba(248,81,73,.12)"/><text x="576" y="185" font-size="9" fill="var(--red)">drop</text>
+            <polyline fill="none" stroke="var(--green)" stroke-width="1.8" points="40,182 140,183 240,181 340,182 440,180 500,181 560,180 600,182 640,181 700,182 760,181 840,182"/>
+            <polyline fill="none" stroke="var(--red)" stroke-width="2" points="40,181 140,182 240,180 340,181 440,179 500,140 540,95 565,45 572,35"/>
+            <polyline fill="none" stroke="var(--red)" stroke-width="2" stroke-dasharray="3 4" opacity=".5" points="572,35 638,35"/>
+            <polyline fill="none" stroke="var(--red)" stroke-width="2" points="638,35 660,110 700,160 760,178 840,181"/>
+          </svg>
+        </div>
+        <div class="card"><details open><summary>Technical numbers</summary>
+          <table style="margin-top:12px">
+            <tr><th>Path</th><th>Median</th><th>p95 under load</th><th>Loss</th><th>Jitter</th></tr>
+            <tr><td>Ryzen → NCASE <span class="chip green">control</span></td><td class="mono">1.3 ms</td><td class="mono">1.6 ms</td><td class="mono">0%</td><td class="mono">0.2 ms</td></tr>
+            <tr><td>Ryzen → ProjectorPC <span class="chip red">via Sw1</span></td><td class="mono">1.4 ms</td><td class="mono">38 ms</td><td class="mono" style="color:var(--red)">11.6%</td><td class="mono" style="color:var(--amber)">14.2 ms</td></tr>
+          </table>
+        </details></div>
+      </section>
+
+      <!-- ================= REPORT ================= -->
+      <section class="view" id="report">
+        <h1>Report</h1>
+        <p class="lead">Export the whole session — component health, coverage, hardware notes, and all raw data — as one file to archive or hand off for analysis.</p>
+        <div class="row">
+          <div class="card"><h2>📦 netlogger-report-2026-06-04.zip</h2><div class="sub">~2 MB · scores + coverage + raw data</div>
+            <div class="mono" style="font-size:12px;line-height:1.95">
+              <div><span style="color:var(--accent)">summary.txt</span> <span style="color:var(--green);font-size:10px">read first</span></div>
+              <div><span style="color:var(--accent)">component-scores.json</span> <span style="color:var(--green);font-size:10px">read first</span> <span style="color:var(--dim)">— health + coverage + HW notes</span></div>
+              <div><span style="color:var(--accent)">coverage.json</span> <span style="color:var(--green);font-size:10px">read first</span> <span style="color:var(--dim)">— per-segment, incl. inferred</span></div>
+              <div><span style="color:var(--accent)">network-config.json</span> <span style="color:var(--dim)">— topology + device list (the config file)</span></div>
+              <div><span style="color:var(--accent)">what-each-field-means.json</span> <span style="color:var(--green);font-size:10px">read first</span></div>
+              <div><span style="color:var(--accent)">timeline.csv</span></div>
+              <div style="color:var(--dim)">raw-data/ ryzen · ncase · projectorpc · nas .parquet</div>
+            </div>
+            <button class="btn" style="margin-top:14px">Save report</button>
+          </div>
+          <div class="card"><h2>summary.txt preview</h2><div class="sub">auto-written</div>
+            <pre style="font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--muted);white-space:pre-wrap">Status: NOT ISOLATED — coverage 58%
+
+Failing paths (2): both cross Switch 1.
+  Ryzen→ProjectorPC  loss 11.6%  p95 38ms
+  *→NAS              loss 9.8%   p95 22ms
+Clean under load: Ryzen→NCASE (Switch 2 only)
+  loss 0%  p95 1.6ms
+
+Covered &amp; clean: Switch 2 (inferred from
+well-tested Ryzen+NCASE endpoints), Router.
+Untested: WiFi clients, wall jacks, modem.
+
+To raise coverage / isolate:
+  • Bypass Switch 1; re-run the load test
+    (isolates Switch 1 vs its endpoints).
+  • Load-test *→NAS directly.
+  • Deploy an agent on a WiFi client.
+
+Timing note: cross-host ordering good to ~1s
+(NAS coarse clock); Windows PCs to ~1ms.</pre>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+<script>
+  function go(v){
+    document.querySelectorAll('.nav a').forEach(x=>x.classList.toggle('active',x.dataset.v===v));
+    document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===v));
+    document.querySelector('.main').scrollTop=0;
+  }
+  document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>go(a.dataset.v));
+</script>
+</body>
+</html>
