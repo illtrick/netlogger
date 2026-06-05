@@ -329,16 +329,32 @@ function renderMap(){
 }
 
 // ---- push to peer ----
+function isUsableHost(h){return h&&h!=='127.0.0.1'&&h!=='0.0.0.0'&&h!=='localhost'&&h!=='::1';}
+// coordBase returns the address a *remote* machine should use to reach this
+// coordinator. location.host is 127.0.0.1 when the dashboard is opened locally,
+// which is useless on a peer — so prefer the coordinator node's configured LAN
+// address from the topology.
+function coordBase(){
+  const nodes=(DATA.topology&&DATA.topology.nodes)||[];
+  const coord=nodes.find(n=>n.role==='coordinator'&&n.address)||nodes.find(n=>n.address);
+  if(coord){const h=(coord.address.split(':')[0]||'');if(isUsableHost(h))return coord.address;}
+  if(isUsableHost((location.host.split(':')[0]||'')))return location.host;
+  return (coord&&coord.address)||location.host; // last resort (may be loopback)
+}
 function bootstrapFor(node){
-  const coord=location.host;
-  return [
+  const base=coordBase();
+  const bad=!isUsableHost((base.split(':')[0]||''));
+  const lines=[];
+  if(bad)lines.push('# WARNING: replace '+base+' below with this coordinator\'s LAN IP:8088 (e.g. 192.168.0.154:8088)');
+  lines.push(
     '# Run in an ELEVATED PowerShell on the new machine:',
     '$d="$env:ProgramData\\NetLogger"; New-Item -ItemType Directory -Force $d | Out-Null',
-    'Invoke-WebRequest "http://'+coord+'/download/agent" -OutFile "$d\\netlogger.exe"',
-    'Invoke-WebRequest "http://'+coord+'/download/config.yaml" -OutFile "$d\\network.yaml"',
+    'Invoke-WebRequest "http://'+base+'/download/agent" -OutFile "$d\\netlogger.exe"',
+    'Invoke-WebRequest "http://'+base+'/download/config.yaml" -OutFile "$d\\network.yaml"',
     '& "$d\\netlogger.exe" --config "$d\\network.yaml" --node '+node+' --listen 0.0.0.0:8088 install',
     '& "$d\\netlogger.exe" --config "$d\\network.yaml" --node '+node+' --listen 0.0.0.0:8088 start'
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 function renderDeploy(){
   const sel=$('#depNode');const prev=sel.value;
