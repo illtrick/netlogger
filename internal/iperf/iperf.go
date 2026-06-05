@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // Interval is one 1-second iperf3 interval (the high-signal fields, spec §5.4).
@@ -116,6 +117,22 @@ func binary() string {
 
 // Available reports whether an iperf3 binary is bundled or on PATH.
 func Available() bool { return binary() != "" }
+
+// Version returns iperf3's version line using the SAME resolution as the runner
+// (co-located binary preferred over PATH), or "" if iperf3 is not found. This
+// keeps the readiness "iperf3 present" check consistent with what load tests
+// will actually use.
+func Version() string {
+	bin := binary()
+	if bin == "" {
+		return ""
+	}
+	out, err := exec.Command(bin, "--version").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+}
 
 // Opts configures a load test run.
 type Opts struct {

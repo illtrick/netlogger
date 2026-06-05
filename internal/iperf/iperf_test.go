@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+// TestVersionConsistentWithAvailable guards the contract that the readiness
+// check (Version) and the runner (Available/binary) agree about whether iperf3
+// exists — they must use the same resolution (co-located preferred over PATH).
+func TestVersionConsistentWithAvailable(t *testing.T) {
+	if Available() != (Version() != "") {
+		t.Fatalf("Available()=%v but Version()=%q — detection paths disagree", Available(), Version())
+	}
+}
+
 func TestParseTCP(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "tcp.json"))
 	if err != nil {

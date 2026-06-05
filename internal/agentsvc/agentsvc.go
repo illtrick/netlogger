@@ -21,6 +21,7 @@ import (
 	"netlogger/internal/config"
 	"netlogger/internal/coordinator"
 	"netlogger/internal/httpauth"
+	"netlogger/internal/iperf"
 	"netlogger/internal/launch"
 	"netlogger/internal/localsettings"
 	"netlogger/internal/mesh"
@@ -89,7 +90,7 @@ func (p *Program) Start(s service.Service) error {
 		Store:         st,
 		NodeID:        self.ID,
 		Host:          host,
-		Iperf3Version: sysinfo.Iperf3Version(),
+		Iperf3Version: iperf.Version(),
 		DataWritable:  sysinfo.DataDirWritable(dataDir),
 	}
 	ws := &web.Server{Host: host, ServiceState: "running"}
