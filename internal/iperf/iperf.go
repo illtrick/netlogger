@@ -100,17 +100,27 @@ func pick(exeDir, name string, exists func(string) bool, look func(string) (stri
 	return ""
 }
 
+// bundledPath is the extracted bundled iperf3 (set by Bootstrap on Windows).
+var bundledPath string
+
+func setBundled(p string) { bundledPath = p }
+
 // binary returns the path to the iperf3 executable, or "" if none is found.
+// Resolution order: extracted bundled binary > co-located (next to netlogger) >
+// PATH.
 func binary() string {
 	name := "iperf3"
 	if runtime.GOOS == "windows" {
 		name = "iperf3.exe"
 	}
+	exists := func(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
+	if bundledPath != "" && exists(bundledPath) {
+		return bundledPath
+	}
 	exeDir := ""
 	if exe, err := os.Executable(); err == nil {
 		exeDir = filepath.Dir(exe)
 	}
-	exists := func(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 	look := func(n string) (string, bool) { p, err := exec.LookPath(n); return p, err == nil }
 	return pick(exeDir, name, exists, look)
 }

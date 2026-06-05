@@ -1,6 +1,8 @@
 # build output
 /bin/
 *.exe
+# but DO track the bundled iperf3 shipped inside the Windows binary
+!internal/iperf/bundled/iperf3.exe
 # local data / databases
 *.db
 *.db-wal

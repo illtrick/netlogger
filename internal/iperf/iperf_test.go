@@ -3,8 +3,28 @@ package iperf
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// TestBinaryPrefersBundled verifies the extracted bundled binary wins over
+// co-located / PATH resolution.
+func TestBinaryPrefersBundled(t *testing.T) {
+	name := "iperf3"
+	if runtime.GOOS == "windows" {
+		name = "iperf3.exe"
+	}
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := bundledPath
+	t.Cleanup(func() { bundledPath = old })
+	setBundled(p)
+	if got := binary(); got != p {
+		t.Fatalf("binary() = %q, want bundled %q", got, p)
+	}
+}
 
 // TestVersionConsistentWithAvailable guards the contract that the readiness
 // check (Version) and the runner (Available/binary) agree about whether iperf3

@@ -20,7 +20,7 @@ Every node runs the agent; one is `role: coordinator` (serves the GUI + aggregat
 - `internal/mesh` — agent sync API (`/api/info,/samples,/time`), coordinator `Puller` (cursor-based, idempotent, liveness), NTP-style offset handshake, `Offsets`, `AuthClient`.
 - `internal/correlate` — event detection + interval-overlap correlation (peak-concurrent-agents → simultaneous).
 - `internal/score` — topology BFS paths + per-component health/coverage.
-- `internal/readiness` `internal/classify` `internal/iperf` `internal/sysinfo` (NIC counters) — checks, bufferbloat-vs-fault + LAN-vs-WAN, iperf3 wrap (prefers co-located binary), self-checks.
+- `internal/readiness` `internal/classify` `internal/iperf` `internal/sysinfo` (NIC counters) — checks, bufferbloat-vs-fault + LAN-vs-WAN, iperf3 wrap, self-checks. **iperf3 is bundled** in the Windows build (`internal/iperf/bundled/`, embedded via build-tagged `bundle_windows.go`); each agent self-extracts it to the data dir (`Bootstrap`) and runs an **always-on iperf3 server** on :5201 (`StartServer`) so any node is a turnkey load-test target. Resolution: bundled > co-located > PATH. Linux/macOS builds don't embed (fall back to PATH). NOTE: bundled `cygwin1.dll` is GPLv3 — fine for internal use; reconsider for public redistribution.
 - `internal/coordinator` — HTTP handlers (components/correlation/loadtest/classify/topology…).
 - `internal/httpauth` — bearer token (`NETLOGGER_TOKEN`) + Host allowlist; loopback + `/`/`/api/status` exempt; `/api/*` protected; `/download/*` open.
 - `internal/svcctl` — elevated Windows service control (UAC) + status.

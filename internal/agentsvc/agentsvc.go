@@ -47,6 +47,7 @@ type Program struct {
 
 	store      *store.Store
 	srv        *http.Server
+	iperfSrv   *iperf.Server
 	puller     *mesh.Puller
 	offsets    *mesh.Offsets
 	httpClient *http.Client
@@ -86,6 +87,12 @@ func (p *Program) Start(s service.Service) error {
 
 	host, _ := os.Hostname()
 	dataDir := filepath.Dir(p.DBPath)
+	// Extract the bundled iperf3 (Windows) so load tests are turnkey, then start
+	// an always-on iperf3 server so this node can be a load-test target.
+	if err := iperf.Bootstrap(dataDir); err != nil {
+		fmt.Fprintln(os.Stderr, "netlogger: iperf3 bundle:", err)
+	}
+	p.iperfSrv = iperf.StartServer(0)
 	api := &mesh.AgentAPI{
 		Store:         st,
 		NodeID:        self.ID,
@@ -498,6 +505,9 @@ func (p *Program) Stop(s service.Service) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = p.srv.Shutdown(ctx)
+	}
+	if p.iperfSrv != nil {
+		p.iperfSrv.Stop()
 	}
 	p.wg.Wait() // join probe/pull/offset loops so no goroutine is mid-write at Close
 	if p.store != nil {
