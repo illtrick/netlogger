@@ -6,13 +6,18 @@ package appcore
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"netlogger/internal/discovery"
+	"netlogger/internal/firewall"
+	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
+	"netlogger/internal/version"
 )
 
 // Snapshot is an immutable view of engine state for the UI.
@@ -25,6 +30,7 @@ type Snapshot struct {
 	Samples        int
 	LastRTTms      float64
 	LossPct        float64
+	Peers          []PeerInfo
 }
 
 // App is the single-machine engine controller.
@@ -45,6 +51,11 @@ type App struct {
 	stopOnce  sync.Once
 	startedAt time.Time
 
+	Discovery PeerLister // injectable; if nil, Start creates a real discovery.Service
+	disc      *discovery.Service
+	nodeID    string
+	host      string
+
 	mu        sync.Mutex
 	samples   int
 	lastRTTms float64
@@ -52,6 +63,26 @@ type App struct {
 }
 
 const recentWindow = 60
+
+const (
+	controlPort    = 8088
+	discoveryGroup = "239.255.74.76"
+	discoveryPort  = 48076
+)
+
+// PeerLister is the discovery source the UI reads peers through.
+type PeerLister interface {
+	Peers() []discovery.Peer
+}
+
+// PeerInfo is a discovered peer as exposed to the UI.
+type PeerInfo struct {
+	ID           string
+	Host         string
+	Addr         string
+	Version      string
+	LastSeenUnix int64
+}
 
 // New creates an App for the given (already-resolved) data dir.
 func New(dataDir string) *App {
@@ -92,6 +123,30 @@ func (a *App) Start() error {
 	a.iperfStop = stop
 	a.iperfVer = ver
 	a.startedAt = time.Now()
+	a.mu.Unlock()
+
+	nodeID, _ := identity.NodeID(a.dataDir)
+	host, _ := os.Hostname()
+	var disc *discovery.Service
+	if a.Discovery == nil {
+		_ = firewall.AllowProgram("NetLogger")
+		svc := discovery.New(discovery.Config{
+			SelfID: nodeID, Host: host, ControlPort: controlPort, Version: version.Version,
+			Group: discoveryGroup, Port: discoveryPort,
+		})
+		if err := svc.Start(); err != nil {
+			log.Printf("discovery start: %v", err)
+		} else {
+			disc = svc
+		}
+	}
+	a.mu.Lock()
+	a.nodeID = nodeID
+	a.host = host
+	if disc != nil {
+		a.disc = disc
+		a.Discovery = disc
+	}
 	a.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -154,6 +209,15 @@ func (a *App) Snapshot() Snapshot {
 		}
 		loss = float64(lost) / float64(n) * 100.0
 	}
+	var peers []PeerInfo
+	if a.Discovery != nil {
+		for _, p := range a.Discovery.Peers() {
+			peers = append(peers, PeerInfo{
+				ID: p.ID, Host: p.Host, Addr: p.Addr, Version: p.Version,
+				LastSeenUnix: p.LastSeen.Unix(),
+			})
+		}
+	}
 	return Snapshot{
 		DataDir:        a.dataDir,
 		DBPath:         a.dbPath,
@@ -163,6 +227,7 @@ func (a *App) Snapshot() Snapshot {
 		Samples:        a.samples,
 		LastRTTms:      a.lastRTTms,
 		LossPct:        loss,
+		Peers:          peers,
 	}
 }
 
@@ -175,6 +240,9 @@ func (a *App) Stop() error {
 			a.cancel()
 		}
 		a.wg.Wait()
+		if a.disc != nil {
+			_ = a.disc.Stop()
+		}
 		if a.iperfStop != nil {
 			a.iperfStop()
 		}
