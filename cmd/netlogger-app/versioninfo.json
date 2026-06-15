@@ -1,0 +1,9 @@
+{
+  "FixedFileInfo": { "FileVersion": {"Major":1,"Minor":0,"Patch":0,"Build":0} },
+  "StringFileInfo": {
+    "ProductName": "NetLogger",
+    "FileDescription": "NetLogger portable network diagnostic",
+    "CompanyName": "NetLogger"
+  },
+  "ManifestPath": "app.exe.manifest"
+}
