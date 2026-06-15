@@ -52,3 +52,27 @@ func TestTwoServicesDiscoverEachOther(t *testing.T) {
 		}
 	}
 }
+
+func TestNewAppliesDefaults(t *testing.T) {
+	s := New(Config{Group: "239.255.74.76", Port: 48076})
+	if s.cfg.Interval != 3*time.Second {
+		t.Fatalf("default Interval = %v, want 3s", s.cfg.Interval)
+	}
+	if s.cfg.TTL != 12*time.Second {
+		t.Fatalf("default TTL = %v, want 12s", s.cfg.TTL)
+	}
+}
+
+func TestStopBeforeStartIsSafe(t *testing.T) {
+	s := New(Config{Group: "239.255.74.76", Port: 48076})
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop before Start should be safe, got %v", err)
+	}
+}
+
+func TestPeersEmptyOnFreshService(t *testing.T) {
+	s := New(Config{Group: "239.255.74.76", Port: 48076})
+	if got := s.Peers(); len(got) != 0 {
+		t.Fatalf("expected no peers on fresh service, got %d", len(got))
+	}
+}

@@ -32,3 +32,31 @@ func TestTableExpiresStalePeers(t *testing.T) {
 		t.Fatalf("expected only fresh peer b, got %+v", got)
 	}
 }
+
+func TestTableRemove(t *testing.T) {
+	tbl := newTable(time.Minute, func() time.Time { return time.Unix(1000, 0) })
+	tbl.upsert(Peer{ID: "a", Host: "h"})
+	tbl.remove("a")
+	if len(tbl.list()) != 0 {
+		t.Fatalf("expected peer removed")
+	}
+}
+
+func TestTableListSortedByHostThenID(t *testing.T) {
+	now := func() time.Time { return time.Unix(1000, 0) }
+	tbl := newTable(time.Minute, now)
+	tbl.upsert(Peer{ID: "z", Host: "bravo"})
+	tbl.upsert(Peer{ID: "a", Host: "alpha"})
+	tbl.upsert(Peer{ID: "b", Host: "alpha"})
+	got := tbl.list()
+	if len(got) != 3 || got[0].Host != "alpha" || got[0].ID != "a" || got[1].ID != "b" || got[2].Host != "bravo" {
+		t.Fatalf("unexpected sort order: %+v", got)
+	}
+}
+
+func TestTableListEmpty(t *testing.T) {
+	tbl := newTable(time.Minute, func() time.Time { return time.Unix(1000, 0) })
+	if got := tbl.list(); len(got) != 0 {
+		t.Fatalf("expected empty list, got %d", len(got))
+	}
+}

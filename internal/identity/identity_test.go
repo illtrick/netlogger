@@ -26,3 +26,31 @@ func TestNodeIDCreatesAndPersists(t *testing.T) {
 		t.Fatalf("id not stable: %q vs %q", id1, id2)
 	}
 }
+
+func TestNodeIDHonorsExisting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node-id"), []byte("  preset-id\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := NodeID(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "preset-id" {
+		t.Fatalf("expected existing id honored (trimmed), got %q", id)
+	}
+}
+
+func TestNodeIDRegeneratesOnEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node-id"), []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := NodeID(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(id) < 16 {
+		t.Fatalf("expected a regenerated UUID, got %q", id)
+	}
+}
