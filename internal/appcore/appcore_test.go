@@ -182,6 +182,36 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 	}
 }
 
+func TestSnapshotShowsGateway(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: 3 * time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.Discovery = fakeLister{}
+	a.GatewayIP = "192.168.0.1"
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s := a.Snapshot()
+		if s.GatewayIP == "192.168.0.1" && s.GatewayRTTms > 0 {
+			if s.GatewayLossPct != 0 {
+				t.Fatalf("gateway loss = %v, want 0", s.GatewayLossPct)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gateway not populated; got %+v", a.Snapshot())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)

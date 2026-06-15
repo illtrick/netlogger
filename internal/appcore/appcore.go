@@ -15,6 +15,7 @@ import (
 
 	"netlogger/internal/discovery"
 	"netlogger/internal/firewall"
+	"netlogger/internal/gateway"
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
 	"netlogger/internal/probe"
@@ -33,6 +34,9 @@ type Snapshot struct {
 	LastRTTms      float64
 	LossPct        float64
 	Peers          []PeerInfo
+	GatewayIP      string
+	GatewayRTTms   float64
+	GatewayLossPct float64
 }
 
 // App is the single-machine engine controller.
@@ -58,6 +62,9 @@ type App struct {
 	disc      *discovery.Service
 	nodeID    string
 	host      string
+
+	// GatewayIP is the router to probe; auto-detected in Start when empty.
+	GatewayIP string
 
 	mu        sync.Mutex
 	samples   int
@@ -193,6 +200,9 @@ func (a *App) Start() error {
 		a.disc = disc
 		a.Discovery = disc
 	}
+	if a.GatewayIP == "" {
+		a.GatewayIP = gateway.Default()
+	}
 	a.mu.Unlock()
 
 	if e, err := probe.StartUDPEcho("0.0.0.0:" + strconv.Itoa(udpEchoPort)); err != nil {
@@ -282,6 +292,11 @@ func (a *App) peerLoop(ctx context.Context) {
 					RTTus: res.RTT.Microseconds(), Lost: lost,
 				})
 			}
+			if a.GatewayIP != "" {
+				res, err := a.Ping(a.GatewayIP, 2*time.Second)
+				a.statFor("__gateway__").record(err == nil && !res.Lost,
+					float64(res.RTT.Microseconds())/1000.0)
+			}
 		}
 	}
 }
@@ -354,6 +369,10 @@ func (a *App) Snapshot() Snapshot {
 			})
 		}
 	}
+	var gwRTT, gwLoss float64
+	if a.GatewayIP != "" {
+		gwRTT, gwLoss = a.statFor("__gateway__").read()
+	}
 	return Snapshot{
 		DataDir:        a.dataDir,
 		DBPath:         a.dbPath,
@@ -364,6 +383,7 @@ func (a *App) Snapshot() Snapshot {
 		LastRTTms:      a.lastRTTms,
 		LossPct:        loss,
 		Peers:          peers,
+		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
 	}
 }
 
