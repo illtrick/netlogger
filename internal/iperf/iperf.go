@@ -137,7 +137,9 @@ func Version() string {
 	if bin == "" {
 		return ""
 	}
-	out, err := exec.Command(bin, "--version").CombinedOutput()
+	vc := exec.Command(bin, "--version")
+	hideConsole(vc)
+	out, err := vc.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return ""
 	}
@@ -176,7 +178,9 @@ func RunClient(target string, o Opts) (Result, error) {
 	if bin == "" {
 		return Result{}, fmt.Errorf("iperf3 not found (bundle it next to NetLogger or install it) — cannot run load test")
 	}
-	out, err := exec.Command(bin, buildArgs(target, o)...).Output()
+	cc := exec.Command(bin, buildArgs(target, o)...)
+	hideConsole(cc)
+	out, err := cc.Output()
 	if err != nil && len(out) == 0 {
 		return Result{}, fmt.Errorf("iperf3 run: %w", err)
 	}
