@@ -60,7 +60,8 @@ func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 		rows = append(rows, "   (none yet — launch NetLogger on another machine on this LAN)")
 	}
 	for _, p := range s.Peers {
-		rows = append(rows, fmt.Sprintf("   - %s   %s   %s", peerName(p), p.Addr, versionOr(p.Version)))
+		rows = append(rows, fmt.Sprintf("   - %-14s %-20s  RTT %.2f ms   loss %.1f%%",
+			peerName(p), p.Addr, p.RTTms, p.LossPct))
 	}
 	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, flexChildren(th, rows)...)
