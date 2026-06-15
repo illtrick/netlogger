@@ -32,6 +32,7 @@ type Service struct {
 	pc     *ipv4.PacketConn
 	stop   chan struct{}
 	wg     sync.WaitGroup
+	sendMu sync.Mutex // serializes SetMulticastInterface+WriteTo across goroutines
 	closed sync.Once
 }
 
@@ -113,6 +114,10 @@ func (s *Service) announceLoop(gaddr *net.UDPAddr) {
 }
 
 func (s *Service) sendTo(gaddr *net.UDPAddr, msg []byte) {
+	// SetMulticastInterface + WriteTo is a non-atomic pair on shared socket
+	// state; serialize it since both announceLoop and Stop call sendTo.
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	for _, ifi := range multicastInterfaces() {
 		ifi := ifi
 		_ = s.pc.SetMulticastInterface(&ifi)
