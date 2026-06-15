@@ -53,10 +53,25 @@ func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 		fmt.Sprintf("Database:      %s", s.DBPath),
 		fmt.Sprintf("iperf3:        %s (server %s)", versionOr(s.Iperf3Version), upDown(s.Iperf3ServerUp)),
 		fmt.Sprintf("Self-probe:    %d samples, last RTT %.2f ms, loss %.1f%%", s.Samples, s.LastRTTms, s.LossPct),
+		"",
+		fmt.Sprintf("Discovered peers (%d):", len(s.Peers)),
+	}
+	if len(s.Peers) == 0 {
+		rows = append(rows, "   (none yet — launch NetLogger on another machine on this LAN)")
+	}
+	for _, p := range s.Peers {
+		rows = append(rows, fmt.Sprintf("   - %s   %s   %s", peerName(p), p.Addr, versionOr(p.Version)))
 	}
 	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, flexChildren(th, rows)...)
 	})
+}
+
+func peerName(p appcore.PeerInfo) string {
+	if p.Host != "" {
+		return p.Host
+	}
+	return p.ID
 }
 
 func flexChildren(th *material.Theme, rows []string) []layout.FlexChild {
