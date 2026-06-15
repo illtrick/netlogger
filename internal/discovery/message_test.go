@@ -22,3 +22,19 @@ func TestDecodeRejectsForeignPayload(t *testing.T) {
 		t.Fatalf("expected decode to reject non-JSON")
 	}
 }
+
+func TestEncodeDecodeByeFlag(t *testing.T) {
+	got, ok := decode(encode(announce{ID: "x", Bye: true}))
+	if !ok || !got.Bye || got.ID != "x" {
+		t.Fatalf("bye roundtrip failed: %+v ok=%v", got, ok)
+	}
+}
+
+func TestDecodeEmptyInput(t *testing.T) {
+	if _, ok := decode(nil); ok {
+		t.Fatalf("expected nil to be rejected")
+	}
+	if _, ok := decode([]byte("")); ok {
+		t.Fatalf("expected empty to be rejected")
+	}
+}

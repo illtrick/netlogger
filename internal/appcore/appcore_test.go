@@ -112,3 +112,15 @@ func TestServerDownWhenIperfUnavailable(t *testing.T) {
 		t.Fatalf("expected Iperf3ServerUp=false when iperf3 server is unavailable")
 	}
 }
+
+func TestSnapshotBeforeStart(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	s := a.Snapshot()
+	if s.Samples != 0 || s.LossPct != 0 || s.Iperf3ServerUp {
+		t.Fatalf("expected zero-value snapshot before Start, got %+v", s)
+	}
+	if s.DataDir != dir || s.DBPath == "" {
+		t.Fatalf("expected paths populated, got %+v", s)
+	}
+}

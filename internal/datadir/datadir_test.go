@@ -35,3 +35,21 @@ func TestResolveFallsBackWhenExeDirNotWritable(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestResolveErrorsWhenNothingWritable(t *testing.T) {
+	exeDir := t.TempDir()
+	fallback := t.TempDir()
+	_, err := resolve(exeDir, fallback, func(string) bool { return false })
+	if err == nil {
+		t.Fatalf("expected error when no location is writable")
+	}
+}
+
+func TestProbeWritable(t *testing.T) {
+	if !probeWritable(t.TempDir()) {
+		t.Fatalf("expected temp dir to be writable")
+	}
+	if probeWritable(filepath.Join(t.TempDir(), "does-not-exist-subdir")) {
+		t.Fatalf("expected non-existent dir to be not writable")
+	}
+}
