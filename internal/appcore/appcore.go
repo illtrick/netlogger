@@ -148,6 +148,7 @@ func (a *App) Start() error {
 	var disc *discovery.Service
 	if a.Discovery == nil {
 		_ = firewall.AllowProgram("NetLogger")
+		_ = firewall.AllowPing("NetLogger ICMP")
 		svc := discovery.New(discovery.Config{
 			SelfID: nodeID, Host: host, ControlPort: controlPort, Version: version.Version,
 			Group: discoveryGroup, Port: discoveryPort,

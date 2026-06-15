@@ -9,3 +9,9 @@ func TestAllowProgramBestEffort(t *testing.T) {
 		t.Fatalf("AllowProgram should be best-effort nil, got %v", err)
 	}
 }
+
+func TestAllowPingBestEffort(t *testing.T) {
+	if err := AllowPing("NetLoggerTestICMP"); err != nil {
+		t.Fatalf("AllowPing should be best-effort nil, got %v", err)
+	}
+}
