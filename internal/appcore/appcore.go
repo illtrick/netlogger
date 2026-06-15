@@ -5,6 +5,7 @@ package appcore
 
 import (
 	"context"
+	"log"
 	"path/filepath"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type App struct {
 	iperfVer  string
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+	stopOnce  sync.Once
 	startedAt time.Time
 
 	mu        sync.Mutex
@@ -63,9 +65,15 @@ func New(dataDir string) *App {
 }
 
 func defaultStartIperf(dir string) (func(), string) {
-	_ = iperf.Bootstrap(dir)
+	if err := iperf.Bootstrap(dir); err != nil {
+		log.Printf("iperf3 bootstrap: %v", err)
+	}
 	ver := iperf.Version()
 	srv := iperf.StartServer(0)
+	if srv == nil {
+		// No iperf3 binary available: report no server (nil stop).
+		return nil, ver
+	}
 	return func() { srv.Stop() }, ver
 }
 
@@ -75,9 +83,16 @@ func (a *App) Start() error {
 	if err != nil {
 		return err
 	}
+	stop, ver := a.StartIperf(a.dataDir)
+
+	// Publish startup state under the lock so a concurrent Snapshot (UI
+	// goroutine) sees a consistent view — Snapshot reads these under a.mu.
+	a.mu.Lock()
 	a.store = st
-	a.iperfStop, a.iperfVer = a.StartIperf(a.dataDir)
+	a.iperfStop = stop
+	a.iperfVer = ver
 	a.startedAt = time.Now()
+	a.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
@@ -151,17 +166,21 @@ func (a *App) Snapshot() Snapshot {
 	}
 }
 
-// Stop cancels the loop, stops iperf, and closes the store.
+// Stop cancels the loop, stops iperf, and closes the store. Safe to call more
+// than once; only the first call performs the teardown.
 func (a *App) Stop() error {
-	if a.cancel != nil {
-		a.cancel()
-	}
-	a.wg.Wait()
-	if a.iperfStop != nil {
-		a.iperfStop()
-	}
-	if a.store != nil {
-		return a.store.Close()
-	}
-	return nil
+	var err error
+	a.stopOnce.Do(func() {
+		if a.cancel != nil {
+			a.cancel()
+		}
+		a.wg.Wait()
+		if a.iperfStop != nil {
+			a.iperfStop()
+		}
+		if a.store != nil {
+			err = a.store.Close()
+		}
+	})
+	return err
 }

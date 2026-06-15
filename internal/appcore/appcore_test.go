@@ -76,3 +76,39 @@ func TestLossReflectedInSnapshot(t *testing.T) {
 		t.Fatalf("expected ~100%% loss, got %v", got)
 	}
 }
+
+func TestStopIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return func() {}, "v" }
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatalf("first Stop: %v", err)
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatalf("second Stop should be a no-op returning nil, got: %v", err)
+	}
+}
+
+func TestServerDownWhenIperfUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return nil, "" } // no binary -> nil stop
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	if a.Snapshot().Iperf3ServerUp {
+		t.Fatalf("expected Iperf3ServerUp=false when iperf3 server is unavailable")
+	}
+}
