@@ -6,6 +6,7 @@ package appcore
 import (
 	"context"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -60,6 +61,9 @@ type App struct {
 	samples   int
 	lastRTTms float64
 	recent    []bool // success flags, last N, for loss %
+
+	peerMu    sync.Mutex
+	peerStats map[string]*peerStat
 }
 
 const recentWindow = 60
@@ -82,6 +86,8 @@ type PeerInfo struct {
 	Addr         string
 	Version      string
 	LastSeenUnix int64
+	RTTms        float64
+	LossPct      float64
 }
 
 // New creates an App for the given (already-resolved) data dir.
@@ -92,7 +98,19 @@ func New(dataDir string) *App {
 		Ping:       probe.PingICMP,
 		StartIperf: defaultStartIperf,
 		tick:       time.Second,
+		peerStats:  make(map[string]*peerStat),
 	}
+}
+
+func (a *App) statFor(id string) *peerStat {
+	a.peerMu.Lock()
+	defer a.peerMu.Unlock()
+	s := a.peerStats[id]
+	if s == nil {
+		s = &peerStat{}
+		a.peerStats[id] = s
+	}
+	return s
 }
 
 func defaultStartIperf(dir string) (func(), string) {
@@ -130,6 +148,7 @@ func (a *App) Start() error {
 	var disc *discovery.Service
 	if a.Discovery == nil {
 		_ = firewall.AllowProgram("NetLogger")
+		_ = firewall.AllowPing("NetLogger ICMP")
 		svc := discovery.New(discovery.Config{
 			SelfID: nodeID, Host: host, ControlPort: controlPort, Version: version.Version,
 			Group: discoveryGroup, Port: discoveryPort,
@@ -151,8 +170,9 @@ func (a *App) Start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(1)
+	a.wg.Add(2)
 	go a.probeLoop(ctx)
+	go a.peerLoop(ctx)
 	return nil
 }
 
@@ -195,6 +215,43 @@ func (a *App) probeLoop(ctx context.Context) {
 	}
 }
 
+// peerLoop probes every discovered peer once per tick and records per-peer stats.
+func (a *App) peerLoop(ctx context.Context) {
+	defer a.wg.Done()
+	t := time.NewTicker(a.tick)
+	defer t.Stop()
+	var seq int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.mu.Lock()
+			disc := a.Discovery
+			a.mu.Unlock()
+			if disc == nil {
+				continue
+			}
+			for _, p := range disc.Peers() {
+				host := p.Addr
+				if h, _, err := net.SplitHostPort(p.Addr); err == nil {
+					host = h
+				}
+				res, err := a.Ping(host, 2*time.Second)
+				lost := err != nil || res.Lost
+				rttms := float64(res.RTT.Microseconds()) / 1000.0
+				a.statFor(p.ID).record(!lost, rttms)
+				seq++
+				_, _ = a.store.Insert(store.Sample{
+					Seq: seq, TSUnixUS: time.Now().UnixMicro(), ProbeType: "icmp",
+					SrcHost: a.nodeID, DstHost: p.ID, Direction: "rtt",
+					RTTus: res.RTT.Microseconds(), Lost: lost,
+				})
+			}
+		}
+	}
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
@@ -212,9 +269,10 @@ func (a *App) Snapshot() Snapshot {
 	var peers []PeerInfo
 	if a.Discovery != nil {
 		for _, p := range a.Discovery.Peers() {
+			rtt, loss := a.statFor(p.ID).read()
 			peers = append(peers, PeerInfo{
 				ID: p.ID, Host: p.Host, Addr: p.Addr, Version: p.Version,
-				LastSeenUnix: p.LastSeen.Unix(),
+				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: loss,
 			})
 		}
 	}

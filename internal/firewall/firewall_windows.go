@@ -30,3 +30,19 @@ func AllowProgram(ruleName string) error {
 		"name="+ruleName, "dir=in", "action=allow", "program="+exe, "enable=yes", "profile=any")).Run()
 	return nil
 }
+
+// AllowPing adds (delete-then-add, idempotent) inbound ICMP echo-request allow
+// rules so this machine answers pings from peers. The program-scoped rule does
+// NOT cover ICMP because echo is handled by the kernel, not our process. Returns
+// nil regardless of netsh success.
+func AllowPing(ruleName string) error {
+	v4 := ruleName + " v4"
+	v6 := ruleName + " v6"
+	_ = hidden(exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+v4)).Run()
+	_ = hidden(exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name="+v4, "protocol=icmpv4:8,any", "dir=in", "action=allow", "profile=any")).Run()
+	_ = hidden(exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+v6)).Run()
+	_ = hidden(exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name="+v6, "protocol=icmpv6:128,any", "dir=in", "action=allow", "profile=any")).Run()
+	return nil
+}
