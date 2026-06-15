@@ -47,6 +47,7 @@ func (s *Server) run() {
 		default:
 		}
 		cmd := exec.Command(binary(), "-s", "-p", strconv.Itoa(s.port))
+		hideConsole(cmd)
 		s.mu.Lock()
 		s.cmd = cmd
 		s.mu.Unlock()

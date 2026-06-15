@@ -13,8 +13,12 @@ import (
 // no-op here. Delete-then-add avoids accumulating duplicate rules.
 func ensureFirewallPort(port int) {
 	name := "NetLogger-iperf3"
-	_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+name).Run()
-	_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+	del := exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+name)
+	hideConsole(del)
+	_ = del.Run()
+	add := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
 		"name="+name, "dir=in", "action=allow", "protocol=TCP",
-		"localport="+strconv.Itoa(port)).Run()
+		"localport="+strconv.Itoa(port))
+	hideConsole(add)
+	_ = add.Run()
 }

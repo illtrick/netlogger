@@ -10,3 +10,5 @@
 data/
 # go
 /vendor/
+# generated Windows resource (manifest/version) — produced by go generate
+cmd/netlogger-app/resource.syso
