@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"netlogger/internal/discovery"
 	"netlogger/internal/probe"
 )
 
@@ -122,5 +123,30 @@ func TestSnapshotBeforeStart(t *testing.T) {
 	}
 	if s.DataDir != dir || s.DBPath == "" {
 		t.Fatalf("expected paths populated, got %+v", s)
+	}
+}
+
+type fakeLister struct{ peers []discovery.Peer }
+
+func (f fakeLister) Peers() []discovery.Peer { return f.peers }
+
+func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.Discovery = fakeLister{peers: []discovery.Peer{
+		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088", Version: "v"},
+	}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	snap := a.Snapshot()
+	if len(snap.Peers) != 1 || snap.Peers[0].ID != "p1" || snap.Peers[0].Addr != "10.0.0.1:8088" {
+		t.Fatalf("expected discovered peer in snapshot, got %+v", snap.Peers)
 	}
 }
