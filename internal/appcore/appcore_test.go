@@ -181,3 +181,40 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 198, LossPct: 1.0, AvgRTT: time.Millisecond, Jitter: 500 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{
+		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"},
+	}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ps := a.Snapshot().Peers
+		if len(ps) == 1 && ps[0].JitterMs > 0 {
+			if ps[0].UDPLossPct != 1.0 {
+				t.Fatalf("UDP loss = %v, want 1.0", ps[0].UDPLossPct)
+			}
+			if ps[0].DropEpisodes < 1 {
+				t.Fatalf("expected >=1 drop episode, got %d", ps[0].DropEpisodes)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("UDP jitter not populated; got %+v", a.Snapshot().Peers)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
