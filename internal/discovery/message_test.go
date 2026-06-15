@@ -38,3 +38,10 @@ func TestDecodeEmptyInput(t *testing.T) {
 		t.Fatalf("expected empty to be rejected")
 	}
 }
+
+func TestEncodeDecodeIP(t *testing.T) {
+	got, ok := decode(encode(announce{ID: "x", Host: "h", IP: "192.168.0.154", Port: 8088}))
+	if !ok || got.IP != "192.168.0.154" {
+		t.Fatalf("IP roundtrip failed: %+v ok=%v", got, ok)
+	}
+}

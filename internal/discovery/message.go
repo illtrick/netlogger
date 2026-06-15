@@ -10,6 +10,7 @@ type announce struct {
 	Magic   string `json:"m"`
 	ID      string `json:"id"`
 	Host    string `json:"host"`
+	IP      string `json:"ip,omitempty"` // node's primary outbound IP (multi-homed hosts)
 	Port    int    `json:"port"`
 	Version string `json:"ver"`
 	Bye     bool   `json:"bye,omitempty"`

@@ -91,7 +91,8 @@ func (s *Service) Start() error {
 func (s *Service) announceLoop(gaddr *net.UDPAddr) {
 	defer s.wg.Done()
 	msg := encode(announce{
-		ID: s.cfg.SelfID, Host: s.cfg.Host, Port: s.cfg.ControlPort, Version: s.cfg.Version,
+		ID: s.cfg.SelfID, Host: s.cfg.Host, IP: primaryIP(),
+		Port: s.cfg.ControlPort, Version: s.cfg.Version,
 	})
 	for i := 0; i < 3; i++ {
 		s.sendTo(gaddr, msg)
@@ -147,7 +148,13 @@ func (s *Service) listenLoop() {
 			s.tbl.remove(a.ID)
 			continue
 		}
-		ip := src.IP.String()
+		// Prefer the node's self-reported primary outbound IP (consistent on
+		// multi-homed hosts) over the multicast source IP, which varies by the
+		// interface the announce egressed from.
+		ip := a.IP
+		if ip == "" {
+			ip = src.IP.String()
+		}
 		s.tbl.upsert(Peer{
 			ID:      a.ID,
 			Host:    a.Host,
@@ -174,6 +181,22 @@ func (s *Service) Stop() error {
 		s.wg.Wait()
 	})
 	return nil
+}
+
+// primaryIP returns the local IP the OS would use for outbound traffic (the
+// default-route source). On a multi-homed host this gives one stable, routable
+// address instead of letting the receiver guess from a per-interface multicast
+// source. Returns "" if it can't be determined.
+func primaryIP() string {
+	c, err := net.Dial("udp", "8.8.8.8:80") // no packet sent; just a route lookup
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	if a, ok := c.LocalAddr().(*net.UDPAddr); ok && a.IP != nil {
+		return a.IP.String()
+	}
+	return ""
 }
 
 // multicastInterfaces returns up, multicast-capable interfaces.
