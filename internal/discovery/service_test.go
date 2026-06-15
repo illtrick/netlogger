@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"net"
 	"testing"
 	"time"
 )
@@ -74,5 +75,15 @@ func TestPeersEmptyOnFreshService(t *testing.T) {
 	s := New(Config{Group: "239.255.74.76", Port: 48076})
 	if got := s.Peers(); len(got) != 0 {
 		t.Fatalf("expected no peers on fresh service, got %d", len(got))
+	}
+}
+
+func TestPrimaryIPNonEmpty(t *testing.T) {
+	ip := primaryIP()
+	if ip == "" {
+		t.Skip("no outbound route available in this environment")
+	}
+	if net.ParseIP(ip) == nil {
+		t.Fatalf("primaryIP returned a non-IP: %q", ip)
 	}
 }

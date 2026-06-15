@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ type App struct {
 	// Seams (defaulted in New; overridden in tests).
 	Ping       func(addr string, timeout time.Duration) (probe.Result, error)
 	StartIperf func(dataDir string) (stop func(), version string)
+	ProbeUDP   func(target string, count int, interval, timeout time.Duration) (probe.UDPStats, error)
 	tick       time.Duration
 
 	store     *store.Store
@@ -64,6 +66,8 @@ type App struct {
 
 	peerMu    sync.Mutex
 	peerStats map[string]*peerStat
+	udpStats  map[string]*udpStat
+	udpEcho   *probe.UDPEcho
 }
 
 const recentWindow = 60
@@ -72,6 +76,13 @@ const (
 	controlPort    = 8088
 	discoveryGroup = "239.255.74.76"
 	discoveryPort  = 48076
+	udpEchoPort    = 8089
+	udpProbeCount  = 200
+)
+
+var (
+	udpProbeInterval = 5 * time.Millisecond
+	udpProbeTimeout  = 200 * time.Millisecond
 )
 
 // PeerLister is the discovery source the UI reads peers through.
@@ -88,6 +99,9 @@ type PeerInfo struct {
 	LastSeenUnix int64
 	RTTms        float64
 	LossPct      float64
+	JitterMs     float64
+	UDPLossPct   float64
+	DropEpisodes int
 }
 
 // New creates an App for the given (already-resolved) data dir.
@@ -97,8 +111,10 @@ func New(dataDir string) *App {
 		dbPath:     filepath.Join(dataDir, "netlogger.db"),
 		Ping:       probe.PingICMP,
 		StartIperf: defaultStartIperf,
+		ProbeUDP:   probe.ProbeUDP,
 		tick:       time.Second,
 		peerStats:  make(map[string]*peerStat),
+		udpStats:   make(map[string]*udpStat),
 	}
 }
 
@@ -109,6 +125,17 @@ func (a *App) statFor(id string) *peerStat {
 	if s == nil {
 		s = &peerStat{}
 		a.peerStats[id] = s
+	}
+	return s
+}
+
+func (a *App) udpStatFor(id string) *udpStat {
+	a.peerMu.Lock()
+	defer a.peerMu.Unlock()
+	s := a.udpStats[id]
+	if s == nil {
+		s = &udpStat{}
+		a.udpStats[id] = s
 	}
 	return s
 }
@@ -168,11 +195,18 @@ func (a *App) Start() error {
 	}
 	a.mu.Unlock()
 
+	if e, err := probe.StartUDPEcho("0.0.0.0:" + strconv.Itoa(udpEchoPort)); err != nil {
+		log.Printf("udp echo start: %v", err)
+	} else {
+		a.udpEcho = e
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(2)
+	a.wg.Add(3)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
+	go a.udpLoop(ctx)
 	return nil
 }
 
@@ -252,6 +286,48 @@ func (a *App) peerLoop(ctx context.Context) {
 	}
 }
 
+// udpLoop runs a high-rate isochronous UDP burst against each discovered peer's
+// echo responder, capturing jitter + micro-drop episodes that 1 Hz ICMP misses.
+func (a *App) udpLoop(ctx context.Context) {
+	defer a.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		a.mu.Lock()
+		disc := a.Discovery
+		a.mu.Unlock()
+		var peers []discovery.Peer
+		if disc != nil {
+			peers = disc.Peers()
+		}
+		if len(peers) == 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(a.tick):
+			}
+			continue
+		}
+		for _, p := range peers {
+			if ctx.Err() != nil {
+				return
+			}
+			host := p.Addr
+			if h, _, err := net.SplitHostPort(p.Addr); err == nil {
+				host = h
+			}
+			target := net.JoinHostPort(host, strconv.Itoa(udpEchoPort))
+			st, err := a.ProbeUDP(target, udpProbeCount, udpProbeInterval, udpProbeTimeout)
+			if err == nil {
+				a.udpStatFor(p.ID).record(st)
+			}
+		}
+	}
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
@@ -270,9 +346,11 @@ func (a *App) Snapshot() Snapshot {
 	if a.Discovery != nil {
 		for _, p := range a.Discovery.Peers() {
 			rtt, loss := a.statFor(p.ID).read()
+			_, jitter, uloss, episodes := a.udpStatFor(p.ID).read()
 			peers = append(peers, PeerInfo{
 				ID: p.ID, Host: p.Host, Addr: p.Addr, Version: p.Version,
 				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: loss,
+				JitterMs: jitter, UDPLossPct: uloss, DropEpisodes: episodes,
 			})
 		}
 	}
@@ -300,6 +378,9 @@ func (a *App) Stop() error {
 		a.wg.Wait()
 		if a.disc != nil {
 			_ = a.disc.Stop()
+		}
+		if a.udpEcho != nil {
+			_ = a.udpEcho.Close()
 		}
 		if a.iperfStop != nil {
 			a.iperfStop()
