@@ -53,6 +53,7 @@ func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 		fmt.Sprintf("Database:      %s", s.DBPath),
 		fmt.Sprintf("iperf3:        %s (server %s)", versionOr(s.Iperf3Version), upDown(s.Iperf3ServerUp)),
 		fmt.Sprintf("Self-probe:    %d samples, last RTT %.2f ms, loss %.1f%%", s.Samples, s.LastRTTms, s.LossPct),
+		gatewayRow(s),
 		"",
 		fmt.Sprintf("Discovered peers (%d):", len(s.Peers)),
 	}
@@ -66,6 +67,13 @@ func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, flexChildren(th, rows)...)
 	})
+}
+
+func gatewayRow(s appcore.Snapshot) string {
+	if s.GatewayIP == "" {
+		return "Gateway:       (not detected)"
+	}
+	return fmt.Sprintf("Gateway:       %s   RTT %.2f ms   loss %.1f%%", s.GatewayIP, s.GatewayRTTms, s.GatewayLossPct)
 }
 
 func peerName(p appcore.PeerInfo) string {
