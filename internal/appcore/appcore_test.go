@@ -61,6 +61,7 @@ func TestLossReflectedInSnapshot(t *testing.T) {
 		return probe.Result{Lost: true}, nil
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
 	a.tick = 5 * time.Millisecond
 	if err := a.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -137,6 +138,7 @@ func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
 	a.Discovery = fakeLister{peers: []discovery.Peer{
 		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088", Version: "v"},
 	}}
@@ -158,6 +160,7 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 		return probe.Result{RTT: 2 * time.Millisecond}, nil
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
 	a.Discovery = fakeLister{peers: []discovery.Peer{
 		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"},
 	}}
@@ -189,6 +192,7 @@ func TestSnapshotShowsGateway(t *testing.T) {
 		return probe.Result{RTT: 3 * time.Millisecond}, nil
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
 	a.Discovery = fakeLister{}
 	a.GatewayIP = "192.168.0.1"
 	a.tick = 5 * time.Millisecond
@@ -212,6 +216,40 @@ func TestSnapshotShowsGateway(t *testing.T) {
 	}
 }
 
+func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 200 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "b", Host: "hostB", Addr: "10.0.0.2:8088"}}}
+	a.FetchLinks = func(addr string) (LinkReport, error) {
+		return LinkReport{NodeID: "b", Host: "hostB", Links: []LinkStat{{PeerID: a.NodeID(), RTTms: 1.2, LossPct: 3.0, Drops: 4}}}, nil
+	}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m := a.Snapshot().Matrix
+		if c, ok := m.Cell("b", a.NodeID()); ok && c.LossPct == 3.0 {
+			if len(m.Nodes) < 2 {
+				t.Fatalf("expected >=2 nodes, got %d", len(m.Nodes))
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("matrix not assembled; got %+v", a.Snapshot().Matrix)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
@@ -219,6 +257,7 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 198, LossPct: 1.0, AvgRTT: time.Millisecond, Jitter: 500 * time.Microsecond}, nil
 	}
