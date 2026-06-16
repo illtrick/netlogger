@@ -569,6 +569,34 @@ func (a *App) Snapshot() Snapshot {
 	return snap
 }
 
+// ResetSession clears all in-memory diagnostics and restarts the session clock,
+// so the UI/charts begin fresh. Persisted samples remain on disk (timestamped).
+func (a *App) ResetSession() {
+	a.peerMu.Lock()
+	a.peerStats = make(map[string]*peerStat)
+	a.udpStats = make(map[string]*udpStat)
+	a.rttHist = make(map[string]*histRing)
+	a.lossHist = make(map[string]*histRing)
+	a.firstSeen = make(map[string]time.Time)
+	a.linkStates = make(map[string]*linkState)
+	a.gwHist = newHistRing(histLen)
+	a.netHist = newHistRing(histLen)
+	a.peerMu.Unlock()
+
+	a.mu.Lock()
+	a.startedAt = time.Now()
+	a.recent = nil
+	a.samples = 0
+	a.lastRTTms = 0
+	a.mu.Unlock()
+
+	a.reportMu.Lock()
+	a.peerReports = make(map[string]LinkReport)
+	a.reportMu.Unlock()
+
+	a.recordEvent(true, "session reset")
+}
+
 // Stop cancels the loop, stops iperf, and closes the store. Safe to call more
 // than once; only the first call performs the teardown.
 func (a *App) Stop() error {

@@ -362,3 +362,36 @@ func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestResetSessionClearsState(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 100 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	// accumulate some samples
+	deadline := time.Now().Add(time.Second)
+	for a.Snapshot().Samples < 5 {
+		if time.Now().After(deadline) {
+			t.Fatal("no samples accumulated")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	a.ResetSession()
+	s := a.Snapshot()
+	if s.Samples > 3 { // should be reset to ~0 (a tick or two may have re-added)
+		t.Fatalf("expected samples reset near 0, got %d", s.Samples)
+	}
+	if s.SessionUptimeSec > 2 {
+		t.Fatalf("expected uptime reset, got %d", s.SessionUptimeSec)
+	}
+}
