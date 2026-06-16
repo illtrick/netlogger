@@ -277,6 +277,7 @@ func (a *App) Start() error {
 	if a.disc != nil {
 		mux := http.NewServeMux()
 		mux.Handle("/api/links", linksHandler(a.linkReport))
+		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
@@ -595,6 +596,21 @@ func (a *App) ResetSession() {
 	a.reportMu.Unlock()
 
 	a.recordEvent(true, "session reset")
+}
+
+// ResetAll restarts the logging session on every discovered peer and on this
+// machine, so the whole mesh begins a fresh session together.
+func (a *App) ResetAll() {
+	a.mu.Lock()
+	disc := a.Discovery
+	a.mu.Unlock()
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	if disc != nil {
+		for _, p := range disc.Peers() {
+			_ = postCommand(client, "http://"+p.Addr, "reset")
+		}
+	}
+	a.ResetSession()
 }
 
 // Stop cancels the loop, stops iperf, and closes the store. Safe to call more
