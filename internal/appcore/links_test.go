@@ -1,6 +1,10 @@
 package appcore
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestAssembleMatrixCombinesAllReports(t *testing.T) {
 	own := LinkReport{NodeID: "a", Host: "hostA", Links: []LinkStat{
@@ -36,5 +40,30 @@ func TestAssembleMatrixNodesSortedByHost(t *testing.T) {
 	m := assembleMatrix(own, peers)
 	if m.Nodes[0].Host != "alpha" || m.Nodes[1].Host != "mike" || m.Nodes[2].Host != "zebra" {
 		t.Fatalf("nodes not sorted by host: %+v", m.Nodes)
+	}
+}
+
+func TestLinksHandlerServesReport(t *testing.T) {
+	rep := LinkReport{NodeID: "a", Host: "hostA", Links: []LinkStat{{PeerID: "b", RTTms: 1}}}
+	mux := http.NewServeMux()
+	mux.Handle("/api/links", linksHandler(func() LinkReport { return rep }))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	got, err := fetchLinks(http.DefaultClient, srv.URL)
+	if err != nil {
+		t.Fatalf("fetchLinks: %v", err)
+	}
+	if got.NodeID != "a" || len(got.Links) != 1 || got.Links[0].PeerID != "b" {
+		t.Fatalf("roundtrip mismatch: %+v", got)
+	}
+}
+
+func TestFetchLinksErrorsOnBadStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	if _, err := fetchLinks(http.DefaultClient, srv.URL); err == nil {
+		t.Fatalf("expected error on 500")
 	}
 }

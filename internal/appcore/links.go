@@ -1,6 +1,11 @@
 package appcore
 
-import "sort"
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+)
 
 // LinkStat is one directed link's current quality, as measured by the source node.
 type LinkStat struct {
@@ -83,4 +88,30 @@ func assembleMatrix(own LinkReport, peers map[string]LinkReport) Matrix {
 		return out[i].ID < out[j].ID
 	})
 	return Matrix{Nodes: out, cells: cells}
+}
+
+// linksHandler serves this node's current LinkReport as JSON. report is a
+// callback so the handler always reflects live stats.
+func linksHandler(report func() LinkReport) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(report())
+	}
+}
+
+// fetchLinks GETs a peer's /api/links and decodes the LinkReport.
+func fetchLinks(client *http.Client, baseURL string) (LinkReport, error) {
+	resp, err := client.Get(baseURL + "/api/links")
+	if err != nil {
+		return LinkReport{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return LinkReport{}, fmt.Errorf("links: status %d", resp.StatusCode)
+	}
+	var rep LinkReport
+	if err := json.NewDecoder(resp.Body).Decode(&rep); err != nil {
+		return LinkReport{}, fmt.Errorf("links decode: %w", err)
+	}
+	return rep, nil
 }
