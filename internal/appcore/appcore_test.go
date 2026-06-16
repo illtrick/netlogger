@@ -14,6 +14,7 @@ import (
 func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	// Deterministic seams: no real ICMP, no real iperf process.
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 1500 * time.Microsecond}, nil
@@ -60,6 +61,7 @@ func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
 func TestLossReflectedInSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{Lost: true}, nil
 	}
@@ -85,6 +87,7 @@ func TestLossReflectedInSnapshot(t *testing.T) {
 func TestStopIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -104,6 +107,7 @@ func TestStopIsIdempotent(t *testing.T) {
 func TestServerDownWhenIperfUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -121,6 +125,7 @@ func TestServerDownWhenIperfUnavailable(t *testing.T) {
 func TestSnapshotBeforeStart(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	s := a.Snapshot()
 	if s.Samples != 0 || s.LossPct != 0 || s.Iperf3ServerUp {
 		t.Fatalf("expected zero-value snapshot before Start, got %+v", s)
@@ -137,6 +142,7 @@ func (f fakeLister) Peers() []discovery.Peer { return f.peers }
 func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -159,6 +165,7 @@ func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 2 * time.Millisecond}, nil
 	}
@@ -191,6 +198,7 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 func TestSnapshotShowsGateway(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 3 * time.Millisecond}, nil
 	}
@@ -222,6 +230,7 @@ func TestSnapshotShowsGateway(t *testing.T) {
 func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -256,6 +265,7 @@ func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
 func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -294,6 +304,7 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 func TestUDPBurstsPersistedToStore(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -333,6 +344,7 @@ func TestUDPBurstsPersistedToStore(t *testing.T) {
 func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 2 * time.Millisecond}, nil
 	}
@@ -368,6 +380,7 @@ func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 func TestResetSessionClearsState(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -409,6 +422,7 @@ func (f fakeKeeper) Stop() {
 func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	starts, stops := 0, 0
 	a.StartKeeper = func() sleepKeeper { starts++; return fakeKeeper{onStop: func() { stops++ }} }
 
@@ -435,6 +449,7 @@ func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
 func TestSnapshotExposesNICsWithDelta(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
