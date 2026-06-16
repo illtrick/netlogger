@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gioui.org/app"
@@ -23,7 +24,8 @@ import (
 )
 
 var blue = color.NRGBA{R: 0x4c, G: 0xc2, B: 0xff, A: 0xff}
-var orange = color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff}
+var orange = color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff} // vermillion — discards/errors ticking up
+var amber = color.NRGBA{R: 0xE6, G: 0x9F, B: 0x00, A: 0xff}  // EEE enabled (a suspect, not yet an error)
 
 // Run opens the window and renders until it is closed.
 func Run(a *appcore.App) error {
@@ -85,6 +87,11 @@ func Run(a *appcore.App) error {
 					// ── Peers ───────────────────────────────────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layoutPeers(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
+					// ── Adapters (NIC health / EEE) ─────────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutAdapters(gtx, th, snap)
 					}),
 					layout.Rigid(spacer(8)),
 					// ── Matrix + legend ─────────────────────────────────
@@ -244,6 +251,62 @@ func peerBlock(gtx layout.Context, th *material.Theme, p appcore.PeerInfo) layou
 			})
 		}),
 	)
+}
+
+// layoutAdapters renders one line per local NIC: link speed/status, EEE state,
+// and the discard/error deltas since the previous poll. A row turns vermillion
+// when any discard/error ticked up (direct NIC evidence during a drop) and amber
+// when Energy-Efficient-Ethernet is enabled on the adapter (the suspect lead).
+func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	header := material.Body1(th, "Adapters:")
+	if len(s.NICs) == 0 {
+		return material.Body1(th, "Adapters: (none reported)").Layout(gtx)
+	}
+	children := make([]layout.FlexChild, 0, len(s.NICs)+1)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return header.Layout(gtx)
+	}))
+	for _, n := range s.NICs {
+		n := n
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(3), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, adapterLine(n))
+				switch {
+				case adapterHasFaults(n):
+					lbl.Color = orange
+				case eeeIsOn(n.EEE):
+					lbl.Color = amber
+				}
+				return lbl.Layout(gtx)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// adapterLine is the pure text rendering of one NIC row.
+func adapterLine(n appcore.NICInfo) string {
+	return fmt.Sprintf("%s  %s  %s  EEE:%s  discards rx+%d tx+%d  errors rx+%d tx+%d",
+		n.Name, n.LinkSpeed, n.Status, eeeText(n.EEE),
+		n.RecentRxDiscards, n.RecentTxDiscards, n.RecentRxErrors, n.RecentTxErrors)
+}
+
+// adapterHasFaults reports whether any discard/error counter ticked up this poll.
+func adapterHasFaults(n appcore.NICInfo) bool {
+	return n.RecentRxDiscards+n.RecentTxDiscards+n.RecentRxErrors+n.RecentTxErrors > 0
+}
+
+// eeeText renders the EEE advanced-property value for display ("n/a" when unknown).
+func eeeText(v string) string {
+	if v == "" {
+		return "n/a"
+	}
+	return v
+}
+
+// eeeIsOn reports whether the EEE value represents an enabled state.
+func eeeIsOn(v string) bool {
+	return strings.EqualFold(v, "Enabled") || strings.EqualFold(v, "On")
 }
 
 // layoutMatrixSection renders the link matrix and its legend.
