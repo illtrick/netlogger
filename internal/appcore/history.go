@@ -21,6 +21,14 @@ func (r *histRing) push(v float64) {
 	}
 }
 
+// reset clears the buffer in place, keeping the same ring identity so callers
+// holding this *histRing don't observe a torn pointer across a session reset.
+func (r *histRing) reset() {
+	r.mu.Lock()
+	r.buf = nil
+	r.mu.Unlock()
+}
+
 func (r *histRing) values() []float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -277,6 +277,9 @@ func (a *App) Start() error {
 	if a.disc != nil {
 		mux := http.NewServeMux()
 		mux.Handle("/api/links", linksHandler(a.linkReport))
+		// /api/command is intentionally open on the trusted LAN (httpauth uses an
+		// empty token, so only the Host-allowlist applies): any peer may trigger a
+		// synchronized session reset. Acceptable for a LAN diagnostic tool.
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
@@ -580,15 +583,32 @@ func (a *App) Snapshot() Snapshot {
 // ResetSession clears all in-memory diagnostics and restarts the session clock,
 // so the UI/charts begin fresh. Persisted samples remain on disk (timestamped).
 func (a *App) ResetSession() {
+	// Clear maps/rings IN PLACE (never reassign the field words): readers like
+	// histFor and gwHist.push read these field references outside a.peerMu, so
+	// rewriting a field header/pointer would be a data race. Deleting keys and
+	// resetting rings keeps the same identities; all content access stays under
+	// a.peerMu / the ring's own lock.
 	a.peerMu.Lock()
-	a.peerStats = make(map[string]*peerStat)
-	a.udpStats = make(map[string]*udpStat)
-	a.rttHist = make(map[string]*histRing)
-	a.lossHist = make(map[string]*histRing)
-	a.firstSeen = make(map[string]time.Time)
-	a.linkStates = make(map[string]*linkState)
-	a.gwHist = newHistRing(histLen)
-	a.netHist = newHistRing(histLen)
+	for k := range a.peerStats {
+		delete(a.peerStats, k)
+	}
+	for k := range a.udpStats {
+		delete(a.udpStats, k)
+	}
+	for k := range a.rttHist {
+		delete(a.rttHist, k)
+	}
+	for k := range a.lossHist {
+		delete(a.lossHist, k)
+	}
+	for k := range a.firstSeen {
+		delete(a.firstSeen, k)
+	}
+	for k := range a.linkStates {
+		delete(a.linkStates, k)
+	}
+	a.gwHist.reset()
+	a.netHist.reset()
 	a.peerMu.Unlock()
 
 	a.mu.Lock()
@@ -599,7 +619,9 @@ func (a *App) ResetSession() {
 	a.mu.Unlock()
 
 	a.reportMu.Lock()
-	a.peerReports = make(map[string]LinkReport)
+	for k := range a.peerReports {
+		delete(a.peerReports, k)
+	}
 	a.reportMu.Unlock()
 
 	a.recordEvent(true, "session reset")
