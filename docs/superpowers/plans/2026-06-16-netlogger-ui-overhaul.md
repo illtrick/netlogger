@@ -41,6 +41,18 @@ Add these as the single source of truth in `internal/ui/theme.go` (UI-1 Task 1).
 
 ---
 
+## Prerequisite already delivered (export leveled up)
+
+Before this plan, the export bundle was made self-sufficient for cross-machine analysis (commit `e48b3bc`). The UI work below must surface what the engine now exposes:
+
+- `Snapshot.Build` (this machine's build id) and `Snapshot.BuildWarning` (non-empty when a peer runs a different build).
+- `PeerInfo.Build` — each peer's build, filled from its pulled link report.
+- `Snapshot.Events` — the merged, host-tagged mesh timeline; the export carries it as `mesh_events`, and `ExportBundle.{Build,BuildWarning}` + `Peers[].Build` are already wired. **No further export changes are needed** — the UI just needs to *display* build/skew (UI-1 + UI-2 topology below). The existing `Export` button already produces the richer bundle.
+
+Diagnostic note that motivates the topology design: a real capture showed **all peers degrading simultaneously together with a local `Ethernet link Disconnected` NIC event** — the signature of *this machine's* NIC/cable dropping (vs a per-peer path fault, which is asymmetric). The topology and event views should make "everything from one box drops at once" visually obvious.
+
+---
+
 ## File structure
 
 | Path | Responsibility | Milestone |
@@ -308,7 +320,7 @@ func kpiTile(gtx layout.Context, th *material.Theme, k kpi) layout.Dimensions {
 }
 ```
 
-- [ ] **Step 4:** Rework `layoutHeader` into a status hero: a 13-dp status dot tinted by `overallStatus`, the status text at `unit.Sp(20)`, and a second line `colTextSec` with "session up <dur>"; keep the `Sleep/Reset all/Export` buttons right-aligned (restyle with `colCard` bg via a small button helper, accent the Export). Insert `layoutKPIs` as a new section between the header and Infrastructure in `Run`'s flex (with `gap(24)` around it).
+- [ ] **Step 4:** Rework `layoutHeader` into a status hero: a 13-dp status dot tinted by `overallStatus`, the status text at `unit.Sp(20)`, and a second line `colTextSec` with "session up <dur> · build <Snapshot.Build>". Keep the `Sleep/Reset all/Export` buttons right-aligned (restyle with `colCard` bg via a small button helper, accent the Export). **Preserve the build-skew banner:** when `s.BuildWarning != ""`, render it directly under the hero as a full-width `colBad`-bordered strip with the `⚠` text (this already exists in `layoutHeader` — keep and restyle it, do not drop it). Insert `layoutKPIs` as a new section between the header and Infrastructure in `Run`'s flex (with `gap(24)` around it).
 
 - [ ] **Step 5: Run to verify pass + build** — `go test ./internal/ui/ -run TestKPIValues` → PASS; `go build ./...`, `go vet`, `gofmt -w internal/ui/`.
 
@@ -318,7 +330,7 @@ func kpiTile(gtx layout.Context, th *material.Theme, k kpi) layout.Dimensions {
 
 **Files:** Modify `internal/ui/ui.go`.
 
-- [ ] **Step 1:** Wrap `layoutInfra`, each peer block in `layoutPeers`, `layoutAdapters`, `layoutMatrixSection`, and `layoutEvents` bodies in `card(gtx, colCard, colBorder, …)`. Set all `material.Body1/Caption` colors explicitly to `colTextPri`/`colTextSec`; switch every numeric/model string to the mono font (`lbl.Font.Typeface = "Go Mono"` equivalent already in the shaper, or reuse a `monoLabel` helper). Replace the footer's gray with `colTextMut`.
+- [ ] **Step 1:** Wrap `layoutInfra`, each peer block in `layoutPeers`, `layoutAdapters`, `layoutMatrixSection`, and `layoutEvents` bodies in `card(gtx, colCard, colBorder, …)`. Set all `material.Body1/Caption` colors explicitly to `colTextPri`/`colTextSec`; switch every numeric/model string to the mono font (`lbl.Font.Typeface = "Go Mono"` equivalent already in the shaper, or reuse a `monoLabel` helper). In each peer block, when `p.Build != ""` and `p.Build != s.Build`, append a small `colWatch` "build <p.Build>" chip so per-peer skew is visible at the peer (complements the hero banner). Keep the footer showing `s.Build`; replace the footer's gray with `colTextMut`.
 
 - [ ] **Step 2:** Event feed: in `layoutEvents`, give each row a left accent bar (`colBad` when `!e.Online`, else `colGood`) using `widgetWithBG` with only a left inset + a 3-dp filled rect, a `colCardAlt` row bg, the host as a small chip (`colCardAlt`, `colTextSec`), `12`-dp row padding, `6`-dp gaps; bump `maxRows` to 10.
 
@@ -824,7 +836,7 @@ func TestViaLabelMultiHomed(t *testing.T) {
 
 - [ ] **Step 2: Run to verify it fails** — `go test ./internal/ui/ -run TestViaLabel` → FAIL.
 
-- [ ] **Step 3: Implement `topology.go`:** `viaLabel` (pure, tested) + `layoutTopology(gtx, th, snap)` rendering each `snap.Topology` tier as a row: a fixed-width `colTextSec` tier label + a wrapped flex of device cards (`card(colCard,…)`). Each card: a status dot (tier-device health → `sevColor`; infra with no monitored IP → `colTextMut`), the device name (`Sp(13)`, medium-weight), model sub (`Sp(11)`, `colTextSec`), and `viaLabel` (`Sp(10)`, `colTextMut`). Mark the local agent with a `colAccent` "this machine" chip. Use Gio's `layout.Flex` with wrapping via a simple width-accumulating helper (no external lib). Insert the section in `Run` between Adapters and the Matrix, behind a small toggle is **not** required — always shown.
+- [ ] **Step 3: Implement `topology.go`:** `viaLabel` (pure, tested) + `layoutTopology(gtx, th, snap)` rendering each `snap.Topology` tier as a row: a fixed-width `colTextSec` tier label + a wrapped flex of device cards (`card(colCard,…)`). Each card: a status dot (tier-device health → `sevColor`; infra with no monitored IP → `colTextMut`), the device name (`Sp(13)`, medium-weight), model sub (`Sp(11)`, `colTextSec`), and `viaLabel` (`Sp(10)`, `colTextMut`). Mark the local agent with a `colAccent` "this machine" chip. **Build skew on agent devices:** join each config device's `NodeUUID` to `s.Peers[].ID`; when that peer's `Build != s.Build`, add a `colWatch` "build <peer.Build>" chip on the device — so the topology shows at a glance which machine is on a stale binary. Use Gio's `layout.Flex` with wrapping via a simple width-accumulating helper (no external lib). Insert the section in `Run` between Adapters and the Matrix, behind a small toggle is **not** required — always shown.
 
 - [ ] **Step 4: Verify + commit** — `go test ./internal/ui/`, `go build ./...`, `gofmt -w internal/ui/`; `git commit -am "feat(ui): connector-less tiered topology view (ui-2)"`. **Manual gate:** relaunch; topology shows Internet/Gateway/Switches/Devices rows with the real gear, medium-aware "via" labels, ryzen tagged "this machine", monitored devices colored by health.
 
@@ -972,6 +984,7 @@ func TestLossBuckets(t *testing.T) {
 - Auto-discovered vs manual + prefill → UI-2 Tasks 4,5 (`MergeAgent`, self-populate). ✓
 - Prepopulated default config → UI-2 Task 1 (`Default()`). ✓
 - Latency bands + 12h heatmap → UI-3 Tasks 1–4. ✓
+- **Display the leveled-up export's build/skew** (prereq `e48b3bc`): hero build line + preserved skew banner (UI-1 T3), per-peer build chip + footer build (UI-1 T4), per-device build-skew chip on the topology (UI-2 T6). The merged `mesh_events` need no new UI — they already drive the "Recent events (mesh-wide)" panel and now ride in the export. ✓
 
 **Placeholder scan:** Backend/pure logic (netmodel, topology, monitor, merge, band ring, loss buckets, editor mutators) is fully specified with test code. Gio composition tasks (UI-1 T2–4, UI-2 T6–7, UI-3 T2,4) give a concrete layout spec + manual gate rather than line-by-line immediate-mode code — the established pattern in this repo's prior UI plans, with all their testable logic (`kpis`, `viaLabel`, `applyEdits`, `addInterface`, `normalizeBands`, `heatRows`) extracted and unit-tested. The one MAC literal to finish (other devices' dummy MACs) is called out explicitly in UI-2 Task 1 Step 3.
 
