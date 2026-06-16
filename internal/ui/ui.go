@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"os"
+	"path/filepath"
 	"time"
 
 	"gioui.org/app"
@@ -14,6 +16,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"netlogger/internal/appcore"
@@ -37,6 +40,9 @@ func Run(a *appcore.App) error {
 		}
 	}()
 
+	var resetBtn, exportBtn widget.Clickable
+	var statusMsg string
+
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
@@ -46,12 +52,26 @@ func Run(a *appcore.App) error {
 			gtx := app.NewContext(&ops, e)
 			snap := a.Snapshot()
 
+			if resetBtn.Clicked(gtx) {
+				go a.ResetAll()
+				statusMsg = "session reset across the mesh"
+			}
+			if exportBtn.Clicked(gtx) {
+				if exe, err := os.Executable(); err == nil {
+					if p, werr := appcore.WriteExport(filepath.Dir(exe), a.Export(time.Now().Unix())); werr == nil {
+						statusMsg = "exported " + filepath.Base(p)
+					} else {
+						statusMsg = "export failed: " + werr.Error()
+					}
+				}
+			}
+
 			// Outer vertical scroll list — wrap everything in inset then flex.
 			layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					// ── Header ──────────────────────────────────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutHeader(gtx, th, snap)
+						return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, statusMsg)
 					}),
 					layout.Rigid(spacer(8)),
 					// ── Infrastructure ──────────────────────────────────
@@ -88,24 +108,49 @@ func spacer(h int) func(layout.Context) layout.Dimensions {
 	}
 }
 
-// layoutHeader renders a row: bold "NetLogger" | status chip | uptime.
-func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+// layoutHeader renders a row: bold "NetLogger" | status chip | uptime | buttons | status message.
+func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, resetBtn, exportBtn *widget.Clickable, statusMsg string) layout.Dimensions {
 	statusText, statusColor := overallStatus(s)
 	uptime := fmt.Sprintf("up %s", fmtDuration(s.SessionUptimeSec))
 
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.H6(th, "NetLogger").Layout(gtx)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.H6(th, "NetLogger").Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(th, "● "+statusText)
+						lbl.Color = statusColor
+						return lbl.Layout(gtx)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Body1(th, uptime).Layout(gtx)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: gtx.Constraints.Min}
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return material.Button(th, resetBtn, "Reset all").Layout(gtx)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return material.Button(th, exportBtn, "Export").Layout(gtx)
+					})
+				}),
+			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(th, "● "+statusText)
-				lbl.Color = statusColor
-				return lbl.Layout(gtx)
+			if statusMsg == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return material.Caption(th, statusMsg).Layout(gtx)
 			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.Body1(th, uptime).Layout(gtx)
 		}),
 	)
 }
