@@ -53,10 +53,12 @@ type Snapshot struct {
 	InternetHist     []float64
 	PreventSleep     bool
 	NICs             []NICInfo
-	Build            string      // this binary's build identity
-	BuildWarning     string      // set when a peer runs a mismatched build
-	LastReset        string      // outcome of the most recent ResetAll (empty until one runs)
-	RecentEvents     []EventInfo // connectivity timeline, oldest first (the UI renders newest first)
+	Build            string // this binary's build identity
+	BuildWarning     string // set when a peer runs a mismatched build
+	LastReset        string // outcome of the most recent ResetAll (empty until one runs)
+	// Events is the merged mesh-wide connectivity timeline (this machine + every
+	// peer's pulled events), oldest first, host-labeled; the UI renders newest first.
+	Events []MergedEvent
 }
 
 // NICInfo is one adapter's state plus the discard/error delta since the prior poll.
@@ -105,11 +107,14 @@ type App struct {
 	host      string
 
 	// FetchLinks fetches a peer's link report; defaults to an HTTP client call.
-	FetchLinks  func(baseURL string) (LinkReport, error)
+	FetchLinks func(baseURL string) (LinkReport, error)
+	// FetchEvents fetches a peer's recent-event ring; defaults to an HTTP call.
+	FetchEvents func(baseURL string) ([]EventInfo, error)
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
-	lastReset   string // outcome of the most recent ResetAll, for the UI (guarded by a.mu)
+	peerEvents  map[string][]MergedEvent // peer id → that peer's host-stamped events (guarded by reportMu)
+	lastReset   string                   // outcome of the most recent ResetAll, for the UI (guarded by a.mu)
 
 	// GatewayIP is the router to probe; auto-detected in Start when empty.
 	GatewayIP string
@@ -150,8 +155,19 @@ type App struct {
 	events  []EventInfo
 }
 
-// EventInfo is one connectivity-timeline entry exposed to the UI.
+// EventInfo is one connectivity-timeline entry; also the /api/events wire shape.
 type EventInfo struct {
+	UnixMicro int64  `json:"ts_unix_us"`
+	Online    bool   `json:"online"`
+	Detail    string `json:"detail"`
+}
+
+// MergedEvent is one entry in the mesh-wide timeline, tagged with the host that
+// observed it. (Timestamps are each machine's wall clock; cross-machine ordering
+// assumes the LAN's clocks are roughly NTP-synced — a clock-offset handshake is
+// a future refinement.)
+type MergedEvent struct {
+	Host      string
 	UnixMicro int64
 	Online    bool
 	Detail    string
@@ -214,8 +230,12 @@ func New(dataDir string) *App {
 		udpStats:    make(map[string]*udpStat),
 		linkStates:  make(map[string]*linkState),
 		peerReports: make(map[string]LinkReport),
+		peerEvents:  make(map[string][]MergedEvent),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
+		},
+		FetchEvents: func(baseURL string) ([]EventInfo, error) {
+			return fetchEvents(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
@@ -343,6 +363,7 @@ func (a *App) Start() error {
 		// empty token, so only the Host-allowlist applies): any peer may trigger a
 		// synchronized session reset. Acceptable for a LAN diagnostic tool.
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
+		mux.Handle("/api/events", eventsHandler(a.recentEvents))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
@@ -578,6 +599,18 @@ func (a *App) linkPullLoop(ctx context.Context) {
 					a.peerReports[rep.NodeID] = rep
 					a.reportMu.Unlock()
 				}
+				if ctx.Err() != nil {
+					return // don't start a second fetch if we're shutting down
+				}
+				if evs, err := a.FetchEvents("http://" + p.Addr); err == nil {
+					me := make([]MergedEvent, len(evs))
+					for i, e := range evs {
+						me[i] = MergedEvent{Host: peerLabel(p), UnixMicro: e.UnixMicro, Online: e.Online, Detail: e.Detail}
+					}
+					a.reportMu.Lock()
+					a.peerEvents[p.ID] = me
+					a.reportMu.Unlock()
+				}
 			}
 		}
 	}
@@ -688,17 +721,24 @@ func (a *App) Snapshot() Snapshot {
 		Build:        version.Build,
 		LastReset:    a.lastReset,
 	}
+	selfHost := a.host
 	a.mu.Unlock()
 
-	// Build the matrix OUTSIDE a.mu (linkReport locks a.mu internally).
+	// Build the matrix + merged event timeline OUTSIDE a.mu (linkReport locks
+	// a.mu internally).
 	a.reportMu.Lock()
 	reps := make(map[string]LinkReport, len(a.peerReports))
 	for k, v := range a.peerReports {
 		reps[k] = v
 	}
+	peerEvs := make([][]MergedEvent, 0, len(a.peerEvents))
+	for _, v := range a.peerEvents {
+		peerEvs = append(peerEvs, v)
+	}
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
 	snap.BuildWarning = buildWarning(version.Build, reps)
+	snap.Events = mergeEvents(selfHost, a.recentEvents(), peerEvs, eventRingCap)
 
 	a.sleepMu.Lock()
 	preventSleep := a.preventSleep
@@ -709,8 +749,6 @@ func (a *App) Snapshot() Snapshot {
 	nics := a.nics
 	a.nicMu.Unlock()
 	snap.NICs = nics
-
-	snap.RecentEvents = a.recentEvents()
 
 	return snap
 }
@@ -756,6 +794,9 @@ func (a *App) ResetSession() {
 	a.reportMu.Lock()
 	for k := range a.peerReports {
 		delete(a.peerReports, k)
+	}
+	for k := range a.peerEvents {
+		delete(a.peerEvents, k)
 	}
 	a.reportMu.Unlock()
 

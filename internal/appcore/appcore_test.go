@@ -67,6 +67,7 @@ func TestLossReflectedInSnapshot(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.tick = 5 * time.Millisecond
 	if err := a.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -148,6 +149,7 @@ func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.Discovery = fakeLister{peers: []discovery.Peer{
 		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088", Version: "v"},
 	}}
@@ -171,6 +173,7 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.Discovery = fakeLister{peers: []discovery.Peer{
 		{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"},
 	}}
@@ -204,6 +207,7 @@ func TestSnapshotShowsGateway(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.Discovery = fakeLister{}
 	a.GatewayIP = "192.168.0.1"
 	a.tick = 5 * time.Millisecond
@@ -234,6 +238,7 @@ func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 200 * time.Microsecond}, nil
 	}
@@ -271,6 +276,7 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 198, LossPct: 1.0, AvgRTT: time.Millisecond, Jitter: 500 * time.Microsecond}, nil
 	}
@@ -308,6 +314,7 @@ func TestUDPBurstsPersistedToStore(t *testing.T) {
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 190, LossPct: 5, AvgRTT: time.Millisecond, Jitter: 300 * time.Microsecond}, nil
 	}
@@ -350,6 +357,7 @@ func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 	}
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 100 * time.Microsecond}, nil
 	}
@@ -384,6 +392,7 @@ func TestResetSessionClearsState(t *testing.T) {
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
 		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 100 * time.Microsecond}, nil
 	}
@@ -453,6 +462,7 @@ func TestSnapshotExposesNICsWithDelta(t *testing.T) {
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
 	a.Discovery = fakeLister{}
 	calls := 0
 	a.CollectNICs = func() []nicstat.NIC {

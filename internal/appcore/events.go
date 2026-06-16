@@ -1,7 +1,11 @@
 package appcore
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
+	"sort"
 	"time"
 
 	"netlogger/internal/discovery"
@@ -69,6 +73,50 @@ func (a *App) recentEvents() []EventInfo {
 	defer a.eventMu.Unlock()
 	out := make([]EventInfo, len(a.events))
 	copy(out, a.events)
+	return out
+}
+
+// eventsHandler serves this node's recent-event ring as JSON (the /api/events
+// endpoint peers pull to assemble the mesh-wide timeline).
+func eventsHandler(events func() []EventInfo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(events())
+	}
+}
+
+// fetchEvents GETs a peer's /api/events and decodes its event ring.
+func fetchEvents(client *http.Client, baseURL string) ([]EventInfo, error) {
+	resp, err := client.Get(baseURL + "/api/events")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("events: status %d", resp.StatusCode)
+	}
+	var evs []EventInfo
+	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+		return nil, fmt.Errorf("events decode: %w", err)
+	}
+	return evs, nil
+}
+
+// mergeEvents combines this node's events (stamped with selfHost) and every
+// peer's already-host-stamped events into one timeline, sorted oldest-first by
+// timestamp and capped to the most recent limit entries.
+func mergeEvents(selfHost string, self []EventInfo, peers [][]MergedEvent, limit int) []MergedEvent {
+	out := make([]MergedEvent, 0, len(self))
+	for _, e := range self {
+		out = append(out, MergedEvent{Host: selfHost, UnixMicro: e.UnixMicro, Online: e.Online, Detail: e.Detail})
+	}
+	for _, pe := range peers {
+		out = append(out, pe...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UnixMicro < out[j].UnixMicro })
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
 	return out
 }
 

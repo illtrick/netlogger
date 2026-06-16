@@ -48,13 +48,13 @@ func TestPowerSavingOn(t *testing.T) {
 
 func TestEventLine(t *testing.T) {
 	now := int64(1_000_000_000) // 1000s in micros
-	e := appcore.EventInfo{UnixMicro: now - 125_000_000, Detail: "Ethernet link Down"}
-	if got := eventLine(e, now); got != "2m 5s ago  Ethernet link Down" {
+	e := appcore.MergedEvent{Host: "ryzen", UnixMicro: now - 125_000_000, Detail: "Ethernet link Down"}
+	if got := eventLine(e, now); got != "2m 5s ago  ryzen: Ethernet link Down" {
 		t.Fatalf("eventLine = %q", got)
 	}
 	// a clock that ran backwards shouldn't produce a negative age
-	future := appcore.EventInfo{UnixMicro: now + 5_000_000, Detail: "x"}
-	if got := eventLine(future, now); got != "0s ago  x" {
+	future := appcore.MergedEvent{Host: "pc", UnixMicro: now + 5_000_000, Detail: "x"}
+	if got := eventLine(future, now); got != "0s ago  pc: x" {
 		t.Fatalf("future event = %q", got)
 	}
 }
