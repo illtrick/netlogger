@@ -1,22 +1,23 @@
 package ui
 
 import (
-	"image/color"
 	"testing"
 
 	"netlogger/internal/appcore"
 )
 
 func TestSevColorBands(t *testing.T) {
-	good := sevColor(0.05, true)
-	warn := sevColor(0.5, true)
-	bad := sevColor(5.0, true)
-	none := sevColor(0, false)
-	if good == warn || warn == bad || good == bad {
-		t.Fatalf("severity colors should differ: %v %v %v", good, warn, bad)
+	if sevColor(0.05, true) != colGood {
+		t.Fatalf("low loss should be good")
 	}
-	if none != (color.NRGBA{R: 0x99, G: 0x99, B: 0x99, A: 0xff}) {
-		t.Fatalf("no-data color wrong: %v", none)
+	if sevColor(0.5, true) != colWatch {
+		t.Fatalf("mid loss should be watch")
+	}
+	if sevColor(5.0, true) != colBad {
+		t.Fatalf("high loss should be bad")
+	}
+	if sevColor(0, false) != colTextMut {
+		t.Fatalf("no-data color should be muted")
 	}
 }
 

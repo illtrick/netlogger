@@ -4,7 +4,6 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"gioui.org/font/gofont"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -23,17 +23,14 @@ import (
 	"netlogger/internal/appcore"
 )
 
-var blue = color.NRGBA{R: 0x4c, G: 0xc2, B: 0xff, A: 0xff}
-var orange = color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff} // vermillion — discards/errors ticking up
-var amber = color.NRGBA{R: 0xE6, G: 0x9F, B: 0x00, A: 0xff}  // power-saving enabled (a suspect, not yet an error)
-
 // Run opens the window and renders until it is closed.
 func Run(a *appcore.App) error {
 	w := new(app.Window)
 	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(820), unit.Dp(560)))
 
-	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	base := material.NewTheme()
+	base.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	th := darkTheme(base)
 
 	go func() {
 		for {
@@ -52,6 +49,7 @@ func Run(a *appcore.App) error {
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+			paint.Fill(gtx.Ops, colBg)
 			snap := a.Snapshot()
 
 			if resetBtn.Clicked(gtx) {
@@ -71,40 +69,34 @@ func Run(a *appcore.App) error {
 				a.SetPreventSleep(!snap.PreventSleep)
 			}
 
-			// Outer vertical scroll list — wrap everything in inset then flex.
-			layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			section := func(w layout.Widget) layout.FlexChild {
+				return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return card(gtx, colCard, colBorder, w)
+				})
+			}
+			layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					// ── Header ──────────────────────────────────────────
+					// ── Status hero ─────────────────────────────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, statusMsg)
 					}),
-					layout.Rigid(spacer(8)),
-					// ── Infrastructure ──────────────────────────────────
+					layout.Rigid(gap(20)),
+					// ── KPI tiles ───────────────────────────────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutInfra(gtx, th, snap)
+						return layoutKPIs(gtx, th, snap)
 					}),
-					layout.Rigid(spacer(8)),
-					// ── Peers ───────────────────────────────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutPeers(gtx, th, snap)
-					}),
-					layout.Rigid(spacer(8)),
-					// ── Adapters (NIC health / power-saving) ────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutAdapters(gtx, th, snap)
-					}),
-					layout.Rigid(spacer(8)),
-					// ── Matrix + legend ─────────────────────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutMatrixSection(gtx, th, snap)
-					}),
-					layout.Rigid(spacer(8)),
-					// ── Recent events (live timeline) ───────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutEvents(gtx, th, snap)
-					}),
-					layout.Rigid(spacer(8)),
-					// ── Compact footer (data dir / iperf) ───────────────
+					layout.Rigid(gap(24)),
+					section(func(gtx layout.Context) layout.Dimensions { return layoutInfra(gtx, th, snap) }),
+					layout.Rigid(gap(12)),
+					section(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
+					layout.Rigid(gap(12)),
+					section(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
+					layout.Rigid(gap(12)),
+					section(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
+					layout.Rigid(gap(12)),
+					section(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
+					layout.Rigid(gap(16)),
+					// ── Compact footer ──────────────────────────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layoutFooter(gtx, th, snap)
 					}),
@@ -116,84 +108,71 @@ func Run(a *appcore.App) error {
 	}
 }
 
-// spacer returns a rigid flex child that simply advances by h dp vertically.
-func spacer(h int) func(layout.Context) layout.Dimensions {
-	return func(gtx layout.Context) layout.Dimensions {
-		return layout.Dimensions{Size: image.Pt(0, gtx.Dp(unit.Dp(h)))}
-	}
-}
-
-// layoutHeader renders a row: bold "NetLogger" | status chip | uptime | buttons | status message.
+// layoutHeader renders the status hero: a large colored status line, a muted
+// "up <dur> · build <id>" subline, the action buttons, and (when set) the
+// build-skew banner + transient status / last-reset messages.
 func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, resetBtn, exportBtn, sleepBtn *widget.Clickable, statusMsg string) layout.Dimensions {
 	statusText, statusColor := overallStatus(s)
-	uptime := fmt.Sprintf("up %s", fmtDuration(s.SessionUptimeSec))
+	sub := fmt.Sprintf("up %s · build %s", fmtDuration(s.SessionUptimeSec), versionOr(s.Build))
 	sleepLabel := "Sleep: prevented"
 	if !s.PreventSleep {
 		sleepLabel = "Sleep: allowed"
+	}
+	btn := func(b *widget.Clickable, label string) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return material.Button(th, b, label).Layout(gtx)
+			})
+		})
+	}
+	caption := func(txt string, col color.NRGBA) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if txt == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, txt)
+				lbl.Color = col
+				return lbl.Layout(gtx)
+			})
+		})
+	}
+
+	skew := ""
+	if s.BuildWarning != "" {
+		skew = "⚠ " + s.BuildWarning
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return material.H6(th, "NetLogger").Layout(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(th, "● "+statusText)
-						lbl.Color = statusColor
-						return lbl.Layout(gtx)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return material.Body1(th, uptime).Layout(gtx)
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Label(th, unit.Sp(20), "● "+statusText)
+							lbl.Color = statusColor
+							lbl.Font.Weight = 500
+							return lbl.Layout(gtx)
+						}),
+						layout.Rigid(gap(2)),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Label(th, unit.Sp(13), sub)
+							lbl.Color = colTextSec
+							return lbl.Layout(gtx)
+						}),
+					)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: gtx.Constraints.Min}
 				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return material.Button(th, sleepBtn, sleepLabel).Layout(gtx)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return material.Button(th, resetBtn, "Reset all").Layout(gtx)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return material.Button(th, exportBtn, "Export").Layout(gtx)
-					})
-				}),
+				btn(sleepBtn, sleepLabel),
+				btn(resetBtn, "Reset all"),
+				btn(exportBtn, "Export"),
 			)
 		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if s.BuildWarning == "" {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, "⚠ "+s.BuildWarning)
-				lbl.Color = orange
-				return lbl.Layout(gtx)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if statusMsg == "" {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(th, statusMsg).Layout(gtx)
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if s.LastReset == "" {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(th, s.LastReset).Layout(gtx)
-			})
-		}),
+		caption(skew, colBad),
+		caption(statusMsg, colTextSec),
+		caption(s.LastReset, colTextSec),
 	)
 }
 

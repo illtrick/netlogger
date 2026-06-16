@@ -14,21 +14,6 @@ import (
 	"netlogger/internal/appcore"
 )
 
-// sevColor maps a loss percent to a CVD-safe severity color (Wong palette).
-func sevColor(lossPct float64, hasData bool) color.NRGBA {
-	if !hasData {
-		return color.NRGBA{R: 0x99, G: 0x99, B: 0x99, A: 0xff}
-	}
-	switch {
-	case lossPct < 0.1:
-		return color.NRGBA{R: 0x00, G: 0x9E, B: 0x73, A: 0xff} // good
-	case lossPct < 1.0:
-		return color.NRGBA{R: 0xE6, G: 0x9F, B: 0x00, A: 0xff} // warn
-	default:
-		return color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff} // bad
-	}
-}
-
 func cellLabel(c appcore.MatrixCell, hasData bool) string {
 	if !hasData {
 		return "–" // en-dash
