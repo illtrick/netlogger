@@ -3,8 +3,30 @@ package appcore
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestBuildWarning(t *testing.T) {
+	// all peers match self → no warning
+	reps := map[string]LinkReport{
+		"b": {NodeID: "b", Host: "ryzen", Build: "abc123"},
+	}
+	if w := buildWarning("abc123", reps); w != "" {
+		t.Fatalf("matching builds should not warn: %q", w)
+	}
+	// a peer on a different build → warning names it
+	reps["b"] = LinkReport{NodeID: "b", Host: "ryzen", Build: "old999"}
+	w := buildWarning("abc123", reps)
+	if w == "" || !strings.Contains(w, "ryzen on old999") || !strings.Contains(w, "abc123") {
+		t.Fatalf("expected mismatch warning naming the peer+build, got %q", w)
+	}
+	// a peer too old to report its build → no false warning
+	reps["b"] = LinkReport{NodeID: "b", Host: "ryzen", Build: ""}
+	if w := buildWarning("abc123", reps); w != "" {
+		t.Fatalf("empty peer build should not warn: %q", w)
+	}
+}
 
 func TestAssembleMatrixCombinesAllReports(t *testing.T) {
 	own := LinkReport{NodeID: "a", Host: "hostA", Links: []LinkStat{

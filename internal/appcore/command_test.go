@@ -32,3 +32,14 @@ func TestCommandHandlerIgnoresUnknown(t *testing.T) {
 		t.Fatalf("unknown command should not reset")
 	}
 }
+
+func TestResetSummary(t *testing.T) {
+	if got := resetSummary(2, 2, nil); got != "reset: this machine + 2/2 peers" {
+		t.Fatalf("all-acked: %q", got)
+	}
+	got := resetSummary(0, 1, []string{"ryzen did not ack (unreachable or old build — redeploy)"})
+	want := "reset: this machine + 0/1 peers · ryzen did not ack (unreachable or old build — redeploy)"
+	if got != want {
+		t.Fatalf("with-note:\n got %q\nwant %q", got, want)
+	}
+}

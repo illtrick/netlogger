@@ -8,6 +8,10 @@ go generate ./cmd/netlogger-app
 
 Write-Host "Building NetLogger.exe (windowsgui, elevated)..."
 $env:CGO_ENABLED = "0"
-go build -ldflags "-H windowsgui -s -w" -o bin/NetLogger.exe ./cmd/netlogger-app
+$build = (git rev-parse --short HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($build)) { $build = "dev" }
+if ((git status --porcelain 2>$null)) { $build = "$build-dirty" }
+$ldflags = "-H windowsgui -s -w -X netlogger/internal/version.Build=$build"
+go build -ldflags $ldflags -o bin/NetLogger.exe ./cmd/netlogger-app
 
-Write-Host "Done: bin/NetLogger.exe"
+Write-Host "Done: bin/NetLogger.exe (build $build)"

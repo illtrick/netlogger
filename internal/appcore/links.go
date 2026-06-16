@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 )
 
 // LinkStat is one directed link's current quality, as measured by the source node.
@@ -20,7 +21,35 @@ type LinkStat struct {
 type LinkReport struct {
 	NodeID string     `json:"node_id"`
 	Host   string     `json:"host"`
+	Build  string     `json:"build"` // binary identity; lets peers detect mesh build skew
 	Links  []LinkStat `json:"links"`
+}
+
+// buildWarning returns a human-facing notice when any peer reports a build
+// string different from this node's — meaning the mesh is running mismatched
+// binaries and cross-machine features (synchronized reset, new probes) may
+// silently fail. Empty when all known peer builds match (or none is reported,
+// e.g. a peer too old to send the field).
+func buildWarning(self string, reps map[string]LinkReport) string {
+	seen := map[string]bool{}
+	var mism []string
+	for _, r := range reps {
+		if r.Build == "" || r.Build == self || seen[r.Build] {
+			continue
+		}
+		seen[r.Build] = true
+		label := r.Host
+		if label == "" {
+			label = r.NodeID
+		}
+		mism = append(mism, fmt.Sprintf("%s on %s", label, r.Build))
+	}
+	if len(mism) == 0 {
+		return ""
+	}
+	sort.Strings(mism)
+	return fmt.Sprintf("build mismatch — you: %s; %s. Redeploy the same exe everywhere.",
+		self, strings.Join(mism, ", "))
 }
 
 // MatrixNode is one node (a row and a column of the matrix).

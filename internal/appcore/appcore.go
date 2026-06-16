@@ -5,12 +5,14 @@ package appcore
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +53,9 @@ type Snapshot struct {
 	InternetHist     []float64
 	PreventSleep     bool
 	NICs             []NICInfo
+	Build            string // this binary's build identity
+	BuildWarning     string // set when a peer runs a mismatched build
+	LastReset        string // outcome of the most recent ResetAll (empty until one runs)
 }
 
 // NICInfo is one adapter's state plus the discard/error delta since the prior poll.
@@ -103,6 +108,7 @@ type App struct {
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
+	lastReset   string // outcome of the most recent ResetAll, for the UI (guarded by a.mu)
 
 	// GatewayIP is the router to probe; auto-detected in Start when empty.
 	GatewayIP string
@@ -529,7 +535,7 @@ func (a *App) linkReport() LinkReport {
 			links = append(links, LinkStat{PeerID: p.ID, RTTms: rtt, JitterMs: jitter, LossPct: loss, Drops: eps})
 		}
 	}
-	return LinkReport{NodeID: id, Host: host, Links: links}
+	return LinkReport{NodeID: id, Host: host, Build: version.Build, Links: links}
 }
 
 // linkPullLoop fetches each discovered peer's link report so this window can show
@@ -659,6 +665,8 @@ func (a *App) Snapshot() Snapshot {
 		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
 		GatewayHist:  a.gwHist.values(),
 		InternetHist: a.netHist.values(),
+		Build:        version.Build,
+		LastReset:    a.lastReset,
 	}
 	a.mu.Unlock()
 
@@ -670,6 +678,7 @@ func (a *App) Snapshot() Snapshot {
 	}
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
+	snap.BuildWarning = buildWarning(version.Build, reps)
 
 	a.sleepMu.Lock()
 	preventSleep := a.preventSleep
@@ -742,12 +751,37 @@ func (a *App) ResetAll() {
 	disc := a.Discovery
 	a.mu.Unlock()
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	acked, total := 0, 0
+	var notes []string
 	if disc != nil {
 		for _, p := range disc.Peers() {
-			_ = postCommand(client, "http://"+p.Addr, "reset")
+			total++
+			if err := postCommand(client, "http://"+p.Addr, "reset"); err != nil {
+				label := p.Host
+				if label == "" {
+					label = p.ID
+				}
+				notes = append(notes, label+" did not ack (unreachable or old build — redeploy)")
+			} else {
+				acked++
+			}
 		}
 	}
 	a.ResetSession()
+	summary := resetSummary(acked, total, notes)
+	a.mu.Lock()
+	a.lastReset = summary
+	a.mu.Unlock()
+}
+
+// resetSummary renders the outcome of a ResetAll for the status line: how many
+// peers acknowledged the reset, plus any per-peer failure notes.
+func resetSummary(acked, total int, notes []string) string {
+	s := fmt.Sprintf("reset: this machine + %d/%d peers", acked, total)
+	if len(notes) > 0 {
+		s += " · " + strings.Join(notes, "; ")
+	}
+	return s
 }
 
 // SetPreventSleep turns the keep-awake behavior on/off at runtime and persists it.

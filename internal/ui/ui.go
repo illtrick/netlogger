@@ -56,7 +56,7 @@ func Run(a *appcore.App) error {
 
 			if resetBtn.Clicked(gtx) {
 				go a.ResetAll()
-				statusMsg = "session reset across the mesh"
+				statusMsg = "resetting mesh… (awaiting peer acks)"
 			}
 			if exportBtn.Clicked(gtx) {
 				if exe, err := os.Executable(); err == nil {
@@ -164,11 +164,29 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if s.BuildWarning == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, "⚠ "+s.BuildWarning)
+				lbl.Color = orange
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if statusMsg == "" {
 				return layout.Dimensions{}
 			}
 			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return material.Caption(th, statusMsg).Layout(gtx)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if s.LastReset == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return material.Caption(th, s.LastReset).Layout(gtx)
 			})
 		}),
 	)
@@ -337,8 +355,8 @@ func layoutMatrixSection(gtx layout.Context, th *material.Theme, s appcore.Snaps
 
 // layoutFooter renders a compact data-dir / iperf status line.
 func layoutFooter(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
-	line := fmt.Sprintf("data: %s   iperf3: %s (%s)   self-probe: %d samples, last RTT %.2f ms, loss %.1f%%",
-		s.DataDir, versionOr(s.Iperf3Version), upDown(s.Iperf3ServerUp), s.Samples, s.LastRTTms, s.LossPct)
+	line := fmt.Sprintf("data: %s   build: %s   iperf3: %s (%s)   self-probe: %d samples, last RTT %.2f ms, loss %.1f%%",
+		s.DataDir, versionOr(s.Build), versionOr(s.Iperf3Version), upDown(s.Iperf3ServerUp), s.Samples, s.LastRTTms, s.LossPct)
 	cap := material.Caption(th, line)
 	cap.Color = color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xff}
 	return cap.Layout(gtx)
