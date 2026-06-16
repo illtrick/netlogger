@@ -1,5 +1,6 @@
-// Package nicstat reports per-adapter NIC health (link speed/status, EEE state,
-// and error/discard counters) to support NIC/EEE fault diagnosis.
+// Package nicstat reports per-adapter NIC health (link speed/status,
+// power-saving/EEE properties, and error/discard counters) to support NIC fault
+// diagnosis.
 package nicstat
 
 import (
@@ -19,7 +20,11 @@ type NIC struct {
 	TxDiscards  int64  `json:"TxDiscards"`
 	RxBytes     int64  `json:"RxBytes"`
 	TxBytes     int64  `json:"TxBytes"`
-	EEE         string `json:"EEE"` // "Enabled"/"Disabled"/"" (advanced-property value)
+	// Power is every power-saving advanced property the adapter exposes
+	// (EEE, Green Ethernet, Gigabit Lite, …), joined as "Name=Value; Name=Value".
+	// A single field avoids PowerShell's single-element-array JSON quirk; empty
+	// when the adapter reports no such properties (e.g. Wi-Fi).
+	Power string `json:"Power"`
 }
 
 // parseNICs decodes the PowerShell JSON, tolerating both a JSON array (multiple

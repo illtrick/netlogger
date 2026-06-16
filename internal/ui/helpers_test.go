@@ -21,21 +21,28 @@ func TestOverallStatus(t *testing.T) {
 	}
 }
 
-func TestEEEText(t *testing.T) {
-	if eeeText("") != "n/a" {
-		t.Fatalf(`eeeText("") = %q`, eeeText(""))
+func TestPowerText(t *testing.T) {
+	if powerText("") != "none" {
+		t.Fatalf(`powerText("") = %q`, powerText(""))
 	}
-	if eeeText("Enabled") != "Enabled" {
-		t.Fatalf(`eeeText("Enabled") = %q`, eeeText("Enabled"))
+	if powerText("Green Ethernet=Enabled") != "Green Ethernet=Enabled" {
+		t.Fatalf(`powerText(prop) = %q`, powerText("Green Ethernet=Enabled"))
 	}
 }
 
-func TestEEEIsOn(t *testing.T) {
-	if !eeeIsOn("enabled") || !eeeIsOn("On") {
-		t.Fatalf("expected enabled/On to be on")
+func TestPowerSavingOn(t *testing.T) {
+	// any enabled token (even when another is disabled) flags the row
+	if !powerSavingOn("Energy-Efficient Ethernet=Disabled; Green Ethernet=Enabled") {
+		t.Fatalf("a mix containing an Enabled prop should be on")
 	}
-	if eeeIsOn("Disabled") || eeeIsOn("") {
-		t.Fatalf("expected Disabled/empty to be off")
+	if !powerSavingOn("Energy Detect=On") {
+		t.Fatalf(`"On" should count as enabled`)
+	}
+	if powerSavingOn("Energy-Efficient Ethernet=Disabled; Gigabit Lite=Disabled") {
+		t.Fatalf("all-disabled should be off")
+	}
+	if powerSavingOn("") {
+		t.Fatalf("empty should be off")
 	}
 }
 
