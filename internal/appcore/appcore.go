@@ -133,7 +133,7 @@ func New(dataDir string) *App {
 		udpStats:    make(map[string]*udpStat),
 		peerReports: make(map[string]LinkReport),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
-			return fetchLinks(&http.Client{Timeout: 3 * time.Second}, baseURL)
+			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
 	}
 }
@@ -404,6 +404,9 @@ func (a *App) linkPullLoop(ctx context.Context) {
 				continue
 			}
 			for _, p := range disc.Peers() {
+				if ctx.Err() != nil {
+					return // exit promptly on shutdown between peers
+				}
 				rep, err := a.FetchLinks("http://" + p.Addr)
 				if err == nil && rep.NodeID != "" {
 					a.reportMu.Lock()
