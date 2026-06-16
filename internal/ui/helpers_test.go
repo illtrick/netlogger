@@ -46,6 +46,19 @@ func TestPowerSavingOn(t *testing.T) {
 	}
 }
 
+func TestEventLine(t *testing.T) {
+	now := int64(1_000_000_000) // 1000s in micros
+	e := appcore.EventInfo{UnixMicro: now - 125_000_000, Detail: "Ethernet link Down"}
+	if got := eventLine(e, now); got != "2m 5s ago  Ethernet link Down" {
+		t.Fatalf("eventLine = %q", got)
+	}
+	// a clock that ran backwards shouldn't produce a negative age
+	future := appcore.EventInfo{UnixMicro: now + 5_000_000, Detail: "x"}
+	if got := eventLine(future, now); got != "0s ago  x" {
+		t.Fatalf("future event = %q", got)
+	}
+}
+
 func TestAdapterHasFaults(t *testing.T) {
 	if adapterHasFaults(appcore.NICInfo{}) {
 		t.Fatalf("zero deltas should not be a fault")
