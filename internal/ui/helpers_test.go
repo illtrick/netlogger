@@ -20,3 +20,30 @@ func TestOverallStatus(t *testing.T) {
 		t.Fatalf("lossy = %q", s)
 	}
 }
+
+func TestEEEText(t *testing.T) {
+	if eeeText("") != "n/a" {
+		t.Fatalf(`eeeText("") = %q`, eeeText(""))
+	}
+	if eeeText("Enabled") != "Enabled" {
+		t.Fatalf(`eeeText("Enabled") = %q`, eeeText("Enabled"))
+	}
+}
+
+func TestEEEIsOn(t *testing.T) {
+	if !eeeIsOn("enabled") || !eeeIsOn("On") {
+		t.Fatalf("expected enabled/On to be on")
+	}
+	if eeeIsOn("Disabled") || eeeIsOn("") {
+		t.Fatalf("expected Disabled/empty to be off")
+	}
+}
+
+func TestAdapterHasFaults(t *testing.T) {
+	if adapterHasFaults(appcore.NICInfo{}) {
+		t.Fatalf("zero deltas should not be a fault")
+	}
+	if !adapterHasFaults(appcore.NICInfo{RecentTxDiscards: 1}) {
+		t.Fatalf("a tx discard should be a fault")
+	}
+}

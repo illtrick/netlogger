@@ -22,6 +22,7 @@ import (
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
 	"netlogger/internal/keepawake"
+	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 	"netlogger/internal/version"
@@ -49,6 +50,24 @@ type Snapshot struct {
 	GatewayHist      []float64
 	InternetHist     []float64
 	PreventSleep     bool
+	NICs             []NICInfo
+}
+
+// NICInfo is one adapter's state plus the discard/error delta since the prior poll.
+type NICInfo struct {
+	Name             string
+	Description      string
+	LinkSpeed        string
+	Status           string
+	EEE              string
+	RxErrors         int64
+	RxDiscards       int64
+	TxErrors         int64
+	TxDiscards       int64
+	RecentRxDiscards int64
+	RecentTxDiscards int64
+	RecentRxErrors   int64
+	RecentTxErrors   int64
 }
 
 // sleepKeeper keeps the machine awake; injectable for tests.
@@ -112,18 +131,24 @@ type App struct {
 	sleepMu      sync.Mutex
 	preventSleep bool
 	keeper       sleepKeeper
+
+	CollectNICs func() []nicstat.NIC // default nicstat.Collect; injectable
+	nicTick     time.Duration
+	nicMu       sync.Mutex
+	nics        []NICInfo
 }
 
 const recentWindow = 60
 
 const (
-	controlPort    = 8088
-	discoveryGroup = "239.255.74.76"
-	discoveryPort  = 48076
-	udpEchoPort    = 8089
-	udpProbeCount  = 200
-	internetTarget = "8.8.8.8"
-	histLen        = 120
+	controlPort     = 8088
+	discoveryGroup  = "239.255.74.76"
+	discoveryPort   = 48076
+	udpEchoPort     = 8089
+	udpProbeCount   = 200
+	internetTarget  = "8.8.8.8"
+	histLen         = 120
+	nicPollInterval = 8 * time.Second
 )
 
 var (
@@ -164,6 +189,8 @@ func New(dataDir string) *App {
 		ProbeUDP:    probe.ProbeUDP,
 		StartKeeper: func() sleepKeeper { return keepawake.Start() },
 		tick:        time.Second,
+		CollectNICs: nicstat.Collect,
+		nicTick:     nicPollInterval,
 		peerStats:   make(map[string]*peerStat),
 		udpStats:    make(map[string]*udpStat),
 		linkStates:  make(map[string]*linkState),
@@ -303,11 +330,12 @@ func (a *App) Start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(4)
+	a.wg.Add(5)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
 	go a.linkPullLoop(ctx)
+	go a.nicLoop(ctx)
 
 	a.sleepMu.Lock()
 	if a.preventSleep && a.keeper == nil {
@@ -536,6 +564,48 @@ func (a *App) linkPullLoop(ctx context.Context) {
 	}
 }
 
+func (a *App) nicLoop(ctx context.Context) {
+	defer a.wg.Done()
+	prev := map[string]nicstat.NIC{}
+	poll := func() {
+		raw := a.CollectNICs()
+		out := make([]NICInfo, 0, len(raw))
+		for _, n := range raw {
+			p := prev[n.Name]
+			out = append(out, NICInfo{
+				Name: n.Name, Description: n.Description, LinkSpeed: n.LinkSpeed, Status: n.Status, EEE: n.EEE,
+				RxErrors: n.RxErrors, RxDiscards: n.RxDiscards, TxErrors: n.TxErrors, TxDiscards: n.TxDiscards,
+				RecentRxDiscards: nonNeg(n.RxDiscards - p.RxDiscards),
+				RecentTxDiscards: nonNeg(n.TxDiscards - p.TxDiscards),
+				RecentRxErrors:   nonNeg(n.RxErrors - p.RxErrors),
+				RecentTxErrors:   nonNeg(n.TxErrors - p.TxErrors),
+			})
+			prev[n.Name] = n
+		}
+		a.nicMu.Lock()
+		a.nics = out
+		a.nicMu.Unlock()
+	}
+	poll() // once at startup (prev empty → deltas are the full counts on the 2nd poll)
+	t := time.NewTicker(a.nicTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			poll()
+		}
+	}
+}
+
+func nonNeg(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
@@ -606,6 +676,11 @@ func (a *App) Snapshot() Snapshot {
 	a.sleepMu.Unlock()
 	snap.PreventSleep = preventSleep
 
+	a.nicMu.Lock()
+	nics := a.nics
+	a.nicMu.Unlock()
+	snap.NICs = nics
+
 	return snap
 }
 
@@ -652,6 +727,10 @@ func (a *App) ResetSession() {
 		delete(a.peerReports, k)
 	}
 	a.reportMu.Unlock()
+
+	a.nicMu.Lock()
+	a.nics = nil
+	a.nicMu.Unlock()
 
 	a.recordEvent(true, "session reset")
 }

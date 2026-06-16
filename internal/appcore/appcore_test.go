@@ -6,6 +6,7 @@ import (
 
 	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
+	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 )
@@ -13,6 +14,7 @@ import (
 func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	// Deterministic seams: no real ICMP, no real iperf process.
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 1500 * time.Microsecond}, nil
@@ -59,6 +61,7 @@ func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
 func TestLossReflectedInSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{Lost: true}, nil
 	}
@@ -84,6 +87,7 @@ func TestLossReflectedInSnapshot(t *testing.T) {
 func TestStopIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -103,6 +107,7 @@ func TestStopIsIdempotent(t *testing.T) {
 func TestServerDownWhenIperfUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -120,6 +125,7 @@ func TestServerDownWhenIperfUnavailable(t *testing.T) {
 func TestSnapshotBeforeStart(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	s := a.Snapshot()
 	if s.Samples != 0 || s.LossPct != 0 || s.Iperf3ServerUp {
 		t.Fatalf("expected zero-value snapshot before Start, got %+v", s)
@@ -136,6 +142,7 @@ func (f fakeLister) Peers() []discovery.Peer { return f.peers }
 func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -158,6 +165,7 @@ func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 2 * time.Millisecond}, nil
 	}
@@ -190,6 +198,7 @@ func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 func TestSnapshotShowsGateway(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 3 * time.Millisecond}, nil
 	}
@@ -221,6 +230,7 @@ func TestSnapshotShowsGateway(t *testing.T) {
 func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -255,6 +265,7 @@ func TestSnapshotAssemblesMatrixFromPeerReports(t *testing.T) {
 func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: time.Millisecond}, nil
 	}
@@ -293,6 +304,7 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 func TestUDPBurstsPersistedToStore(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -332,6 +344,7 @@ func TestUDPBurstsPersistedToStore(t *testing.T) {
 func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
 		return probe.Result{RTT: 2 * time.Millisecond}, nil
 	}
@@ -367,6 +380,7 @@ func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 func TestResetSessionClearsState(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
 	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
 	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
@@ -408,6 +422,7 @@ func (f fakeKeeper) Stop() {
 func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
 	starts, stops := 0, 0
 	a.StartKeeper = func() sleepKeeper { starts++; return fakeKeeper{onStop: func() { stops++ }} }
 
@@ -428,5 +443,38 @@ func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
 	}
 	if appsettings.Load(appsettings.Path(dir)).PreventSleep {
 		t.Fatalf("expected persisted false")
+	}
+}
+
+func TestSnapshotExposesNICsWithDelta(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.Discovery = fakeLister{}
+	calls := 0
+	a.CollectNICs = func() []nicstat.NIC {
+		calls++
+		return []nicstat.NIC{{Name: "Ethernet", LinkSpeed: "2.5 Gbps", Status: "Up", RxDiscards: int64(40 + calls*5), EEE: "Enabled"}}
+	}
+	a.nicTick = 5 * time.Millisecond
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		nics := a.Snapshot().NICs
+		// after >=2 polls, a delta should be computed
+		if len(nics) == 1 && nics[0].Name == "Ethernet" && nics[0].EEE == "Enabled" && nics[0].RecentRxDiscards > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("NIC delta not populated; got %+v", a.Snapshot().NICs)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
