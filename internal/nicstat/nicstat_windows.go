@@ -11,13 +11,13 @@ const psScript = `$ErrorActionPreference='SilentlyContinue'
 @(Get-NetAdapter -Physical | ForEach-Object {
   $a=$_
   $s=Get-NetAdapterStatistics -Name $a.Name
-  $eee=(Get-NetAdapterAdvancedProperty -Name $a.Name | Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|EEE|Gigabit Lite' } | Select-Object -First 1).DisplayValue
+  $pp=@(Get-NetAdapterAdvancedProperty -Name $a.Name | Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|EEE|Gigabit Lite|Ultra Low Power|Power Saving|System Idle Power|Auto.?Disable Gigabit|Energy.?Detect|Selective Suspend' } | ForEach-Object { "$($_.DisplayName)=$($_.DisplayValue)" })
   [PSCustomObject]@{
     Name=$a.Name; Description=$a.InterfaceDescription; LinkSpeed=[string]$a.LinkSpeed; Status=[string]$a.Status
     RxErrors=[int64]$s.ReceivedPacketErrors; RxDiscards=[int64]$s.ReceivedDiscardedPackets
     TxErrors=[int64]$s.OutboundPacketErrors; TxDiscards=[int64]$s.OutboundDiscardedPackets
     RxBytes=[int64]$s.ReceivedBytes; TxBytes=[int64]$s.OutboundBytes
-    EEE=[string]$eee
+    Power=[string]($pp -join '; ')
   }
 }) | ConvertTo-Json -Compress`
 

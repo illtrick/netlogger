@@ -457,7 +457,7 @@ func TestSnapshotExposesNICsWithDelta(t *testing.T) {
 	calls := 0
 	a.CollectNICs = func() []nicstat.NIC {
 		calls++
-		return []nicstat.NIC{{Name: "Ethernet", LinkSpeed: "2.5 Gbps", Status: "Up", RxDiscards: int64(40 + calls*5), EEE: "Enabled"}}
+		return []nicstat.NIC{{Name: "Ethernet", LinkSpeed: "2.5 Gbps", Status: "Up", RxDiscards: int64(40 + calls*5), Power: "Green Ethernet=Enabled"}}
 	}
 	a.nicTick = 5 * time.Millisecond
 	a.tick = 5 * time.Millisecond
@@ -469,7 +469,7 @@ func TestSnapshotExposesNICsWithDelta(t *testing.T) {
 	for {
 		nics := a.Snapshot().NICs
 		// after >=2 polls, a delta should be computed
-		if len(nics) == 1 && nics[0].Name == "Ethernet" && nics[0].EEE == "Enabled" && nics[0].RecentRxDiscards > 0 {
+		if len(nics) == 1 && nics[0].Name == "Ethernet" && nics[0].Power == "Green Ethernet=Enabled" && nics[0].RecentRxDiscards > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
