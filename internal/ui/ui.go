@@ -99,6 +99,11 @@ func Run(a *appcore.App) error {
 						return layoutMatrixSection(gtx, th, snap)
 					}),
 					layout.Rigid(spacer(8)),
+					// ── Recent events (live timeline) ───────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutEvents(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
 					// ── Compact footer (data dir / iperf) ───────────────
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layoutFooter(gtx, th, snap)
@@ -337,6 +342,45 @@ func powerSavingOn(v string) bool {
 		}
 	}
 	return false
+}
+
+// layoutEvents renders the most recent connectivity-timeline entries (newest
+// first) so faults — link drops, speed renegotiations, discard spikes — are
+// visible at a glance without exporting. Offline events are vermillion.
+func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	if len(s.RecentEvents) == 0 {
+		return material.Body1(th, "Recent events: (none yet)").Layout(gtx)
+	}
+	now := time.Now().UnixMicro()
+	const maxRows = 8
+	children := make([]layout.FlexChild, 0, maxRows+1)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return material.Body1(th, "Recent events:").Layout(gtx)
+	}))
+	shown := 0
+	for i := len(s.RecentEvents) - 1; i >= 0 && shown < maxRows; i-- {
+		e := s.RecentEvents[i]
+		shown++
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(2), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, eventLine(e, now))
+				if !e.Online {
+					lbl.Color = orange
+				}
+				return lbl.Layout(gtx)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// eventLine renders one event as "<age> ago  <detail>" relative to nowMicro.
+func eventLine(e appcore.EventInfo, nowMicro int64) string {
+	age := (nowMicro - e.UnixMicro) / 1_000_000
+	if age < 0 {
+		age = 0
+	}
+	return fmt.Sprintf("%s ago  %s", fmtDuration(age), e.Detail)
 }
 
 // layoutMatrixSection renders the link matrix and its legend.
