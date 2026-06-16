@@ -14,12 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
 	"netlogger/internal/firewall"
 	"netlogger/internal/gateway"
 	"netlogger/internal/httpauth"
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
+	"netlogger/internal/keepawake"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 	"netlogger/internal/version"
@@ -46,7 +48,11 @@ type Snapshot struct {
 	InternetLossPct  float64
 	GatewayHist      []float64
 	InternetHist     []float64
+	PreventSleep     bool
 }
+
+// sleepKeeper keeps the machine awake; injectable for tests.
+type sleepKeeper interface{ Stop() }
 
 // App is the single-machine engine controller.
 type App struct {
@@ -54,10 +60,11 @@ type App struct {
 	dbPath  string
 
 	// Seams (defaulted in New; overridden in tests).
-	Ping       func(addr string, timeout time.Duration) (probe.Result, error)
-	StartIperf func(dataDir string) (stop func(), version string)
-	ProbeUDP   func(target string, count int, interval, timeout time.Duration) (probe.UDPStats, error)
-	tick       time.Duration
+	Ping        func(addr string, timeout time.Duration) (probe.Result, error)
+	StartIperf  func(dataDir string) (stop func(), version string)
+	ProbeUDP    func(target string, count int, interval, timeout time.Duration) (probe.UDPStats, error)
+	StartKeeper func() sleepKeeper // default wraps keepawake.Start
+	tick        time.Duration
 
 	store     *store.Store
 	iperfStop func()
@@ -95,10 +102,16 @@ type App struct {
 	lastRTTms float64
 	recent    []bool // success flags, last N, for loss %
 
-	peerMu    sync.Mutex
-	peerStats map[string]*peerStat
-	udpStats  map[string]*udpStat
-	udpEcho   *probe.UDPEcho
+	peerMu     sync.Mutex
+	peerStats  map[string]*peerStat
+	udpStats   map[string]*udpStat
+	linkStates map[string]*linkState
+	udpEcho    *probe.UDPEcho
+
+	settingsPath string
+	sleepMu      sync.Mutex
+	preventSleep bool
+	keeper       sleepKeeper
 }
 
 const recentWindow = 60
@@ -142,25 +155,30 @@ type PeerInfo struct {
 
 // New creates an App for the given (already-resolved) data dir.
 func New(dataDir string) *App {
+	settingsPath := appsettings.Path(dataDir)
 	return &App{
 		dataDir:     dataDir,
 		dbPath:      filepath.Join(dataDir, "netlogger.db"),
 		Ping:        probe.PingICMP,
 		StartIperf:  defaultStartIperf,
 		ProbeUDP:    probe.ProbeUDP,
+		StartKeeper: func() sleepKeeper { return keepawake.Start() },
 		tick:        time.Second,
 		peerStats:   make(map[string]*peerStat),
 		udpStats:    make(map[string]*udpStat),
+		linkStates:  make(map[string]*linkState),
 		peerReports: make(map[string]LinkReport),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
-		InternetIP: internetTarget,
-		firstSeen:  make(map[string]time.Time),
-		rttHist:    make(map[string]*histRing),
-		lossHist:   make(map[string]*histRing),
-		gwHist:     newHistRing(histLen),
-		netHist:    newHistRing(histLen),
+		InternetIP:   internetTarget,
+		firstSeen:    make(map[string]time.Time),
+		rttHist:      make(map[string]*histRing),
+		lossHist:     make(map[string]*histRing),
+		gwHist:       newHistRing(histLen),
+		netHist:      newHistRing(histLen),
+		settingsPath: settingsPath,
+		preventSleep: appsettings.Load(settingsPath).PreventSleep,
 	}
 }
 
@@ -197,15 +215,15 @@ func (a *App) histFor(m map[string]*histRing, id string) *histRing {
 	return r
 }
 
-func (a *App) markSeen(id string) time.Time {
+func (a *App) markSeen(id string) (time.Time, bool) {
 	a.peerMu.Lock()
 	defer a.peerMu.Unlock()
 	if t, ok := a.firstSeen[id]; ok {
-		return t
+		return t, false
 	}
 	now := time.Now()
 	a.firstSeen[id] = now
-	return now
+	return now, true
 }
 
 func defaultStartIperf(dir string) (func(), string) {
@@ -275,6 +293,10 @@ func (a *App) Start() error {
 	if a.disc != nil {
 		mux := http.NewServeMux()
 		mux.Handle("/api/links", linksHandler(a.linkReport))
+		// /api/command is intentionally open on the trusted LAN (httpauth uses an
+		// empty token, so only the Host-allowlist applies): any peer may trigger a
+		// synchronized session reset. Acceptable for a LAN diagnostic tool.
+		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
@@ -286,6 +308,13 @@ func (a *App) Start() error {
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
 	go a.linkPullLoop(ctx)
+
+	a.sleepMu.Lock()
+	if a.preventSleep && a.keeper == nil {
+		a.keeper = a.StartKeeper()
+	}
+	a.sleepMu.Unlock()
+
 	return nil
 }
 
@@ -421,7 +450,26 @@ func (a *App) udpLoop(ctx context.Context) {
 				rtt, _, loss, _ := a.udpStatFor(p.ID).read()
 				a.histFor(a.rttHist, p.ID).push(rtt)
 				a.histFor(a.lossHist, p.ID).push(loss)
-				a.markSeen(p.ID)
+				if _, isNew := a.markSeen(p.ID); isNew {
+					a.recordEvent(true, "peer "+peerLabel(p)+" joined")
+				}
+				_, _ = a.store.Insert(store.Sample{
+					TSUnixUS:  time.Now().UnixMicro(),
+					ProbeType: "udp_iso",
+					SrcHost:   a.nodeID,
+					DstHost:   p.ID,
+					Direction: "rtt",
+					RTTus:     st.AvgRTT.Microseconds(),
+					JitterUS:  st.Jitter.Microseconds(),
+					Lost:      st.LossPct > 0,
+				})
+				if changed, degraded := a.linkStateFor(p.ID).step(st.LossPct); changed {
+					if degraded {
+						a.recordEvent(false, "link to "+peerLabel(p)+" degraded (loss "+strconv.FormatFloat(st.LossPct, 'f', 1, 64)+"%)")
+					} else {
+						a.recordEvent(true, "link to "+peerLabel(p)+" recovered")
+					}
+				}
 			}
 		}
 	}
@@ -432,6 +480,13 @@ func (a *App) NodeID() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.nodeID
+}
+
+// hostName returns this node's hostname (valid after Start).
+func (a *App) hostName() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.host
 }
 
 // linkReport builds this node's current outbound link report from its UDP stats.
@@ -504,7 +559,7 @@ func (a *App) Snapshot() Snapshot {
 				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: lp,
 				JitterMs: jitter, UDPLossPct: uloss, DropEpisodes: episodes,
 			}
-			fs := a.markSeen(p.ID)
+			fs, _ := a.markSeen(p.ID)
 			pi.UpForSec = int64(time.Since(fs).Seconds())
 			pi.RTTHist = a.histFor(a.rttHist, p.ID).values()
 			pi.LossHist = a.histFor(a.lossHist, p.ID).values()
@@ -545,7 +600,90 @@ func (a *App) Snapshot() Snapshot {
 	}
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
+
+	a.sleepMu.Lock()
+	preventSleep := a.preventSleep
+	a.sleepMu.Unlock()
+	snap.PreventSleep = preventSleep
+
 	return snap
+}
+
+// ResetSession clears all in-memory diagnostics and restarts the session clock,
+// so the UI/charts begin fresh. Persisted samples remain on disk (timestamped).
+func (a *App) ResetSession() {
+	// Clear maps/rings IN PLACE (never reassign the field words): readers like
+	// histFor and gwHist.push read these field references outside a.peerMu, so
+	// rewriting a field header/pointer would be a data race. Deleting keys and
+	// resetting rings keeps the same identities; all content access stays under
+	// a.peerMu / the ring's own lock.
+	a.peerMu.Lock()
+	for k := range a.peerStats {
+		delete(a.peerStats, k)
+	}
+	for k := range a.udpStats {
+		delete(a.udpStats, k)
+	}
+	for k := range a.rttHist {
+		delete(a.rttHist, k)
+	}
+	for k := range a.lossHist {
+		delete(a.lossHist, k)
+	}
+	for k := range a.firstSeen {
+		delete(a.firstSeen, k)
+	}
+	for k := range a.linkStates {
+		delete(a.linkStates, k)
+	}
+	a.gwHist.reset()
+	a.netHist.reset()
+	a.peerMu.Unlock()
+
+	a.mu.Lock()
+	a.startedAt = time.Now()
+	a.recent = nil
+	a.samples = 0
+	a.lastRTTms = 0
+	a.mu.Unlock()
+
+	a.reportMu.Lock()
+	for k := range a.peerReports {
+		delete(a.peerReports, k)
+	}
+	a.reportMu.Unlock()
+
+	a.recordEvent(true, "session reset")
+}
+
+// ResetAll restarts the logging session on every discovered peer and on this
+// machine, so the whole mesh begins a fresh session together.
+func (a *App) ResetAll() {
+	a.mu.Lock()
+	disc := a.Discovery
+	a.mu.Unlock()
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	if disc != nil {
+		for _, p := range disc.Peers() {
+			_ = postCommand(client, "http://"+p.Addr, "reset")
+		}
+	}
+	a.ResetSession()
+}
+
+// SetPreventSleep turns the keep-awake behavior on/off at runtime and persists it.
+func (a *App) SetPreventSleep(on bool) {
+	a.sleepMu.Lock()
+	a.preventSleep = on
+	if on && a.keeper == nil {
+		a.keeper = a.StartKeeper()
+	} else if !on && a.keeper != nil {
+		a.keeper.Stop()
+		a.keeper = nil
+	}
+	path := a.settingsPath
+	a.sleepMu.Unlock()
+	_ = appsettings.Save(path, appsettings.Settings{PreventSleep: on})
 }
 
 // Stop cancels the loop, stops iperf, and closes the store. Safe to call more
@@ -574,6 +712,12 @@ func (a *App) Stop() error {
 		if a.store != nil {
 			err = a.store.Close()
 		}
+		a.sleepMu.Lock()
+		if a.keeper != nil {
+			a.keeper.Stop()
+			a.keeper = nil
+		}
+		a.sleepMu.Unlock()
 	})
 	return err
 }

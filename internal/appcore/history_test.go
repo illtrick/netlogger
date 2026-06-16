@@ -23,3 +23,17 @@ func TestHistRingPartial(t *testing.T) {
 		t.Fatalf("expected [7 8], got %v", got)
 	}
 }
+
+func TestHistRingReset(t *testing.T) {
+	r := newHistRing(5)
+	r.push(1)
+	r.push(2)
+	r.reset()
+	if got := r.values(); len(got) != 0 {
+		t.Fatalf("expected empty after reset, got %v", got)
+	}
+	r.push(9) // still usable after reset
+	if got := r.values(); len(got) != 1 || got[0] != 9 {
+		t.Fatalf("expected [9] after reuse, got %v", got)
+	}
+}

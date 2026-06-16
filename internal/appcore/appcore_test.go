@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
 	"netlogger/internal/probe"
+	"netlogger/internal/store"
 )
 
 func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
@@ -288,6 +290,45 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 	}
 }
 
+func TestUDPBurstsPersistedToStore(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 190, LossPct: 5, AvgRTT: time.Millisecond, Jitter: 300 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// let a few bursts persist
+	time.Sleep(120 * time.Millisecond)
+	a.Stop()
+
+	// reopen and count udp_iso rows with loss
+	st, err := store.Open(a.dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+	samples, err := st.Since(0, 100000)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	udpLost := 0
+	for _, s := range samples {
+		if s.ProbeType == "udp_iso" && s.DstHost == "p1" && s.Lost {
+			udpLost++
+		}
+	}
+	if udpLost == 0 {
+		t.Fatalf("expected persisted udp_iso lost rows, got 0 (of %d samples)", len(samples))
+	}
+}
+
 func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)
@@ -320,5 +361,72 @@ func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
 			t.Fatalf("internet/uptime/history not populated; got %+v", a.Snapshot())
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestResetSessionClearsState(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 100 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	// accumulate some samples
+	deadline := time.Now().Add(time.Second)
+	for a.Snapshot().Samples < 5 {
+		if time.Now().After(deadline) {
+			t.Fatal("no samples accumulated")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	a.ResetSession()
+	s := a.Snapshot()
+	if s.Samples > 3 { // should be reset to ~0 (a tick or two may have re-added)
+		t.Fatalf("expected samples reset near 0, got %d", s.Samples)
+	}
+	if s.SessionUptimeSec > 2 {
+		t.Fatalf("expected uptime reset, got %d", s.SessionUptimeSec)
+	}
+}
+
+type fakeKeeper struct{ onStop func() }
+
+func (f fakeKeeper) Stop() {
+	if f.onStop != nil {
+		f.onStop()
+	}
+}
+
+func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	starts, stops := 0, 0
+	a.StartKeeper = func() sleepKeeper { starts++; return fakeKeeper{onStop: func() { stops++ }} }
+
+	a.SetPreventSleep(false) // keeper was never started; just records off + persists
+	if a.Snapshot().PreventSleep {
+		t.Fatalf("expected PreventSleep false")
+	}
+	a.SetPreventSleep(true) // starts the keeper
+	if starts != 1 {
+		t.Fatalf("expected 1 start, got %d", starts)
+	}
+	if !a.Snapshot().PreventSleep {
+		t.Fatalf("expected PreventSleep true")
+	}
+	a.SetPreventSleep(false) // stops the keeper
+	if stops != 1 {
+		t.Fatalf("expected 1 stop, got %d", stops)
+	}
+	if appsettings.Load(appsettings.Path(dir)).PreventSleep {
+		t.Fatalf("expected persisted false")
 	}
 }
