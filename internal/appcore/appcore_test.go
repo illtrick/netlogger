@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
@@ -393,5 +394,39 @@ func TestResetSessionClearsState(t *testing.T) {
 	}
 	if s.SessionUptimeSec > 2 {
 		t.Fatalf("expected uptime reset, got %d", s.SessionUptimeSec)
+	}
+}
+
+type fakeKeeper struct{ onStop func() }
+
+func (f fakeKeeper) Stop() {
+	if f.onStop != nil {
+		f.onStop()
+	}
+}
+
+func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	starts, stops := 0, 0
+	a.StartKeeper = func() sleepKeeper { starts++; return fakeKeeper{onStop: func() { stops++ }} }
+
+	a.SetPreventSleep(false) // keeper was never started; just records off + persists
+	if a.Snapshot().PreventSleep {
+		t.Fatalf("expected PreventSleep false")
+	}
+	a.SetPreventSleep(true) // starts the keeper
+	if starts != 1 {
+		t.Fatalf("expected 1 start, got %d", starts)
+	}
+	if !a.Snapshot().PreventSleep {
+		t.Fatalf("expected PreventSleep true")
+	}
+	a.SetPreventSleep(false) // stops the keeper
+	if stops != 1 {
+		t.Fatalf("expected 1 stop, got %d", stops)
+	}
+	if appsettings.Load(appsettings.Path(dir)).PreventSleep {
+		t.Fatalf("expected persisted false")
 	}
 }

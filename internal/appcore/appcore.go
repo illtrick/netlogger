@@ -14,12 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
 	"netlogger/internal/firewall"
 	"netlogger/internal/gateway"
 	"netlogger/internal/httpauth"
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
+	"netlogger/internal/keepawake"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 	"netlogger/internal/version"
@@ -46,7 +48,11 @@ type Snapshot struct {
 	InternetLossPct  float64
 	GatewayHist      []float64
 	InternetHist     []float64
+	PreventSleep     bool
 }
+
+// sleepKeeper keeps the machine awake; injectable for tests.
+type sleepKeeper interface{ Stop() }
 
 // App is the single-machine engine controller.
 type App struct {
@@ -54,10 +60,11 @@ type App struct {
 	dbPath  string
 
 	// Seams (defaulted in New; overridden in tests).
-	Ping       func(addr string, timeout time.Duration) (probe.Result, error)
-	StartIperf func(dataDir string) (stop func(), version string)
-	ProbeUDP   func(target string, count int, interval, timeout time.Duration) (probe.UDPStats, error)
-	tick       time.Duration
+	Ping        func(addr string, timeout time.Duration) (probe.Result, error)
+	StartIperf  func(dataDir string) (stop func(), version string)
+	ProbeUDP    func(target string, count int, interval, timeout time.Duration) (probe.UDPStats, error)
+	StartKeeper func() sleepKeeper // default wraps keepawake.Start
+	tick        time.Duration
 
 	store     *store.Store
 	iperfStop func()
@@ -100,6 +107,11 @@ type App struct {
 	udpStats   map[string]*udpStat
 	linkStates map[string]*linkState
 	udpEcho    *probe.UDPEcho
+
+	settingsPath string
+	sleepMu      sync.Mutex
+	preventSleep bool
+	keeper       sleepKeeper
 }
 
 const recentWindow = 60
@@ -143,12 +155,14 @@ type PeerInfo struct {
 
 // New creates an App for the given (already-resolved) data dir.
 func New(dataDir string) *App {
+	settingsPath := appsettings.Path(dataDir)
 	return &App{
 		dataDir:     dataDir,
 		dbPath:      filepath.Join(dataDir, "netlogger.db"),
 		Ping:        probe.PingICMP,
 		StartIperf:  defaultStartIperf,
 		ProbeUDP:    probe.ProbeUDP,
+		StartKeeper: func() sleepKeeper { return keepawake.Start() },
 		tick:        time.Second,
 		peerStats:   make(map[string]*peerStat),
 		udpStats:    make(map[string]*udpStat),
@@ -157,12 +171,14 @@ func New(dataDir string) *App {
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
-		InternetIP: internetTarget,
-		firstSeen:  make(map[string]time.Time),
-		rttHist:    make(map[string]*histRing),
-		lossHist:   make(map[string]*histRing),
-		gwHist:     newHistRing(histLen),
-		netHist:    newHistRing(histLen),
+		InternetIP:   internetTarget,
+		firstSeen:    make(map[string]time.Time),
+		rttHist:      make(map[string]*histRing),
+		lossHist:     make(map[string]*histRing),
+		gwHist:       newHistRing(histLen),
+		netHist:      newHistRing(histLen),
+		settingsPath: settingsPath,
+		preventSleep: appsettings.Load(settingsPath).PreventSleep,
 	}
 }
 
@@ -292,6 +308,13 @@ func (a *App) Start() error {
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
 	go a.linkPullLoop(ctx)
+
+	a.sleepMu.Lock()
+	if a.preventSleep && a.keeper == nil {
+		a.keeper = a.StartKeeper()
+	}
+	a.sleepMu.Unlock()
+
 	return nil
 }
 
@@ -577,6 +600,12 @@ func (a *App) Snapshot() Snapshot {
 	}
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
+
+	a.sleepMu.Lock()
+	preventSleep := a.preventSleep
+	a.sleepMu.Unlock()
+	snap.PreventSleep = preventSleep
+
 	return snap
 }
 
@@ -642,6 +671,21 @@ func (a *App) ResetAll() {
 	a.ResetSession()
 }
 
+// SetPreventSleep turns the keep-awake behavior on/off at runtime and persists it.
+func (a *App) SetPreventSleep(on bool) {
+	a.sleepMu.Lock()
+	a.preventSleep = on
+	if on && a.keeper == nil {
+		a.keeper = a.StartKeeper()
+	} else if !on && a.keeper != nil {
+		a.keeper.Stop()
+		a.keeper = nil
+	}
+	path := a.settingsPath
+	a.sleepMu.Unlock()
+	_ = appsettings.Save(path, appsettings.Settings{PreventSleep: on})
+}
+
 // Stop cancels the loop, stops iperf, and closes the store. Safe to call more
 // than once; only the first call performs the teardown.
 func (a *App) Stop() error {
@@ -668,6 +712,12 @@ func (a *App) Stop() error {
 		if a.store != nil {
 			err = a.store.Close()
 		}
+		a.sleepMu.Lock()
+		if a.keeper != nil {
+			a.keeper.Stop()
+			a.keeper = nil
+		}
+		a.sleepMu.Unlock()
 	})
 	return err
 }
