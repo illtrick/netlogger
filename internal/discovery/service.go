@@ -141,7 +141,10 @@ func (s *Service) listenLoop() {
 			continue
 		}
 		a, ok := decode(buf[:n])
-		if !ok || a.ID == s.cfg.SelfID {
+		if !ok {
+			continue
+		}
+		if isSelfAnnounce(a, src.IP.String(), s.cfg.SelfID, s.cfg.Host, localIPSet()) {
 			continue
 		}
 		if a.Bye {
@@ -166,6 +169,42 @@ func (s *Service) listenLoop() {
 
 // Peers returns the currently-live discovered peers (excludes self and expired).
 func (s *Service) Peers() []Peer { return s.tbl.list() }
+
+// isSelfAnnounce reports whether an announce actually originated from this node:
+// either the same node id, or a *different* identity that shares both our
+// hostname and one of our local IPs — i.e. this same machine running a second
+// instance (a stale process during a redeploy, or a second data dir), which must
+// not be treated as a peer. Two test services on one host use distinct hostnames,
+// so they still discover each other.
+func isSelfAnnounce(a announce, srcIP, selfID, selfHost string, selfIPs map[string]bool) bool {
+	if a.ID == selfID {
+		return true
+	}
+	if a.Host == "" || a.Host != selfHost {
+		return false
+	}
+	ip := a.IP
+	if ip == "" {
+		ip = srcIP
+	}
+	return selfIPs[ip] || selfIPs[srcIP]
+}
+
+// localIPSet returns this machine's unicast interface IPs, used to recognize a
+// second local identity in isSelfAnnounce.
+func localIPSet() map[string]bool {
+	set := map[string]bool{}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return set
+	}
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP != nil {
+			set[ipnet.IP.String()] = true
+		}
+	}
+	return set
+}
 
 // Stop announces a bye, stops the loops, and closes the socket.
 func (s *Service) Stop() error {

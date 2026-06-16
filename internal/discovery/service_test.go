@@ -54,6 +54,27 @@ func TestTwoServicesDiscoverEachOther(t *testing.T) {
 	}
 }
 
+func TestIsSelfAnnounce(t *testing.T) {
+	selfIPs := map[string]bool{"192.168.0.154": true, "127.0.0.1": true}
+	cases := []struct {
+		name          string
+		a             announce
+		src, id, host string
+		wantSelf      bool
+	}{
+		{"same node id", announce{ID: "me"}, "1.2.3.4", "me", "ryzen", true},
+		{"second local identity (our host + our ip)", announce{ID: "other", Host: "ryzen", IP: "192.168.0.154"}, "192.168.0.154", "me", "ryzen", true},
+		{"same host but different machine ip", announce{ID: "other", Host: "ryzen", IP: "192.168.0.9"}, "192.168.0.9", "me", "ryzen", false},
+		{"distinct-host same-machine (loopback test)", announce{ID: "node-b", Host: "hostB", IP: "192.168.0.154"}, "192.168.0.154", "node-a", "hostA", false},
+		{"real peer", announce{ID: "p", Host: "sarah", IP: "192.168.0.181"}, "192.168.0.181", "me", "ryzen", false},
+	}
+	for _, c := range cases {
+		if got := isSelfAnnounce(c.a, c.src, c.id, c.host, selfIPs); got != c.wantSelf {
+			t.Errorf("%s: isSelfAnnounce = %v, want %v", c.name, got, c.wantSelf)
+		}
+	}
+}
+
 func TestNewAppliesDefaults(t *testing.T) {
 	s := New(Config{Group: "239.255.74.76", Port: 48076})
 	if s.cfg.Interval != 3*time.Second {
