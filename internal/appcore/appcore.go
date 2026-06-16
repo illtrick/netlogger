@@ -53,10 +53,10 @@ type Snapshot struct {
 	InternetHist     []float64
 	PreventSleep     bool
 	NICs             []NICInfo
-	Build            string // this binary's build identity
-	BuildWarning     string // set when a peer runs a mismatched build
-	LastReset        string // outcome of the most recent ResetAll (empty until one runs)
-	RecentEvents     []EventInfo
+	Build            string      // this binary's build identity
+	BuildWarning     string      // set when a peer runs a mismatched build
+	LastReset        string      // outcome of the most recent ResetAll (empty until one runs)
+	RecentEvents     []EventInfo // connectivity timeline, oldest first (the UI renders newest first)
 }
 
 // NICInfo is one adapter's state plus the discard/error delta since the prior poll.
@@ -586,12 +586,13 @@ func (a *App) linkPullLoop(ctx context.Context) {
 func (a *App) nicLoop(ctx context.Context) {
 	defer a.wg.Done()
 	prev := map[string]nicstat.NIC{}
+	discarding := map[string]bool{} // per-adapter discard-episode edge state
 	poll := func() {
 		raw := a.CollectNICs()
 		// Record link-state / speed / error changes against the prior poll
 		// BEFORE prev is updated, so they land on the connectivity timeline
 		// next to the loss episodes for correlation.
-		for _, ev := range nicEvents(prev, raw) {
+		for _, ev := range nicEvents(prev, raw, discarding) {
 			a.recordEvent(ev.online, ev.detail)
 		}
 		out := make([]NICInfo, 0, len(raw))
