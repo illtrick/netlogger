@@ -287,3 +287,38 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestSnapshotInternetUptimeAndHistory(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
+		return probe.Result{RTT: 2 * time.Millisecond}, nil
+	}
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 200, AvgRTT: time.Millisecond, Jitter: 100 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.GatewayIP = "192.168.0.1"
+	a.InternetIP = "8.8.8.8"
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s := a.Snapshot()
+		if s.InternetIP == "8.8.8.8" && s.InternetRTTms > 0 && len(s.Peers) == 1 && s.Peers[0].UpForSec >= 0 && len(s.Peers[0].RTTHist) > 0 {
+			if s.SessionUptimeSec < 0 {
+				t.Fatalf("bad uptime %d", s.SessionUptimeSec)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("internet/uptime/history not populated; got %+v", a.Snapshot())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

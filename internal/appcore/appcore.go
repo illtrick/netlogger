@@ -27,19 +27,25 @@ import (
 
 // Snapshot is an immutable view of engine state for the UI.
 type Snapshot struct {
-	DataDir        string
-	DBPath         string
-	Iperf3Version  string
-	Iperf3ServerUp bool
-	StartedUnix    int64
-	Samples        int
-	LastRTTms      float64
-	LossPct        float64
-	Peers          []PeerInfo
-	GatewayIP      string
-	GatewayRTTms   float64
-	GatewayLossPct float64
-	Matrix         Matrix
+	DataDir          string
+	DBPath           string
+	Iperf3Version    string
+	Iperf3ServerUp   bool
+	StartedUnix      int64
+	Samples          int
+	LastRTTms        float64
+	LossPct          float64
+	Peers            []PeerInfo
+	GatewayIP        string
+	GatewayRTTms     float64
+	GatewayLossPct   float64
+	Matrix           Matrix
+	SessionUptimeSec int64
+	InternetIP       string
+	InternetRTTms    float64
+	InternetLossPct  float64
+	GatewayHist      []float64
+	InternetHist     []float64
 }
 
 // App is the single-machine engine controller.
@@ -74,6 +80,15 @@ type App struct {
 
 	// GatewayIP is the router to probe; auto-detected in Start when empty.
 	GatewayIP string
+	// InternetIP is a public host to probe for internet reachability.
+	InternetIP string
+
+	// History rings and per-peer uptime tracking.
+	firstSeen map[string]time.Time
+	rttHist   map[string]*histRing
+	lossHist  map[string]*histRing
+	gwHist    *histRing
+	netHist   *histRing
 
 	mu        sync.Mutex
 	samples   int
@@ -94,6 +109,8 @@ const (
 	discoveryPort  = 48076
 	udpEchoPort    = 8089
 	udpProbeCount  = 200
+	internetTarget = "8.8.8.8"
+	histLen        = 120
 )
 
 var (
@@ -118,6 +135,9 @@ type PeerInfo struct {
 	JitterMs     float64
 	UDPLossPct   float64
 	DropEpisodes int
+	UpForSec     int64
+	RTTHist      []float64
+	LossHist     []float64
 }
 
 // New creates an App for the given (already-resolved) data dir.
@@ -135,6 +155,12 @@ func New(dataDir string) *App {
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
+		InternetIP: internetTarget,
+		firstSeen:  make(map[string]time.Time),
+		rttHist:    make(map[string]*histRing),
+		lossHist:   make(map[string]*histRing),
+		gwHist:     newHistRing(histLen),
+		netHist:    newHistRing(histLen),
 	}
 }
 
@@ -158,6 +184,28 @@ func (a *App) udpStatFor(id string) *udpStat {
 		a.udpStats[id] = s
 	}
 	return s
+}
+
+func (a *App) histFor(m map[string]*histRing, id string) *histRing {
+	a.peerMu.Lock()
+	defer a.peerMu.Unlock()
+	r := m[id]
+	if r == nil {
+		r = newHistRing(histLen)
+		m[id] = r
+	}
+	return r
+}
+
+func (a *App) markSeen(id string) time.Time {
+	a.peerMu.Lock()
+	defer a.peerMu.Unlock()
+	if t, ok := a.firstSeen[id]; ok {
+		return t
+	}
+	now := time.Now()
+	a.firstSeen[id] = now
+	return now
 }
 
 func defaultStartIperf(dir string) (func(), string) {
@@ -315,8 +363,19 @@ func (a *App) peerLoop(ctx context.Context) {
 			}
 			if a.GatewayIP != "" {
 				res, err := a.Ping(a.GatewayIP, 2*time.Second)
-				a.statFor("__gateway__").record(err == nil && !res.Lost,
-					float64(res.RTT.Microseconds())/1000.0)
+				ok := err == nil && !res.Lost
+				a.statFor("__gateway__").record(ok, float64(res.RTT.Microseconds())/1000.0)
+				if ok {
+					a.gwHist.push(float64(res.RTT.Microseconds()) / 1000.0)
+				}
+			}
+			if a.InternetIP != "" {
+				res, err := a.Ping(a.InternetIP, 2*time.Second)
+				ok := err == nil && !res.Lost
+				a.statFor("__internet__").record(ok, float64(res.RTT.Microseconds())/1000.0)
+				if ok {
+					a.netHist.push(float64(res.RTT.Microseconds()) / 1000.0)
+				}
 			}
 		}
 	}
@@ -359,6 +418,10 @@ func (a *App) udpLoop(ctx context.Context) {
 			st, err := a.ProbeUDP(target, udpProbeCount, udpProbeInterval, udpProbeTimeout)
 			if err == nil {
 				a.udpStatFor(p.ID).record(st)
+				rtt, _, loss, _ := a.udpStatFor(p.ID).read()
+				a.histFor(a.rttHist, p.ID).push(rtt)
+				a.histFor(a.lossHist, p.ID).push(loss)
+				a.markSeen(p.ID)
 			}
 		}
 	}
@@ -436,16 +499,25 @@ func (a *App) Snapshot() Snapshot {
 		for _, p := range a.Discovery.Peers() {
 			rtt, lp := a.statFor(p.ID).read()
 			_, jitter, uloss, episodes := a.udpStatFor(p.ID).read()
-			peers = append(peers, PeerInfo{
+			pi := PeerInfo{
 				ID: p.ID, Host: p.Host, Addr: p.Addr, Version: p.Version,
 				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: lp,
 				JitterMs: jitter, UDPLossPct: uloss, DropEpisodes: episodes,
-			})
+			}
+			fs := a.markSeen(p.ID)
+			pi.UpForSec = int64(time.Since(fs).Seconds())
+			pi.RTTHist = a.histFor(a.rttHist, p.ID).values()
+			pi.LossHist = a.histFor(a.lossHist, p.ID).values()
+			peers = append(peers, pi)
 		}
 	}
 	var gwRTT, gwLoss float64
 	if a.GatewayIP != "" {
 		gwRTT, gwLoss = a.statFor("__gateway__").read()
+	}
+	var netRTT, netLoss float64
+	if a.InternetIP != "" {
+		netRTT, netLoss = a.statFor("__internet__").read()
 	}
 	snap := Snapshot{
 		DataDir:        a.dataDir,
@@ -458,6 +530,10 @@ func (a *App) Snapshot() Snapshot {
 		LossPct:        loss,
 		Peers:          peers,
 		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
+		SessionUptimeSec: int64(time.Since(a.startedAt).Seconds()),
+		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
+		GatewayHist:  a.gwHist.values(),
+		InternetHist: a.netHist.values(),
 	}
 	a.mu.Unlock()
 

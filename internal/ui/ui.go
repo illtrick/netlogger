@@ -4,6 +4,8 @@ package ui
 
 import (
 	"fmt"
+	"image"
+	"image/color"
 	"time"
 
 	"gioui.org/app"
@@ -16,6 +18,9 @@ import (
 
 	"netlogger/internal/appcore"
 )
+
+var blue = color.NRGBA{R: 0x4c, G: 0xc2, B: 0xff, A: 0xff}
+var orange = color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff}
 
 // Run opens the window and renders until it is closed.
 func Run(a *appcore.App) error {
@@ -40,20 +45,174 @@ func Run(a *appcore.App) error {
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			snap := a.Snapshot()
-			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutStatus(gtx, th, snap)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layoutMatrix(gtx, th, snap.Matrix)
-					})
-				}),
-			)
+
+			// Outer vertical scroll list — wrap everything in inset then flex.
+			layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					// ── Header ──────────────────────────────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutHeader(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
+					// ── Infrastructure ──────────────────────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutInfra(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
+					// ── Peers ───────────────────────────────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutPeers(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
+					// ── Matrix + legend ─────────────────────────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutMatrixSection(gtx, th, snap)
+					}),
+					layout.Rigid(spacer(8)),
+					// ── Compact footer (data dir / iperf) ───────────────
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutFooter(gtx, th, snap)
+					}),
+				)
+			})
+
 			e.Frame(gtx.Ops)
 		}
 	}
 }
+
+// spacer returns a rigid flex child that simply advances by h dp vertically.
+func spacer(h int) func(layout.Context) layout.Dimensions {
+	return func(gtx layout.Context) layout.Dimensions {
+		return layout.Dimensions{Size: image.Pt(0, gtx.Dp(unit.Dp(h)))}
+	}
+}
+
+// layoutHeader renders a row: bold "NetLogger" | status chip | uptime.
+func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	statusText, statusColor := overallStatus(s)
+	uptime := fmt.Sprintf("up %s", fmtDuration(s.SessionUptimeSec))
+
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H6(th, "NetLogger").Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, "● "+statusText)
+				lbl.Color = statusColor
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Body1(th, uptime).Layout(gtx)
+		}),
+	)
+}
+
+// layoutInfra renders gateway and internet rows with sparklines.
+func layoutInfra(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	gwLabel := "Gateway: (not detected)"
+	if s.GatewayIP != "" {
+		gwLabel = fmt.Sprintf("Gateway: %s   RTT %.2f ms   loss %.1f%%", s.GatewayIP, s.GatewayRTTms, s.GatewayLossPct)
+	}
+	netLabel := "Internet: (not detected)"
+	if s.InternetIP != "" {
+		netLabel = fmt.Sprintf("Internet: %s   RTT %.2f ms   loss %.1f%%", s.InternetIP, s.InternetRTTms, s.InternetLossPct)
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return infraRow(gtx, th, gwLabel, s.GatewayHist)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return infraRow(gtx, th, netLabel, s.InternetHist)
+			})
+		}),
+	)
+}
+
+func infraRow(gtx layout.Context, th *material.Theme, label string, hist []float64) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Body1(th, label).Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return sparkline(gtx, hist, blue, 160, 24)
+			})
+		}),
+	)
+}
+
+// layoutPeers renders a block per peer: label line + two sparklines.
+func layoutPeers(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	if len(s.Peers) == 0 {
+		return material.Body1(th, "Peers: (none yet — launch NetLogger on another machine on this LAN)").Layout(gtx)
+	}
+	children := make([]layout.FlexChild, 0, len(s.Peers)*2)
+	for _, p := range s.Peers {
+		p := p
+		children = append(children,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return peerBlock(gtx, th, p)
+				})
+			}),
+		)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func peerBlock(gtx layout.Context, th *material.Theme, p appcore.PeerInfo) layout.Dimensions {
+	label := fmt.Sprintf("%s   up %s   RTT %.2f ms  jitter %.2f ms  loss %.1f%%  drops %d",
+		peerName(p), fmtDuration(p.UpForSec), p.RTTms, p.JitterMs, p.UDPLossPct, p.DropEpisodes)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Body1(th, label).Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return sparkline(gtx, p.RTTHist, blue, 180, 24)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return sparkline(gtx, p.LossHist, orange, 180, 24)
+						})
+					}),
+				)
+			})
+		}),
+	)
+}
+
+// layoutMatrixSection renders the link matrix and its legend.
+func layoutMatrixSection(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutMatrix(gtx, th, s.Matrix)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return material.Caption(th, "loss: green <0.1%   orange <1%   red ≥1%   ·   rows = source, cols = destination").Layout(gtx)
+			})
+		}),
+	)
+}
+
+// layoutFooter renders a compact data-dir / iperf status line.
+func layoutFooter(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	line := fmt.Sprintf("data: %s   iperf3: %s (%s)   self-probe: %d samples, last RTT %.2f ms, loss %.1f%%",
+		s.DataDir, versionOr(s.Iperf3Version), upDown(s.Iperf3ServerUp), s.Samples, s.LastRTTms, s.LossPct)
+	cap := material.Caption(th, line)
+	cap.Color = color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xff}
+	return cap.Layout(gtx)
+}
+
+// ── Layout kept for test compatibility ──────────────────────────────────────
 
 func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
 	rows := statusLines(s)
@@ -125,4 +284,41 @@ func upDown(up bool) string {
 		return "running"
 	}
 	return "stopped"
+}
+
+// ── Pure helpers ────────────────────────────────────────────────────────────
+
+// fmtDuration formats an uptime in seconds as a compact human string.
+func fmtDuration(sec int64) string {
+	if sec < 60 {
+		return fmt.Sprintf("%ds", sec)
+	}
+	if sec < 3600 {
+		return fmt.Sprintf("%dm %ds", sec/60, sec%60)
+	}
+	return fmt.Sprintf("%dh %dm", sec/3600, (sec%3600)/60)
+}
+
+// overallStatus returns the worst-case health label and its associated color.
+func overallStatus(s appcore.Snapshot) (string, color.NRGBA) {
+	worst := 0.0
+	for _, p := range s.Peers {
+		if p.UDPLossPct > worst {
+			worst = p.UDPLossPct
+		}
+	}
+	if s.InternetLossPct > worst {
+		worst = s.InternetLossPct
+	}
+	if s.GatewayLossPct > worst {
+		worst = s.GatewayLossPct
+	}
+	switch {
+	case worst >= 1.0:
+		return "DEGRADED", color.NRGBA{R: 0xD5, G: 0x5E, B: 0x00, A: 0xff}
+	case worst >= 0.1:
+		return "WATCH", color.NRGBA{R: 0xE6, G: 0x9F, B: 0x00, A: 0xff}
+	default:
+		return "ALL HEALTHY", color.NRGBA{R: 0x00, G: 0x9E, B: 0x73, A: 0xff}
+	}
 }

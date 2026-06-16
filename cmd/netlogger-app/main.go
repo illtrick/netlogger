@@ -6,6 +6,7 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
 
 	"netlogger/internal/appcore"
 	"netlogger/internal/applog"
@@ -19,7 +20,11 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-	logFile, err := applog.Init(dir)
+	logDir := dir
+	if exe, err := os.Executable(); err == nil {
+		logDir = filepath.Dir(exe)
+	}
+	logFile, err := applog.Init(logDir)
 	if err == nil {
 		defer logFile.Close()
 	}
