@@ -456,6 +456,13 @@ func (a *App) NodeID() string {
 	return a.nodeID
 }
 
+// hostName returns this node's hostname (valid after Start).
+func (a *App) hostName() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.host
+}
+
 // linkReport builds this node's current outbound link report from its UDP stats.
 func (a *App) linkReport() LinkReport {
 	a.mu.Lock()
