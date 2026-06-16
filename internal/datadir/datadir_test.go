@@ -53,3 +53,14 @@ func TestProbeWritable(t *testing.T) {
 		t.Fatalf("expected non-existent dir to be not writable")
 	}
 }
+
+func TestLocalAppData(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", "/custom/local")
+	if got := localAppData(); got != "/custom/local" {
+		t.Fatalf("expected env value, got %q", got)
+	}
+	t.Setenv("LOCALAPPDATA", "")
+	if got := localAppData(); got == "" {
+		t.Fatalf("expected non-empty temp-dir fallback when LOCALAPPDATA unset")
+	}
+}

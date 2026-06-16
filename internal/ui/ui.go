@@ -46,6 +46,15 @@ func Run(a *appcore.App) error {
 }
 
 func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
+	rows := statusLines(s)
+	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, flexChildren(th, rows)...)
+	})
+}
+
+// statusLines builds the text rows shown in the window. It is a pure function of
+// the snapshot, kept separate from Gio layout so the display logic is testable.
+func statusLines(s appcore.Snapshot) []string {
 	rows := []string{
 		"NetLogger — portable diagnostic agent",
 		"",
@@ -64,9 +73,7 @@ func layoutStatus(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 		rows = append(rows, fmt.Sprintf("   - %-12s %-20s  RTT %.2f ms  jitter %.2f ms  loss %.1f%%  drops %d",
 			peerName(p), p.Addr, p.RTTms, p.JitterMs, p.UDPLossPct, p.DropEpisodes))
 	}
-	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, flexChildren(th, rows)...)
-	})
+	return rows
 }
 
 func gatewayRow(s appcore.Snapshot) string {
