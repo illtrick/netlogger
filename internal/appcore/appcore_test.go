@@ -6,6 +6,7 @@ import (
 
 	"netlogger/internal/discovery"
 	"netlogger/internal/probe"
+	"netlogger/internal/store"
 )
 
 func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
@@ -285,6 +286,45 @@ func TestSnapshotShowsUDPJitterAndLoss(t *testing.T) {
 			t.Fatalf("UDP jitter not populated; got %+v", a.Snapshot().Peers)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestUDPBurstsPersistedToStore(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.ProbeUDP = func(string, int, time.Duration, time.Duration) (probe.UDPStats, error) {
+		return probe.UDPStats{Sent: 200, Received: 190, LossPct: 5, AvgRTT: time.Millisecond, Jitter: 300 * time.Microsecond}, nil
+	}
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// let a few bursts persist
+	time.Sleep(120 * time.Millisecond)
+	a.Stop()
+
+	// reopen and count udp_iso rows with loss
+	st, err := store.Open(a.dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+	samples, err := st.Since(0, 100000)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	udpLost := 0
+	for _, s := range samples {
+		if s.ProbeType == "udp_iso" && s.DstHost == "p1" && s.Lost {
+			udpLost++
+		}
+	}
+	if udpLost == 0 {
+		t.Fatalf("expected persisted udp_iso lost rows, got 0 (of %d samples)", len(samples))
 	}
 }
 

@@ -422,6 +422,16 @@ func (a *App) udpLoop(ctx context.Context) {
 				a.histFor(a.rttHist, p.ID).push(rtt)
 				a.histFor(a.lossHist, p.ID).push(loss)
 				a.markSeen(p.ID)
+				_, _ = a.store.Insert(store.Sample{
+					TSUnixUS:  time.Now().UnixMicro(),
+					ProbeType: "udp_iso",
+					SrcHost:   a.nodeID,
+					DstHost:   p.ID,
+					Direction: "rtt",
+					RTTus:     st.AvgRTT.Microseconds(),
+					JitterUS:  st.Jitter.Microseconds(),
+					Lost:      st.LossPct > 0,
+				})
 			}
 		}
 	}
