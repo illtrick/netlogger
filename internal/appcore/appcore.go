@@ -7,6 +7,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"netlogger/internal/discovery"
 	"netlogger/internal/firewall"
 	"netlogger/internal/gateway"
+	"netlogger/internal/httpauth"
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
 	"netlogger/internal/probe"
@@ -37,6 +39,7 @@ type Snapshot struct {
 	GatewayIP      string
 	GatewayRTTms   float64
 	GatewayLossPct float64
+	Matrix         Matrix
 }
 
 // App is the single-machine engine controller.
@@ -62,6 +65,12 @@ type App struct {
 	disc      *discovery.Service
 	nodeID    string
 	host      string
+
+	// FetchLinks fetches a peer's link report; defaults to an HTTP client call.
+	FetchLinks  func(baseURL string) (LinkReport, error)
+	linksSrv    *http.Server
+	reportMu    sync.Mutex
+	peerReports map[string]LinkReport
 
 	// GatewayIP is the router to probe; auto-detected in Start when empty.
 	GatewayIP string
@@ -114,14 +123,18 @@ type PeerInfo struct {
 // New creates an App for the given (already-resolved) data dir.
 func New(dataDir string) *App {
 	return &App{
-		dataDir:    dataDir,
-		dbPath:     filepath.Join(dataDir, "netlogger.db"),
-		Ping:       probe.PingICMP,
-		StartIperf: defaultStartIperf,
-		ProbeUDP:   probe.ProbeUDP,
-		tick:       time.Second,
-		peerStats:  make(map[string]*peerStat),
-		udpStats:   make(map[string]*udpStat),
+		dataDir:     dataDir,
+		dbPath:      filepath.Join(dataDir, "netlogger.db"),
+		Ping:        probe.PingICMP,
+		StartIperf:  defaultStartIperf,
+		ProbeUDP:    probe.ProbeUDP,
+		tick:        time.Second,
+		peerStats:   make(map[string]*peerStat),
+		udpStats:    make(map[string]*udpStat),
+		peerReports: make(map[string]LinkReport),
+		FetchLinks: func(baseURL string) (LinkReport, error) {
+			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
+		},
 	}
 }
 
@@ -211,12 +224,20 @@ func (a *App) Start() error {
 		a.udpEcho = e
 	}
 
+	if a.disc != nil {
+		mux := http.NewServeMux()
+		mux.Handle("/api/links", linksHandler(a.linkReport))
+		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
+		go func() { _ = a.linksSrv.ListenAndServe() }()
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(3)
+	a.wg.Add(4)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
+	go a.linkPullLoop(ctx)
 	return nil
 }
 
@@ -343,10 +364,63 @@ func (a *App) udpLoop(ctx context.Context) {
 	}
 }
 
+// NodeID returns this node's stable id (valid after Start).
+func (a *App) NodeID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.nodeID
+}
+
+// linkReport builds this node's current outbound link report from its UDP stats.
+func (a *App) linkReport() LinkReport {
+	a.mu.Lock()
+	id, host, disc := a.nodeID, a.host, a.Discovery
+	a.mu.Unlock()
+	var links []LinkStat
+	if disc != nil {
+		for _, p := range disc.Peers() {
+			rtt, jitter, loss, eps := a.udpStatFor(p.ID).read()
+			links = append(links, LinkStat{PeerID: p.ID, RTTms: rtt, JitterMs: jitter, LossPct: loss, Drops: eps})
+		}
+	}
+	return LinkReport{NodeID: id, Host: host, Links: links}
+}
+
+// linkPullLoop fetches each discovered peer's link report so this window can show
+// the full mesh (every directed link), not just its own outbound links.
+func (a *App) linkPullLoop(ctx context.Context) {
+	defer a.wg.Done()
+	t := time.NewTicker(a.tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.mu.Lock()
+			disc := a.Discovery
+			a.mu.Unlock()
+			if disc == nil {
+				continue
+			}
+			for _, p := range disc.Peers() {
+				if ctx.Err() != nil {
+					return // exit promptly on shutdown between peers
+				}
+				rep, err := a.FetchLinks("http://" + p.Addr)
+				if err == nil && rep.NodeID != "" {
+					a.reportMu.Lock()
+					a.peerReports[rep.NodeID] = rep
+					a.reportMu.Unlock()
+				}
+			}
+		}
+	}
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	loss := 0.0
 	if n := len(a.recent); n > 0 {
 		lost := 0
@@ -360,11 +434,11 @@ func (a *App) Snapshot() Snapshot {
 	var peers []PeerInfo
 	if a.Discovery != nil {
 		for _, p := range a.Discovery.Peers() {
-			rtt, loss := a.statFor(p.ID).read()
+			rtt, lp := a.statFor(p.ID).read()
 			_, jitter, uloss, episodes := a.udpStatFor(p.ID).read()
 			peers = append(peers, PeerInfo{
 				ID: p.ID, Host: p.Host, Addr: p.Addr, Version: p.Version,
-				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: loss,
+				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: lp,
 				JitterMs: jitter, UDPLossPct: uloss, DropEpisodes: episodes,
 			})
 		}
@@ -373,7 +447,7 @@ func (a *App) Snapshot() Snapshot {
 	if a.GatewayIP != "" {
 		gwRTT, gwLoss = a.statFor("__gateway__").read()
 	}
-	return Snapshot{
+	snap := Snapshot{
 		DataDir:        a.dataDir,
 		DBPath:         a.dbPath,
 		Iperf3Version:  a.iperfVer,
@@ -385,6 +459,17 @@ func (a *App) Snapshot() Snapshot {
 		Peers:          peers,
 		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
 	}
+	a.mu.Unlock()
+
+	// Build the matrix OUTSIDE a.mu (linkReport locks a.mu internally).
+	a.reportMu.Lock()
+	reps := make(map[string]LinkReport, len(a.peerReports))
+	for k, v := range a.peerReports {
+		reps[k] = v
+	}
+	a.reportMu.Unlock()
+	snap.Matrix = assembleMatrix(a.linkReport(), reps)
+	return snap
 }
 
 // Stop cancels the loop, stops iperf, and closes the store. Safe to call more
@@ -396,6 +481,11 @@ func (a *App) Stop() error {
 			a.cancel()
 		}
 		a.wg.Wait()
+		if a.linksSrv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = a.linksSrv.Shutdown(ctx)
+			cancel()
+		}
 		if a.disc != nil {
 			_ = a.disc.Stop()
 		}

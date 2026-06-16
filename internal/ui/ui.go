@@ -39,7 +39,17 @@ func Run(a *appcore.App) error {
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
-			layoutStatus(gtx, th, a.Snapshot())
+			snap := a.Snapshot()
+			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutStatus(gtx, th, snap)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layoutMatrix(gtx, th, snap.Matrix)
+					})
+				}),
+			)
 			e.Frame(gtx.Ops)
 		}
 	}
