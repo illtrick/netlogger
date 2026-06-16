@@ -599,16 +599,17 @@ func (a *App) linkPullLoop(ctx context.Context) {
 					a.peerReports[rep.NodeID] = rep
 					a.reportMu.Unlock()
 				}
-				if a.FetchEvents != nil {
-					if evs, err := a.FetchEvents("http://" + p.Addr); err == nil {
-						me := make([]MergedEvent, len(evs))
-						for i, e := range evs {
-							me[i] = MergedEvent{Host: peerLabel(p), UnixMicro: e.UnixMicro, Online: e.Online, Detail: e.Detail}
-						}
-						a.reportMu.Lock()
-						a.peerEvents[p.ID] = me
-						a.reportMu.Unlock()
+				if ctx.Err() != nil {
+					return // don't start a second fetch if we're shutting down
+				}
+				if evs, err := a.FetchEvents("http://" + p.Addr); err == nil {
+					me := make([]MergedEvent, len(evs))
+					for i, e := range evs {
+						me[i] = MergedEvent{Host: peerLabel(p), UnixMicro: e.UnixMicro, Online: e.Online, Detail: e.Detail}
 					}
+					a.reportMu.Lock()
+					a.peerEvents[p.ID] = me
+					a.reportMu.Unlock()
 				}
 			}
 		}
