@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"netlogger/internal/store"
-	"netlogger/internal/sysinfo"
 )
 
 // ExportBundle is a self-contained diagnostic snapshot for off-box analysis.
@@ -21,7 +20,7 @@ type ExportBundle struct {
 	Peers            []PeerInfo        `json:"peers"`
 	Matrix           []MatrixCell      `json:"matrix"`
 	Events           []store.ConnEvent `json:"events"`
-	NICs             []sysinfo.NIC     `json:"nics"`
+	NICs             []NICInfo         `json:"nics"`
 	SampleCount      int               `json:"sample_count"`
 }
 
@@ -55,7 +54,7 @@ func (a *App) Export(unixNow int64) ExportBundle {
 		Peers:            snap.Peers,
 		Matrix:           cells,
 		Events:           events,
-		NICs:             sysinfo.NICCounters(),
+		NICs:             snap.NICs,
 		SampleCount:      count,
 	}
 }
