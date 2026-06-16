@@ -95,10 +95,11 @@ type App struct {
 	lastRTTms float64
 	recent    []bool // success flags, last N, for loss %
 
-	peerMu    sync.Mutex
-	peerStats map[string]*peerStat
-	udpStats  map[string]*udpStat
-	udpEcho   *probe.UDPEcho
+	peerMu     sync.Mutex
+	peerStats  map[string]*peerStat
+	udpStats   map[string]*udpStat
+	linkStates map[string]*linkState
+	udpEcho    *probe.UDPEcho
 }
 
 const recentWindow = 60
@@ -151,6 +152,7 @@ func New(dataDir string) *App {
 		tick:        time.Second,
 		peerStats:   make(map[string]*peerStat),
 		udpStats:    make(map[string]*udpStat),
+		linkStates:  make(map[string]*linkState),
 		peerReports: make(map[string]LinkReport),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
@@ -197,15 +199,15 @@ func (a *App) histFor(m map[string]*histRing, id string) *histRing {
 	return r
 }
 
-func (a *App) markSeen(id string) time.Time {
+func (a *App) markSeen(id string) (time.Time, bool) {
 	a.peerMu.Lock()
 	defer a.peerMu.Unlock()
 	if t, ok := a.firstSeen[id]; ok {
-		return t
+		return t, false
 	}
 	now := time.Now()
 	a.firstSeen[id] = now
-	return now
+	return now, true
 }
 
 func defaultStartIperf(dir string) (func(), string) {
@@ -421,7 +423,9 @@ func (a *App) udpLoop(ctx context.Context) {
 				rtt, _, loss, _ := a.udpStatFor(p.ID).read()
 				a.histFor(a.rttHist, p.ID).push(rtt)
 				a.histFor(a.lossHist, p.ID).push(loss)
-				a.markSeen(p.ID)
+				if _, isNew := a.markSeen(p.ID); isNew {
+					a.recordEvent(true, "peer "+peerLabel(p)+" joined")
+				}
 				_, _ = a.store.Insert(store.Sample{
 					TSUnixUS:  time.Now().UnixMicro(),
 					ProbeType: "udp_iso",
@@ -432,6 +436,13 @@ func (a *App) udpLoop(ctx context.Context) {
 					JitterUS:  st.Jitter.Microseconds(),
 					Lost:      st.LossPct > 0,
 				})
+				if changed, degraded := a.linkStateFor(p.ID).step(st.LossPct); changed {
+					if degraded {
+						a.recordEvent(false, "link to "+peerLabel(p)+" degraded (loss "+strconv.FormatFloat(st.LossPct, 'f', 1, 64)+"%)")
+					} else {
+						a.recordEvent(true, "link to "+peerLabel(p)+" recovered")
+					}
+				}
 			}
 		}
 	}
@@ -514,7 +525,7 @@ func (a *App) Snapshot() Snapshot {
 				LastSeenUnix: p.LastSeen.Unix(), RTTms: rtt, LossPct: lp,
 				JitterMs: jitter, UDPLossPct: uloss, DropEpisodes: episodes,
 			}
-			fs := a.markSeen(p.ID)
+			fs, _ := a.markSeen(p.ID)
 			pi.UpForSec = int64(time.Since(fs).Seconds())
 			pi.RTTHist = a.histFor(a.rttHist, p.ID).values()
 			pi.LossHist = a.histFor(a.lossHist, p.ID).values()
