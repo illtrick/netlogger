@@ -10,15 +10,23 @@ import (
 )
 
 // ExportBundle is a self-contained diagnostic snapshot for off-box analysis.
+//
+// Build / BuildWarning / Peers[].Build let an analyst verify every machine ran
+// the same binary. MeshEvents is the merged, host-tagged timeline (this machine
+// + every peer's pulled events) so cross-machine correlation works from a single
+// export; Events remains this node's full local connectivity log from the store.
 type ExportBundle struct {
 	GeneratedUnix    int64             `json:"generated_unix"`
 	NodeID           string            `json:"node_id"`
 	Host             string            `json:"host"`
+	Build            string            `json:"build"`
+	BuildWarning     string            `json:"build_warning,omitempty"`
 	SessionUptimeSec int64             `json:"session_uptime_sec"`
 	GatewayIP        string            `json:"gateway_ip"`
 	InternetIP       string            `json:"internet_ip"`
 	Peers            []PeerInfo        `json:"peers"`
 	Matrix           []MatrixCell      `json:"matrix"`
+	MeshEvents       []MergedEvent     `json:"mesh_events"`
 	Events           []store.ConnEvent `json:"events"`
 	NICs             []NICInfo         `json:"nics"`
 	SampleCount      int               `json:"sample_count"`
@@ -48,11 +56,14 @@ func (a *App) Export(unixNow int64) ExportBundle {
 		GeneratedUnix:    unixNow,
 		NodeID:           a.NodeID(),
 		Host:             a.hostName(),
+		Build:            snap.Build,
+		BuildWarning:     snap.BuildWarning,
 		SessionUptimeSec: snap.SessionUptimeSec,
 		GatewayIP:        snap.GatewayIP,
 		InternetIP:       snap.InternetIP,
 		Peers:            snap.Peers,
 		Matrix:           cells,
+		MeshEvents:       snap.Events,
 		Events:           events,
 		NICs:             snap.NICs,
 		SampleCount:      count,

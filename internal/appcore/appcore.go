@@ -167,10 +167,10 @@ type EventInfo struct {
 // assumes the LAN's clocks are roughly NTP-synced — a clock-offset handshake is
 // a future refinement.)
 type MergedEvent struct {
-	Host      string
-	UnixMicro int64
-	Online    bool
-	Detail    string
+	Host      string `json:"host"`
+	UnixMicro int64  `json:"ts_unix_us"`
+	Online    bool   `json:"online"`
+	Detail    string `json:"detail"`
 }
 
 const recentWindow = 60
@@ -202,6 +202,7 @@ type PeerInfo struct {
 	Host         string
 	Addr         string
 	Version      string
+	Build        string // peer's binary build id (from its pulled link report), for skew checks
 	LastSeenUnix int64
 	RTTms        float64
 	LossPct      float64
@@ -738,6 +739,11 @@ func (a *App) Snapshot() Snapshot {
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
 	snap.BuildWarning = buildWarning(version.Build, reps)
+	for i := range snap.Peers {
+		if r, ok := reps[snap.Peers[i].ID]; ok {
+			snap.Peers[i].Build = r.Build
+		}
+	}
 	snap.Events = mergeEvents(selfHost, a.recentEvents(), peerEvs, eventRingCap)
 
 	a.sleepMu.Lock()
