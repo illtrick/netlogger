@@ -258,13 +258,12 @@ func peerBlock(gtx layout.Context, th *material.Theme, p appcore.PeerInfo) layou
 // when any discard/error ticked up (direct NIC evidence during a drop) and amber
 // when Energy-Efficient-Ethernet is enabled on the adapter (the suspect lead).
 func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
-	header := material.Body1(th, "Adapters:")
 	if len(s.NICs) == 0 {
 		return material.Body1(th, "Adapters: (none reported)").Layout(gtx)
 	}
 	children := make([]layout.FlexChild, 0, len(s.NICs)+1)
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return header.Layout(gtx)
+		return material.Body1(th, "Adapters:").Layout(gtx)
 	}))
 	for _, n := range s.NICs {
 		n := n
