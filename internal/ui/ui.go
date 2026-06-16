@@ -348,18 +348,18 @@ func powerSavingOn(v string) bool {
 // first) so faults — link drops, speed renegotiations, discard spikes — are
 // visible at a glance without exporting. Offline events are vermillion.
 func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
-	if len(s.RecentEvents) == 0 {
+	if len(s.Events) == 0 {
 		return material.Body1(th, "Recent events: (none yet)").Layout(gtx)
 	}
 	now := time.Now().UnixMicro()
-	const maxRows = 8
+	const maxRows = 10
 	children := make([]layout.FlexChild, 0, maxRows+1)
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return material.Body1(th, "Recent events:").Layout(gtx)
+		return material.Body1(th, "Recent events (mesh-wide):").Layout(gtx)
 	}))
 	shown := 0
-	for i := len(s.RecentEvents) - 1; i >= 0 && shown < maxRows; i-- {
-		e := s.RecentEvents[i]
+	for i := len(s.Events) - 1; i >= 0 && shown < maxRows; i-- {
+		e := s.Events[i]
 		shown++
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(2), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -374,13 +374,18 @@ func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-// eventLine renders one event as "<age> ago  <detail>" relative to nowMicro.
-func eventLine(e appcore.EventInfo, nowMicro int64) string {
+// eventLine renders one merged event as "<age> ago  <host>: <detail>" relative
+// to nowMicro. The host prefix makes a cross-machine fault legible at a glance.
+func eventLine(e appcore.MergedEvent, nowMicro int64) string {
 	age := (nowMicro - e.UnixMicro) / 1_000_000
 	if age < 0 {
 		age = 0
 	}
-	return fmt.Sprintf("%s ago  %s", fmtDuration(age), e.Detail)
+	host := e.Host
+	if host == "" {
+		host = "?"
+	}
+	return fmt.Sprintf("%s ago  %s: %s", fmtDuration(age), host, e.Detail)
 }
 
 // layoutMatrixSection renders the link matrix and its legend.
