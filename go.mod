@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	gioui.org v0.10.0
 	github.com/google/uuid v1.6.0
-	github.com/kardianos/service v1.2.4
+	github.com/jackpal/gateway v1.2.0
 	github.com/prometheus-community/pro-bing v0.8.0
 	golang.org/x/net v0.50.0
 	golang.org/x/sys v0.46.0
@@ -17,7 +17,6 @@ require (
 	gioui.org/shader v1.0.8 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
-	github.com/jackpal/gateway v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
