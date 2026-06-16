@@ -6,6 +6,7 @@ import (
 
 	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
+	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 )
@@ -428,5 +429,37 @@ func TestSetPreventSleepTogglesAndPersists(t *testing.T) {
 	}
 	if appsettings.Load(appsettings.Path(dir)).PreventSleep {
 		t.Fatalf("expected persisted false")
+	}
+}
+
+func TestSnapshotExposesNICsWithDelta(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.Ping = func(string, time.Duration) (probe.Result, error) { return probe.Result{RTT: time.Millisecond}, nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.Discovery = fakeLister{}
+	calls := 0
+	a.CollectNICs = func() []nicstat.NIC {
+		calls++
+		return []nicstat.NIC{{Name: "Ethernet", LinkSpeed: "2.5 Gbps", Status: "Up", RxDiscards: int64(40 + calls*5), EEE: "Enabled"}}
+	}
+	a.nicTick = 5 * time.Millisecond
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		nics := a.Snapshot().NICs
+		// after >=2 polls, a delta should be computed
+		if len(nics) == 1 && nics[0].Name == "Ethernet" && nics[0].EEE == "Enabled" && nics[0].RecentRxDiscards > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("NIC delta not populated; got %+v", a.Snapshot().NICs)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
