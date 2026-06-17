@@ -26,7 +26,7 @@ import (
 // Run opens the window and renders until it is closed.
 func Run(a *appcore.App) error {
 	w := new(app.Window)
-	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(820), unit.Dp(560)))
+	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)))
 
 	base := material.NewTheme()
 	base.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
@@ -41,6 +41,8 @@ func Run(a *appcore.App) error {
 
 	var resetBtn, exportBtn, sleepBtn widget.Clickable
 	var statusMsg string
+	var mainList widget.List
+	mainList.Axis = layout.Vertical
 
 	var ops op.Ops
 	for {
@@ -69,38 +71,34 @@ func Run(a *appcore.App) error {
 				a.SetPreventSleep(!snap.PreventSleep)
 			}
 
-			section := func(w layout.Widget) layout.FlexChild {
-				return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			cardSection := func(w layout.Widget) layout.Widget {
+				return func(gtx layout.Context) layout.Dimensions {
 					return card(gtx, colCard, colBorder, w)
-				})
+				}
+			}
+			items := []layout.Widget{
+				func(gtx layout.Context) layout.Dimensions {
+					return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, statusMsg)
+				},
+				gap(20),
+				func(gtx layout.Context) layout.Dimensions { return layoutKPIs(gtx, th, snap) },
+				gap(24),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutInfra(gtx, th, snap) }),
+				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
+				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
+				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
+				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
+				gap(16),
+				func(gtx layout.Context) layout.Dimensions { return layoutFooter(gtx, th, snap) },
 			}
 			layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					// ── Status hero ─────────────────────────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, statusMsg)
-					}),
-					layout.Rigid(gap(20)),
-					// ── KPI tiles ───────────────────────────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutKPIs(gtx, th, snap)
-					}),
-					layout.Rigid(gap(24)),
-					section(func(gtx layout.Context) layout.Dimensions { return layoutInfra(gtx, th, snap) }),
-					layout.Rigid(gap(12)),
-					section(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
-					layout.Rigid(gap(12)),
-					section(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
-					layout.Rigid(gap(12)),
-					section(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
-					layout.Rigid(gap(12)),
-					section(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
-					layout.Rigid(gap(16)),
-					// ── Compact footer ──────────────────────────────────
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutFooter(gtx, th, snap)
-					}),
-				)
+				return material.List(th, &mainList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+					return items[i](gtx)
+				})
 			})
 
 			e.Frame(gtx.Ops)
