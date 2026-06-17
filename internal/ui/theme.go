@@ -78,6 +78,31 @@ func card(gtx layout.Context, bg, border color.NRGBA, w layout.Widget) layout.Di
 		})
 }
 
+// dotWidget paints a filled status dot of size dp.
+func dotWidget(c color.NRGBA, size int) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		r := gtx.Dp(unit.Dp(size))
+		rect := image.Rectangle{Max: image.Pt(r, r)}
+		paint.FillShape(gtx.Ops, c, clip.Ellipse(rect).Op(gtx.Ops))
+		return layout.Dimensions{Size: image.Pt(r, r)}
+	}
+}
+
+// chipLabel renders a small rounded pill with fg text on a bg fill.
+func chipLabel(gtx layout.Context, th *material.Theme, txt string, fg, bg color.NRGBA) layout.Dimensions {
+	macro := op.Record(gtx.Ops)
+	dims := layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			l := material.Label(th, unit.Sp(11), txt)
+			l.Color = fg
+			return l.Layout(gtx)
+		})
+	call := macro.Stop()
+	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(image.Rectangle{Max: dims.Size}, gtx.Dp(unit.Dp(5))).Op(gtx.Ops))
+	call.Add(gtx.Ops)
+	return dims
+}
+
 // darkTheme returns a copy of base with the dark palette applied.
 func darkTheme(base *material.Theme) *material.Theme {
 	th := *base

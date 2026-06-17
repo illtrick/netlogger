@@ -95,9 +95,11 @@ func Run(a *appcore.App) error {
 				gap(16),
 				func(gtx layout.Context) layout.Dimensions { return layoutFooter(gtx, th, snap) },
 			}
-			layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			// The list spans full width so its scrollbar hugs the window's right
+			// edge; horizontal margin is applied per item instead.
+			layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return material.List(th, &mainList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
-					return items[i](gtx)
+					return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(18)}.Layout(gtx, items[i])
 				})
 			})
 
@@ -286,8 +288,12 @@ func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) 
 
 // adapterLine is the pure text rendering of one NIC row.
 func adapterLine(n appcore.NICInfo) string {
+	speed := n.LinkSpeed
+	if !strings.EqualFold(n.Status, "Up") {
+		speed = "—" // a down/disconnected link has no meaningful rate
+	}
 	return fmt.Sprintf("%s  %s  %s  power[%s]  discards rx+%d tx+%d  errors rx+%d tx+%d",
-		n.Name, n.LinkSpeed, n.Status, powerText(n.Power),
+		n.Name, speed, n.Status, powerText(n.Power),
 		n.RecentRxDiscards, n.RecentTxDiscards, n.RecentRxErrors, n.RecentTxErrors)
 }
 
@@ -326,43 +332,88 @@ func powerSavingOn(v string) bool {
 // visible at a glance without exporting. Offline events are vermillion.
 func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
 	if len(s.Events) == 0 {
-		return material.Body1(th, "Recent events: (none yet)").Layout(gtx)
+		return sectionTitle(gtx, th, "Recent events (mesh-wide): (none yet)")
 	}
 	now := time.Now().UnixMicro()
 	const maxRows = 10
 	children := make([]layout.FlexChild, 0, maxRows+1)
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return material.Body1(th, "Recent events (mesh-wide):").Layout(gtx)
+		return sectionTitle(gtx, th, "Recent events (mesh-wide)")
 	}))
 	shown := 0
 	for i := len(s.Events) - 1; i >= 0 && shown < maxRows; i-- {
 		e := s.Events[i]
 		shown++
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(2), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, eventLine(e, now))
-				if !e.Online {
-					lbl.Color = orange
-				}
-				return lbl.Layout(gtx)
+			return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return eventRow(gtx, th, e, now)
 			})
 		}))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-// eventLine renders one merged event as "<age> ago  <host>: <detail>" relative
-// to nowMicro. The host prefix makes a cross-machine fault legible at a glance.
-func eventLine(e appcore.MergedEvent, nowMicro int64) string {
-	age := (nowMicro - e.UnixMicro) / 1_000_000
-	if age < 0 {
-		age = 0
+// eventRow renders one merged event: a severity dot, the relative time (mono),
+// a host chip, and the detail.
+func eventRow(gtx layout.Context, th *material.Theme, e appcore.MergedEvent, now int64) layout.Dimensions {
+	dotCol := colGood
+	if !e.Online {
+		dotCol = colBad
 	}
 	host := e.Host
 	if host == "" {
 		host = "?"
 	}
-	return fmt.Sprintf("%s ago  %s: %s", fmtDuration(age), host, e.Detail)
+	return roundedBG(gtx, colCardAlt, unit.Dp(6), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(dotWidget(dotCol, 8)),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(th, unit.Sp(12), eventAge(e, now))
+					l.Color = colTextMut
+					l.Font.Typeface = "Go Mono"
+					return l.Layout(gtx)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return chipLabel(gtx, th, host, colTextSec, colCard)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(th, unit.Sp(13), e.Detail)
+					l.Color = colTextPri
+					return l.Layout(gtx)
+				})
+			}),
+		)
+	})
+}
+
+// eventAge renders an event's age as "<dur> ago" relative to nowMicro.
+func eventAge(e appcore.MergedEvent, nowMicro int64) string {
+	age := (nowMicro - e.UnixMicro) / 1_000_000
+	if age < 0 {
+		age = 0
+	}
+	return fmtDuration(age) + " ago"
+}
+
+// eventLine is the plain-text form kept for tests/back-compat.
+func eventLine(e appcore.MergedEvent, nowMicro int64) string {
+	host := e.Host
+	if host == "" {
+		host = "?"
+	}
+	return fmt.Sprintf("%s  %s: %s", eventAge(e, nowMicro), host, e.Detail)
+}
+
+// sectionTitle renders a muted section header label.
+func sectionTitle(gtx layout.Context, th *material.Theme, txt string) layout.Dimensions {
+	l := material.Label(th, unit.Sp(13), txt)
+	l.Color = colTextSec
+	return l.Layout(gtx)
 }
 
 // layoutMatrixSection renders the link matrix and its legend.
