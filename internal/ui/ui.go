@@ -89,6 +89,8 @@ func Run(a *appcore.App) error {
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
 				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTopology(gtx, th, snap) }),
+				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
