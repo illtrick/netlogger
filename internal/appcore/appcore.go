@@ -24,6 +24,7 @@ import (
 	"netlogger/internal/identity"
 	"netlogger/internal/iperf"
 	"netlogger/internal/keepawake"
+	"netlogger/internal/netmodel"
 	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
@@ -59,6 +60,12 @@ type Snapshot struct {
 	// Events is the merged mesh-wide connectivity timeline (this machine + every
 	// peer's pulled events), oldest first, host-labeled; the UI renders newest first.
 	Events []MergedEvent
+
+	// Network-config view for the topology + editor.
+	Topology    []netmodel.Tier
+	NetConfig   netmodel.Config
+	MonitorLoss map[string]float64 // monitored device IP → loss %
+	SelfNodeID  string
 }
 
 // NICInfo is one adapter's state plus the discard/error delta since the prior poll.
@@ -153,6 +160,10 @@ type App struct {
 	// events so the UI can show a live log without re-reading the store.
 	eventMu sync.Mutex
 	events  []EventInfo
+
+	// Network config (the user's gear) — drives the topology + monitored probes.
+	netCfgPath string
+	netCfg     netmodel.Config // guarded by a.mu
 }
 
 // EventInfo is one connectivity-timeline entry; also the /api/events wire shape.
@@ -246,7 +257,18 @@ func New(dataDir string) *App {
 		netHist:      newHistRing(histLen),
 		settingsPath: settingsPath,
 		preventSleep: appsettings.Load(settingsPath).PreventSleep,
+		netCfgPath:   filepath.Join(dataDir, "network.json"),
+		netCfg:       loadNetConfig(filepath.Join(dataDir, "network.json")),
 	}
+}
+
+// loadNetConfig loads the network config, falling back to Default on any error.
+func loadNetConfig(path string) netmodel.Config {
+	cfg, err := netmodel.Load(path)
+	if err != nil {
+		return netmodel.Default()
+	}
+	return cfg
 }
 
 func (a *App) statFor(id string) *peerStat {
@@ -349,7 +371,14 @@ func (a *App) Start() error {
 	if a.GatewayIP == "" {
 		a.GatewayIP = gateway.Default()
 	}
+	// Self-populate this machine's device in the config (node id + live NICs),
+	// preserving any user-entered topology, and persist it.
+	a.netCfg = netmodel.MergeAgent(a.netCfg, netmodel.Agent{
+		NodeUUID: nodeID, Name: host, Interfaces: localInterfaces(),
+	})
+	cfgToSave, cfgPath := a.netCfg, a.netCfgPath
 	a.mu.Unlock()
+	_ = netmodel.Save(cfgPath, cfgToSave)
 
 	if e, err := probe.StartUDPEcho("0.0.0.0:" + strconv.Itoa(udpEchoPort)); err != nil {
 		log.Printf("udp echo start: %v", err)
@@ -371,10 +400,11 @@ func (a *App) Start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(5)
+	a.wg.Add(6)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
+	go a.monitorLoop(ctx)
 	go a.linkPullLoop(ctx)
 	go a.nicLoop(ctx)
 
@@ -666,6 +696,69 @@ func nonNeg(v int64) int64 {
 	return v
 }
 
+// monitorLoop pings each monitor-flagged device IP from the network config and
+// records its loss like the gateway/internet probes, so the topology can color
+// infrastructure nodes by measured health.
+func (a *App) monitorLoop(ctx context.Context) {
+	defer a.wg.Done()
+	t := time.NewTicker(a.tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.mu.Lock()
+			cfg := a.netCfg
+			a.mu.Unlock()
+			for _, tg := range netmodel.MonitorTargets(cfg) {
+				if ctx.Err() != nil {
+					return
+				}
+				res, err := a.Ping(tg.IP, time.Second)
+				a.statFor("mon:"+tg.IP).record(err == nil, float64(res.RTT.Microseconds())/1000.0)
+			}
+		}
+	}
+}
+
+// localInterfaces enumerates this machine's up, non-loopback interfaces as
+// netmodel.Interfaces (MAC = unique id, first IPv4, medium inferred from the
+// adapter name) so Start can self-populate the config.
+func localInterfaces() []netmodel.Interface {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []netmodel.Interface
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 || len(ifi.HardwareAddr) == 0 {
+			continue
+		}
+		ip := ""
+		if addrs, aerr := ifi.Addrs(); aerr == nil {
+			for _, ad := range addrs {
+				if n, ok := ad.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() {
+					ip = n.IP.String()
+					break
+				}
+			}
+		}
+		medium := netmodel.MediumWired
+		low := strings.ToLower(ifi.Name)
+		if strings.Contains(low, "wi-fi") || strings.Contains(low, "wifi") || strings.Contains(low, "wireless") || strings.Contains(low, "wlan") {
+			medium = netmodel.MediumWifi
+		}
+		out = append(out, netmodel.Interface{
+			ID:     strings.ToLower(strings.ReplaceAll(ifi.Name, " ", "")),
+			Medium: medium,
+			MAC:    strings.ToUpper(ifi.HardwareAddr.String()),
+			IP:     ip,
+		})
+	}
+	return out
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
@@ -723,6 +816,16 @@ func (a *App) Snapshot() Snapshot {
 		LastReset:    a.lastReset,
 	}
 	selfHost := a.host
+	cfg := a.netCfg
+	monLoss := map[string]float64{}
+	for _, tg := range netmodel.MonitorTargets(cfg) {
+		_, l := a.statFor("mon:" + tg.IP).read()
+		monLoss[tg.IP] = l
+	}
+	snap.NetConfig = cfg
+	snap.Topology = netmodel.Tiers(cfg)
+	snap.MonitorLoss = monLoss
+	snap.SelfNodeID = a.nodeID
 	a.mu.Unlock()
 
 	// Build the matrix + merged event timeline OUTSIDE a.mu (linkReport locks
@@ -855,6 +958,15 @@ func resetSummary(acked, total int, notes []string) string {
 		s += " · " + strings.Join(notes, "; ")
 	}
 	return s
+}
+
+// SetNetConfig swaps the network config (from the editor) and persists it.
+func (a *App) SetNetConfig(cfg netmodel.Config) {
+	a.mu.Lock()
+	a.netCfg = cfg
+	path := a.netCfgPath
+	a.mu.Unlock()
+	_ = netmodel.Save(path, cfg)
 }
 
 // SetPreventSleep turns the keep-awake behavior on/off at runtime and persists it.

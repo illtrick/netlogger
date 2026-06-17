@@ -6,10 +6,54 @@ import (
 
 	"netlogger/internal/appsettings"
 	"netlogger/internal/discovery"
+	"netlogger/internal/netmodel"
 	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
 	"netlogger/internal/store"
 )
+
+func TestSnapshotMonitorsConfigTargets(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
+	a.StartIperf = func(string) (func(), string) { return func() {}, "" }
+	a.FetchLinks = func(string) (LinkReport, error) { return LinkReport{}, nil }
+	a.FetchEvents = func(string) ([]EventInfo, error) { return nil, nil }
+	pinged := map[string]bool{}
+	a.Ping = func(addr string, _ time.Duration) (probe.Result, error) {
+		a.peerMu.Lock()
+		pinged[addr] = true
+		a.peerMu.Unlock()
+		return probe.Result{RTT: time.Millisecond}, nil
+	}
+	// A monitored device on a sentinel IP nothing else probes.
+	cfg := netmodel.Config{}
+	cfg.Devices = []netmodel.Device{{ID: "r", Name: "r", Type: netmodel.TypeRouter,
+		Interfaces: []netmodel.Interface{{ID: "i", Medium: netmodel.MediumWired, IP: "10.9.9.9", Monitor: true}}}}
+	a.netCfg = cfg
+	a.Discovery = fakeLister{}
+	a.tick = 5 * time.Millisecond
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		a.peerMu.Lock()
+		got := pinged["10.9.9.9"]
+		a.peerMu.Unlock()
+		if got {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("monitored target never pinged")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(a.Snapshot().Topology) == 0 {
+		t.Fatalf("Snapshot.Topology empty")
+	}
+}
 
 func TestLifecycleProducesSamplesAndStopsClean(t *testing.T) {
 	dir := t.TempDir()
