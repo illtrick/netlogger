@@ -10,6 +10,7 @@ import (
 	"netlogger/internal/discovery"
 	"netlogger/internal/nicstat"
 	"netlogger/internal/probe"
+	"netlogger/internal/store"
 	"netlogger/internal/version"
 )
 
@@ -40,6 +41,36 @@ func TestExportBundleAndWrite(t *testing.T) {
 	}
 	if filepath.Ext(path) != ".json" {
 		t.Fatalf("expected .json file, got %s", path)
+	}
+}
+
+func TestLossHeatLabelsAndOrders(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir + "/h.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	base := int64(2_000_000_000) // µs
+	us := func(sec int) int64 { return base + int64(sec)*1_000_000 }
+	// peer "peerX" lossy in bucket 0; gateway clean
+	_, _ = st.Insert(store.Sample{TSUnixUS: us(0), ProbeType: "udp_iso", DstHost: "peerX", Lost: true})
+	_, _ = st.Insert(store.Sample{TSUnixUS: us(1), ProbeType: "udp_iso", DstHost: "peerX", Lost: false})
+	_, _ = st.Insert(store.Sample{TSUnixUS: us(0), ProbeType: "icmp", DstHost: "__gateway__", Lost: false})
+
+	a := New(dir)
+	a.store = st
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "peerX", Host: "ProjectorPC"}}}
+
+	v := a.LossHeat(base/1_000_000, base/1_000_000+20, 10)
+	if v.Buckets != 2 || len(v.Rows) != 2 {
+		t.Fatalf("want 2 buckets, 2 rows: %+v", v)
+	}
+	if v.Rows[0].Label != "Gateway" { // gateway ordered first
+		t.Fatalf("first row should be Gateway: %+v", v.Rows)
+	}
+	if v.Rows[1].Label != "ProjectorPC" || v.Rows[1].Loss[0] != 50 {
+		t.Fatalf("peer row mislabeled or wrong loss: %+v", v.Rows[1])
 	}
 }
 

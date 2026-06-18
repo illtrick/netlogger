@@ -130,6 +130,53 @@ func (s *Store) Insert(sm Sample) (int64, error) {
 }
 
 // Since returns up to limit samples with seq greater than afterSeq, in order.
+// LossBuckets returns, per target (dst_host), the loss% in each fixed-width time
+// bucket across [fromUS, toUS): the fraction of that bucket's probe samples that
+// saw loss. Peer links use udp_iso; gateway/internet use icmp. Buckets with no
+// samples are -1 (no data). The result aligns every target to the same bucket
+// grid so the UI can stack them on one time axis for concurrency.
+func (s *Store) LossBuckets(fromUS, toUS int64, bucketSec int) (map[string][]float64, error) {
+	out := map[string][]float64{}
+	if bucketSec <= 0 || toUS <= fromUS {
+		return out, nil
+	}
+	bucketUS := int64(bucketSec) * 1_000_000
+	n := int((toUS - fromUS + bucketUS - 1) / bucketUS)
+	rows, err := s.db.Query(
+		`SELECT dst_host, (ts_unix_us-?)/? AS bkt, 100.0*SUM(lost)/COUNT(*) AS loss
+		 FROM probe_samples
+		 WHERE ts_unix_us>=? AND ts_unix_us<? AND
+		   (probe_type='udp_iso' OR (probe_type='icmp' AND dst_host IN ('__gateway__','__internet__')))
+		 GROUP BY dst_host, bkt`, fromUS, bucketUS, fromUS, toUS)
+	if err != nil {
+		return nil, fmt.Errorf("loss buckets: %w", err)
+	}
+	defer rows.Close()
+	get := func(host string) []float64 {
+		a := out[host]
+		if a == nil {
+			a = make([]float64, n)
+			for i := range a {
+				a[i] = -1
+			}
+			out[host] = a
+		}
+		return a
+	}
+	for rows.Next() {
+		var host string
+		var bkt int
+		var loss float64
+		if err := rows.Scan(&host, &bkt, &loss); err != nil {
+			return nil, err
+		}
+		if bkt >= 0 && bkt < n {
+			get(host)[bkt] = loss
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Since(afterSeq int64, limit int) ([]Sample, error) {
 	rows, err := s.db.Query(
 		`SELECT seq,ts_unix_us,probe_type,src_host,dst_host,

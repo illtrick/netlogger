@@ -15,6 +15,49 @@ func openTemp(t *testing.T) *Store {
 	return s
 }
 
+func TestLossBuckets(t *testing.T) {
+	s := openTemp(t)
+	base := int64(1_000_000_000)
+	us := func(sec int) int64 { return base + int64(sec)*1_000_000 }
+	mk := func(sec int, dst string, lost bool) {
+		if _, err := s.Insert(Sample{TSUnixUS: us(sec), ProbeType: "udp_iso", SrcHost: "me", DstHost: dst, Lost: lost}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	// bucket 0 (sec 0–9): peerA 1 lost + 1 ok → 50%
+	mk(0, "peerA", true)
+	mk(1, "peerA", false)
+	// bucket 1 (sec 10–19): peerA 2 ok → 0%
+	mk(10, "peerA", false)
+	mk(11, "peerA", false)
+	// peerB only in bucket 0, all clean
+	mk(2, "peerB", false)
+	// a gateway icmp sample should be included; a self icmp sample must be excluded
+	if _, err := s.Insert(Sample{TSUnixUS: us(0), ProbeType: "icmp", SrcHost: "me", DstHost: "__gateway__", Lost: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Insert(Sample{TSUnixUS: us(0), ProbeType: "icmp", SrcHost: "me", DstHost: "self", Lost: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.LossBuckets(us(0), us(20), 10) // two 10s buckets
+	if err != nil {
+		t.Fatalf("LossBuckets: %v", err)
+	}
+	if got := res["peerA"]; len(got) != 2 || got[0] != 50 || got[1] != 0 {
+		t.Fatalf("peerA buckets wrong: %+v", got)
+	}
+	if got := res["peerB"]; got[0] != 0 || got[1] != -1 { // bucket 1 has no data → -1
+		t.Fatalf("peerB buckets wrong: %+v", got)
+	}
+	if got := res["__gateway__"]; got[0] != 100 {
+		t.Fatalf("gateway should be included at 100%%: %+v", got)
+	}
+	if _, ok := res["self"]; ok {
+		t.Fatalf("self icmp must be excluded from the heatmap")
+	}
+}
+
 func TestOpenEnablesWAL(t *testing.T) {
 	s := openTemp(t)
 	var mode string

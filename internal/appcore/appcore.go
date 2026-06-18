@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -496,6 +497,7 @@ func (a *App) peerLoop(ctx context.Context) {
 				if ok {
 					a.gwHist.push(float64(res.RTT.Microseconds()) / 1000.0)
 				}
+				_, _ = a.store.Insert(store.Sample{TSUnixUS: time.Now().UnixMicro(), ProbeType: "icmp", SrcHost: a.nodeID, DstHost: "__gateway__", Direction: "rtt", RTTus: res.RTT.Microseconds(), Lost: !ok})
 			}
 			if a.InternetIP != "" {
 				res, err := a.Ping(a.InternetIP, 2*time.Second)
@@ -504,6 +506,7 @@ func (a *App) peerLoop(ctx context.Context) {
 				if ok {
 					a.netHist.push(float64(res.RTT.Microseconds()) / 1000.0)
 				}
+				_, _ = a.store.Insert(store.Sample{TSUnixUS: time.Now().UnixMicro(), ProbeType: "icmp", SrcHost: a.nodeID, DstHost: "__internet__", Direction: "rtt", RTTus: res.RTT.Microseconds(), Lost: !ok})
 			}
 		}
 	}
@@ -860,6 +863,70 @@ func (a *App) Snapshot() Snapshot {
 	snap.NICs = nics
 
 	return snap
+}
+
+// HeatRow is one link's loss timeline; Loss[i] is the loss% in bucket i (-1 = no data).
+type HeatRow struct {
+	Label string
+	Loss  []float64
+}
+
+// HeatView is the time-normalized loss heatmap over [FromUnix, FromUnix+Buckets*BucketSec).
+type HeatView struct {
+	FromUnix  int64
+	BucketSec int
+	Buckets   int
+	Rows      []HeatRow
+}
+
+// LossHeat builds the per-link loss heatmap for [fromUnix, toUnix) at bucketSec
+// resolution, every row aligned to the same bucket grid (Gateway, Internet, then
+// peers) so the UI can stack them on one time axis.
+func (a *App) LossHeat(fromUnix, toUnix int64, bucketSec int) HeatView {
+	view := HeatView{FromUnix: fromUnix, BucketSec: bucketSec}
+	if a.store == nil || bucketSec <= 0 || toUnix <= fromUnix {
+		return view
+	}
+	m, err := a.store.LossBuckets(fromUnix*1_000_000, toUnix*1_000_000, bucketSec)
+	if err != nil {
+		return view
+	}
+	view.Buckets = int((toUnix - fromUnix + int64(bucketSec) - 1) / int64(bucketSec))
+
+	a.mu.Lock()
+	disc := a.Discovery
+	a.mu.Unlock()
+	idToHost := map[string]string{}
+	if disc != nil {
+		for _, p := range disc.Peers() {
+			idToHost[p.ID] = p.Host
+		}
+	}
+
+	add := func(key, label string) {
+		if loss, ok := m[key]; ok {
+			view.Rows = append(view.Rows, HeatRow{Label: label, Loss: loss})
+		}
+	}
+	add("__gateway__", "Gateway")
+	add("__internet__", "Internet")
+	var peers []HeatRow
+	for key, loss := range m {
+		if key == "__gateway__" || key == "__internet__" || key == "self" {
+			continue
+		}
+		label := idToHost[key]
+		if label == "" {
+			label = key
+			if len(label) > 8 {
+				label = label[:8]
+			}
+		}
+		peers = append(peers, HeatRow{Label: label, Loss: loss})
+	}
+	sort.Slice(peers, func(i, j int) bool { return peers[i].Label < peers[j].Label })
+	view.Rows = append(view.Rows, peers...)
+	return view
 }
 
 // ResetSession clears all in-memory diagnostics and restarts the session clock,
