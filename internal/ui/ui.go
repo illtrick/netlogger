@@ -106,9 +106,14 @@ func Run(a *appcore.App) error {
 				heatList.Position.First = nf
 				heatList.Position.Offset = 0
 				heatReanchor = 0
-			} else if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {
-				heatList.Position.First = heatView.Buckets // clamps to the live edge
+			}
+			if !heatInit && heatView.Buckets > 0 {
+				heatList.Position.First = heatView.Buckets // first open → live edge
 				heatInit = true
+			}
+			if hNow.Clicked(gtx) && heatView.Buckets > 0 { // just scroll to now, no zoom change
+				heatList.Position.First = heatView.Buckets
+				heatList.Position.Offset = 0
 			}
 			if ed.editOpen.Clicked(gtx) {
 				ed.active = true

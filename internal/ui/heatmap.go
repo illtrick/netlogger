@@ -174,6 +174,16 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, col...)
 				})
+				// Current-time playhead: a vertical line at "now".
+				if mh.BucketSec > 0 {
+					cwpx := gtx.Dp(unit.Dp(heatCellW))
+					nowFrac := float64(time.Now().Unix()-mh.FromUnix) / float64(mh.BucketSec)
+					nx := int((nowFrac-float64(list.Position.First))*float64(cwpx)) - list.Position.Offset
+					if nx >= 0 && nx < dims.Size.X {
+						lw := gtx.Dp(unit.Dp(2))
+						paint.FillShape(gtx.Ops, colAccent, clip.Rect(image.Rect(nx, 0, nx+lw, dims.Size.Y)).Op())
+					}
+				}
 				// Capture pointer hover over the whole cells area for next frame.
 				area := clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops)
 				event.Op(gtx.Ops, hover)
