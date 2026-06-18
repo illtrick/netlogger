@@ -88,8 +88,7 @@ func Run(a *appcore.App) error {
 				heatAt = time.Time{}
 			}
 			if heatAt.IsZero() || time.Since(heatAt) > 2*time.Second {
-				nowUnix := time.Now().Unix()
-				heatView = a.LossHeat(nowUnix-heatWindowSec, nowUnix, heatBucket)
+				heatView = a.LossHeatMesh(heatWindowSec, heatBucket)
 				heatAt = time.Now()
 			}
 			if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {

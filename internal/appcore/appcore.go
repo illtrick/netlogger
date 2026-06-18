@@ -166,6 +166,16 @@ type App struct {
 	// Network config (the user's gear) — drives the topology + monitored probes.
 	netCfgPath string
 	netCfg     netmodel.Config // guarded by a.mu
+
+	// heatMu (leaf) guards the cross-machine heatmap cache: the params the UI
+	// last asked for, and the peer rows the sync loop most recently pulled.
+	heatMu         sync.Mutex
+	heatFrom       int64
+	heatTo         int64
+	heatBucket     int
+	heatPeerRows   map[string][]HeatRow // peer host → its rows for (heatPeerFrom,heatPeerBucket)
+	heatPeerFrom   int64
+	heatPeerBucket int
 }
 
 // EventInfo is one connectivity-timeline entry; also the /api/events wire shape.
@@ -397,19 +407,21 @@ func (a *App) Start() error {
 		// synchronized session reset. Acceptable for a LAN diagnostic tool.
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		mux.Handle("/api/events", eventsHandler(a.recentEvents))
+		mux.Handle("/api/lossbuckets", lossBucketsHandler(a.LossHeat))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(6)
+	a.wg.Add(7)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
 	go a.monitorLoop(ctx)
 	go a.linkPullLoop(ctx)
 	go a.nicLoop(ctx)
+	go a.heatSyncLoop(ctx)
 
 	a.sleepMu.Lock()
 	if a.preventSleep && a.keeper == nil {
@@ -881,16 +893,16 @@ func (a *App) Snapshot() Snapshot {
 
 // HeatRow is one link's loss timeline; Loss[i] is the loss% in bucket i (-1 = no data).
 type HeatRow struct {
-	Label string
-	Loss  []float64
+	Label string    `json:"label"`
+	Loss  []float64 `json:"loss"`
 }
 
 // HeatView is the time-normalized loss heatmap over [FromUnix, FromUnix+Buckets*BucketSec).
 type HeatView struct {
-	FromUnix  int64
-	BucketSec int
-	Buckets   int
-	Rows      []HeatRow
+	FromUnix  int64     `json:"from_unix"`
+	BucketSec int       `json:"bucket_sec"`
+	Buckets   int       `json:"buckets"`
+	Rows      []HeatRow `json:"rows"`
 }
 
 // LossHeat builds the per-link loss heatmap for [fromUnix, toUnix) at bucketSec
