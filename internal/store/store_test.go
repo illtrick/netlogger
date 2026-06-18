@@ -58,6 +58,38 @@ func TestLossBuckets(t *testing.T) {
 	}
 }
 
+func TestLinkStateBuckets(t *testing.T) {
+	s := openTemp(t)
+	base := int64(1_000_000_000)
+	us := func(sec int) int64 { return base + int64(sec)*1_000_000 }
+	ev := func(sec int, online bool, detail string) {
+		if err := s.InsertConnectivityEvent(us(sec), "ryzen", online, detail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a flap in bucket 1 (sec 12 down → sec 14 up)
+	ev(12, false, "Ethernet link Disconnected (was Up)")
+	ev(14, true, "Ethernet link Up (was Disconnected)")
+	// a permanent disconnect (Wi-Fi off) with no recovery → must NOT mark
+	ev(2, false, "Wi-Fi link Disconnected (was Up)")
+	// an unrelated peer-degrade event must be ignored
+	ev(5, false, "link to sarah-pc degraded (loss 100.0%)")
+
+	b, err := s.LinkStateBuckets(us(0), us(30), 10, "ryzen") // three 10s buckets
+	if err != nil {
+		t.Fatalf("LinkStateBuckets: %v", err)
+	}
+	if len(b) != 3 {
+		t.Fatalf("want 3 buckets, got %d", len(b))
+	}
+	if b[1] != 100 {
+		t.Fatalf("bucket 1 should be a flap (100), got %v", b[1])
+	}
+	if b[0] != -1 || b[2] != -1 {
+		t.Fatalf("non-flap buckets should be -1 (Wi-Fi-off + peer events must not mark): %+v", b)
+	}
+}
+
 func TestOpenEnablesWAL(t *testing.T) {
 	s := openTemp(t)
 	var mode string

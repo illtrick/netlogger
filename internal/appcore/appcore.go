@@ -941,6 +941,14 @@ func (a *App) LossHeat(fromUnix, toUnix int64, bucketSec int) HeatView {
 	}
 	add("__gateway__", "Gateway")
 	add("__internet__", "Internet")
+	if ls, err := a.store.LinkStateBuckets(fromUnix*1_000_000, toUnix*1_000_000, bucketSec, a.NodeID()); err == nil {
+		for _, x := range ls {
+			if x >= 0 { // at least one flap → show the marker row
+				view.Rows = append(view.Rows, HeatRow{Label: "NIC link", Loss: ls})
+				break
+			}
+		}
+	}
 	var peers []HeatRow
 	for key, loss := range m {
 		if key == "__gateway__" || key == "__internet__" || key == "self" {

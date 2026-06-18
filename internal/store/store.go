@@ -177,6 +177,56 @@ func (s *Store) LossBuckets(fromUS, toUS int64, bucketSec int) (map[string][]flo
 	return out, rows.Err()
 }
 
+// LinkStateBuckets returns a per-bucket NIC-link-flap marker for one agent: a
+// bucket is 100 when a link Disconnected→Up flap (a reset) overlaps it, else -1.
+// Only paired down/up events count, so a link that's simply off (a never-recovered
+// disconnect, e.g. unused Wi-Fi) doesn't paint the row. This surfaces hard link
+// resets even in buckets where the loss probe happened to catch 0%.
+func (s *Store) LinkStateBuckets(fromUS, toUS int64, bucketSec int, agentID string) ([]float64, error) {
+	if bucketSec <= 0 || toUS <= fromUS {
+		return []float64{}, nil
+	}
+	bucketUS := int64(bucketSec) * 1_000_000
+	n := int((toUS - fromUS + bucketUS - 1) / bucketUS)
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = -1
+	}
+	rows, err := s.db.Query(
+		`SELECT ts_unix_us, online FROM connectivity_events
+		 WHERE agent_id=? AND ts_unix_us < ? AND
+		   (detail LIKE '%link Disconnected%' OR detail LIKE '%link Up%')
+		 ORDER BY ts_unix_us`, agentID, toUS)
+	if err != nil {
+		return nil, fmt.Errorf("link state buckets: %w", err)
+	}
+	defer rows.Close()
+	mark := func(downTS, upTS int64) {
+		lo := (downTS - fromUS) / bucketUS
+		hi := (upTS - fromUS) / bucketUS
+		for b := lo; b <= hi; b++ {
+			if b >= 0 && b < int64(n) {
+				out[b] = 100
+			}
+		}
+	}
+	pendingDown := int64(-1)
+	for rows.Next() {
+		var ts int64
+		var online int
+		if err := rows.Scan(&ts, &online); err != nil {
+			return nil, err
+		}
+		if online == 0 {
+			pendingDown = ts
+		} else if pendingDown >= 0 {
+			mark(pendingDown, ts)
+			pendingDown = -1
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Since(afterSeq int64, limit int) ([]Sample, error) {
 	rows, err := s.db.Query(
 		`SELECT seq,ts_unix_us,probe_type,src_host,dst_host,
