@@ -23,12 +23,14 @@ const (
 	heatLabelW = 96 // dp for the fixed left labels
 )
 
+var colHeatNone = color.NRGBA{R: 0x24, G: 0x2E, B: 0x3A, A: 0xFF} // visible "no data" cell
+
 // heatColor maps a bucket's loss% (fraction of that bucket's seconds that saw
-// loss) to the severity palette; <0 means no samples → a dim empty cell.
+// loss) to the severity palette; <0 means no samples → a dim but visible cell.
 func heatColor(loss float64) color.NRGBA {
 	switch {
 	case loss < 0:
-		return colCardAlt
+		return colHeatNone
 	case loss == 0:
 		return colGood
 	case loss < 5:
@@ -67,59 +69,61 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, v appcore.HeatView, l
 		title = fmt.Sprintf("Loss by link · viewing ~%s · %s/cell", firstT.Format("15:04"), bucketLabel(v.BucketSec))
 	}
 
-	header := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return sectionTitle(gtx, th, title) }),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
-		smallBtn(th, zoomOut, "−"),
-		smallBtn(th, zoomIn, "+"),
-		smallBtn(th, now, "Now"),
-	)
-
-	if v.Buckets == 0 || len(v.Rows) == 0 {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return header }),
+	header := func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return sectionTitle(gtx, th, title) }),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
+			smallBtn(th, zoomOut, "−"),
+			smallBtn(th, zoomIn, "+"),
+			smallBtn(th, now, "Now"),
 		)
 	}
 
-	grid := layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(heatLabelW))
-			gtx.Constraints.Max.X = gtx.Constraints.Min.X
-			ch := make([]layout.FlexChild, 0, len(v.Rows))
-			for i := range v.Rows {
-				label := v.Rows[i].Label
-				ch = append(ch, layout.Rigid(fixedH(heatRowH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						l := material.Label(th, unit.Sp(12), label)
-						l.Color = colTextSec
-						l.Alignment = text.End
-						l.MaxLines = 1
-						return l.Layout(gtx)
-					})
-				})))
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
-		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return material.List(th, list).Layout(gtx, v.Buckets, func(gtx layout.Context, i int) layout.Dimensions {
-				col := make([]layout.FlexChild, 0, len(v.Rows))
-				for r := range v.Rows {
-					loss := -1.0
-					if i < len(v.Rows[r].Loss) {
-						loss = v.Rows[r].Loss[i]
-					}
-					l := loss
-					col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, l) }))
+	if v.Buckets == 0 || len(v.Rows) == 0 {
+		return header(gtx)
+	}
+
+	grid := func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(heatLabelW))
+				gtx.Constraints.Max.X = gtx.Constraints.Min.X
+				ch := make([]layout.FlexChild, 0, len(v.Rows))
+				for i := range v.Rows {
+					label := v.Rows[i].Label
+					ch = append(ch, layout.Rigid(fixedH(heatRowH, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(th, unit.Sp(12), label)
+							l.Color = colTextSec
+							l.Alignment = text.End
+							l.MaxLines = 1
+							return l.Layout(gtx)
+						})
+					})))
 				}
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, col...)
-			})
-		}),
-	)
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return material.List(th, list).Layout(gtx, v.Buckets, func(gtx layout.Context, i int) layout.Dimensions {
+					col := make([]layout.FlexChild, 0, len(v.Rows))
+					for r := range v.Rows {
+						loss := -1.0
+						if i < len(v.Rows[r].Loss) {
+							loss = v.Rows[r].Loss[i]
+						}
+						l := loss
+						col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, l) }))
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, col...)
+				})
+			}),
+		)
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return header }),
+		layout.Rigid(header),
 		layout.Rigid(gap(10)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return grid }),
+		layout.Rigid(grid),
 		layout.Rigid(gap(8)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatLegend(gtx, th) }),
 	)

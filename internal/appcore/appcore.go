@@ -122,6 +122,7 @@ type App struct {
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
 	peerEvents  map[string][]MergedEvent // peer id → that peer's host-stamped events (guarded by reportMu)
+	peerHosts   map[string]string        // peer id → host, remembered across the session (guarded by reportMu)
 	lastReset   string                   // outcome of the most recent ResetAll, for the UI (guarded by a.mu)
 
 	// GatewayIP is the router to probe; auto-detected in Start when empty.
@@ -244,6 +245,7 @@ func New(dataDir string) *App {
 		linkStates:  make(map[string]*linkState),
 		peerReports: make(map[string]LinkReport),
 		peerEvents:  make(map[string][]MergedEvent),
+		peerHosts:   make(map[string]string),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
@@ -592,6 +594,17 @@ func (a *App) hostName() string {
 }
 
 // linkReport builds this node's current outbound link report from its UDP stats.
+// rememberPeer records a peer id→host mapping so historical samples (e.g. in the
+// loss heatmap) resolve to a name even after the peer goes away.
+func (a *App) rememberPeer(id, host string) {
+	if id == "" || host == "" {
+		return
+	}
+	a.reportMu.Lock()
+	a.peerHosts[id] = host
+	a.reportMu.Unlock()
+}
+
 func (a *App) linkReport() LinkReport {
 	a.mu.Lock()
 	id, host, disc := a.nodeID, a.host, a.Discovery
@@ -627,6 +640,7 @@ func (a *App) linkPullLoop(ctx context.Context) {
 				if ctx.Err() != nil {
 					return // exit promptly on shutdown between peers
 				}
+				a.rememberPeer(p.ID, p.Host)
 				rep, err := a.FetchLinks("http://" + p.Addr)
 				if err == nil && rep.NodeID != "" {
 					a.reportMu.Lock()
@@ -897,6 +911,11 @@ func (a *App) LossHeat(fromUnix, toUnix int64, bucketSec int) HeatView {
 	disc := a.Discovery
 	a.mu.Unlock()
 	idToHost := map[string]string{}
+	a.reportMu.Lock()
+	for id, host := range a.peerHosts { // remembered across the session
+		idToHost[id] = host
+	}
+	a.reportMu.Unlock()
 	if disc != nil {
 		for _, p := range disc.Peers() {
 			idToHost[p.ID] = p.Host
