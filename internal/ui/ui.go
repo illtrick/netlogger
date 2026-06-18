@@ -126,6 +126,10 @@ func Run(a *appcore.App) error {
 				gap(20),
 				func(gtx layout.Context) layout.Dimensions { return layoutKPIs(gtx, th, snap) },
 				gap(24),
+				cardSection(func(gtx layout.Context) layout.Dimensions {
+					return layoutHeatmap(gtx, th, heatView, &heatList, &heatHov, &hZoomOut, &hZoomIn, &hNow)
+				}),
+				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutInfra(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
@@ -133,12 +137,6 @@ func Run(a *appcore.App) error {
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTopology(gtx, th, snap) }),
-				gap(12),
-				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
-				gap(12),
-				cardSection(func(gtx layout.Context) layout.Dimensions {
-					return layoutHeatmap(gtx, th, heatView, &heatList, &heatHov, &hZoomOut, &hZoomIn, &hNow)
-				}),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
 				gap(16),
@@ -464,20 +462,6 @@ func sectionTitle(gtx layout.Context, th *material.Theme, txt string) layout.Dim
 	l := material.Label(th, unit.Sp(13), txt)
 	l.Color = colTextSec
 	return l.Layout(gtx)
-}
-
-// layoutMatrixSection renders the link matrix and its legend.
-func layoutMatrixSection(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutMatrix(gtx, th, s.Matrix)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(th, "loss: green <0.1%   orange <1%   red ≥1%   ·   rows = source, cols = destination").Layout(gtx)
-			})
-		}),
-	)
 }
 
 // layoutFooter renders a compact data-dir / iperf status line.
