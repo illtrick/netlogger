@@ -53,7 +53,6 @@ func Run(a *appcore.App) error {
 	var heatReanchor int64 // unix time to keep at the left edge across a zoom (0 = none)
 	var heatHov heatHover
 	var hZoomOut, hZoomIn, hNow widget.Clickable
-	var ed editor
 
 	var ops op.Ops
 	for {
@@ -115,23 +114,6 @@ func Run(a *appcore.App) error {
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
 			}
-			if ed.editOpen.Clicked(gtx) {
-				ed.active = true
-				ed.loaded = false
-			}
-
-			// ── Editor mode replaces the dashboard ──────────────
-			if ed.active {
-				if m := ed.process(gtx, a, snap); m != "" {
-					statusMsg = m
-				}
-				paint.Fill(gtx.Ops, colBg)
-				layout.Inset{Top: unit.Dp(16), Left: unit.Dp(20), Right: unit.Dp(18)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return ed.layout(gtx, th)
-				})
-				e.Frame(gtx.Ops)
-				continue
-			}
 
 			cardSection := func(w layout.Widget) layout.Widget {
 				return func(gtx layout.Context) layout.Dimensions {
@@ -140,7 +122,7 @@ func Run(a *appcore.App) error {
 			}
 			items := []layout.Widget{
 				func(gtx layout.Context) layout.Dimensions {
-					return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, &ed.editOpen, statusMsg)
+					return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, statusMsg)
 				},
 				gap(20),
 				func(gtx layout.Context) layout.Dimensions { return layoutKPIs(gtx, th, snap) },
@@ -154,8 +136,6 @@ func Run(a *appcore.App) error {
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
-				gap(12),
-				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTopology(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
 				gap(16),
@@ -177,7 +157,7 @@ func Run(a *appcore.App) error {
 // layoutHeader renders the status hero: a large colored status line, a muted
 // "up <dur> · build <id>" subline, the action buttons, and (when set) the
 // build-skew banner + transient status / last-reset messages.
-func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, resetBtn, exportBtn, sleepBtn, editBtn *widget.Clickable, statusMsg string) layout.Dimensions {
+func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, resetBtn, exportBtn, sleepBtn *widget.Clickable, statusMsg string) layout.Dimensions {
 	statusText, statusColor := overallStatus(s)
 	sub := fmt.Sprintf("up %s · build %s", fmtDuration(s.SessionUptimeSec), versionOr(s.Build))
 	sleepLabel := "Sleep: prevented"
@@ -231,7 +211,6 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: gtx.Constraints.Min}
 				}),
-				btn(editBtn, "Edit network"),
 				btn(sleepBtn, sleepLabel),
 				btn(resetBtn, "Reset all"),
 				btn(exportBtn, "Export"),
