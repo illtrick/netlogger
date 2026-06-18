@@ -160,9 +160,7 @@ func (a *App) heatWindow(windowSec, bucketSec int) (from int64, bucket int, loca
 	a.heatMu.Lock()
 	changed := a.heatFrom != from || a.heatBucket != bucketSec
 	a.heatFrom, a.heatTo, a.heatBucket = from, to, bucketSec
-	if a.heatPeerFrom == from && a.heatPeerBucket == bucketSec {
-		peerRows = a.heatPeerRows
-	}
+	pf, pb, praw := a.heatPeerFrom, a.heatPeerBucket, a.heatPeerRows
 	a.heatMu.Unlock()
 	if changed { // window moved (scroll boundary or zoom) → pull peers now, don't wait for the tick
 		select {
@@ -170,7 +168,42 @@ func (a *App) heatWindow(windowSec, bucketSec int) (from int64, bucket int, loca
 		default:
 		}
 	}
-	return from, bucketSec, a.LossHeat(from, to, bucketSec), peerRows
+	local = a.LossHeat(from, to, bucketSec)
+	// Resample the cached peer data onto the current grid by absolute time so peer
+	// rows never blink when the window advances a bucket or the zoom changes — they
+	// just shift, with the live-edge bucket showing no-data until the next pull.
+	if len(praw) > 0 && pb > 0 {
+		peerRows = make(map[string][]HeatRow, len(praw))
+		for host, rows := range praw {
+			peerRows[host] = resampleRows(rows, pf, pb, from, bucketSec, local.Buckets)
+		}
+	}
+	return from, bucketSec, local, peerRows
+}
+
+// resampleRows maps each row's Loss (bucketed from pf at pb seconds) onto a new
+// grid of `buckets` buckets from `from` at `bucket` seconds, taking the worst
+// (max) overlapping value per new bucket (-1 when nothing overlaps).
+func resampleRows(rows []HeatRow, pf int64, pb int, from int64, bucket, buckets int) []HeatRow {
+	out := make([]HeatRow, len(rows))
+	for ri, r := range rows {
+		loss := make([]float64, buckets)
+		for b := 0; b < buckets; b++ {
+			lo := from + int64(b*bucket)
+			hi := lo + int64(bucket)
+			jlo := int((lo - pf) / int64(pb))
+			jhi := int((hi - 1 - pf) / int64(pb))
+			best := -1.0
+			for j := jlo; j <= jhi; j++ {
+				if j >= 0 && j < len(r.Loss) && r.Loss[j] > best {
+					best = r.Loss[j]
+				}
+			}
+			loss[b] = best
+		}
+		out[ri] = HeatRow{Label: r.Label, Loss: loss}
+	}
+	return out
 }
 
 // LossHeatByMachine returns the mesh heatmap as one collapsed row per machine

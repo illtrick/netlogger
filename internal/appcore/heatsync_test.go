@@ -28,6 +28,20 @@ func TestCollapseMachine(t *testing.T) {
 	}
 }
 
+func TestResampleRowsShiftAndZoom(t *testing.T) {
+	rows := []HeatRow{{Label: "Gateway", Loss: []float64{0, 50, 100}}} // buckets at 1000,1010,1020 (pb=10)
+	// shift: same bucket size, window advanced by one bucket → drop oldest, live edge -1
+	got := resampleRows(rows, 1000, 10, 1010, 10, 3)[0].Loss
+	if got[0] != 50 || got[1] != 100 || got[2] != -1 {
+		t.Fatalf("shift resample wrong: %+v", got)
+	}
+	// zoom out: 20s buckets from 1000 → each new bucket merges two old (max)
+	got = resampleRows(rows, 1000, 10, 1000, 20, 2)[0].Loss
+	if got[0] != 50 || got[1] != 100 { // [1000,1020)→max(0,50)=50 ; [1020,1040)→max(100)=100
+		t.Fatalf("zoom-out resample wrong: %+v", got)
+	}
+}
+
 func TestLossBucketsHandlerRoundTrip(t *testing.T) {
 	want := HeatView{FromUnix: 5, BucketSec: 60, Buckets: 1, Rows: []HeatRow{{Label: "Gateway", Loss: []float64{12}}}}
 	mux := http.NewServeMux()

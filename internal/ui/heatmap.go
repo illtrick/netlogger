@@ -179,7 +179,7 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 				event.Op(gtx.Ops, hover)
 				area.Pop()
 				for {
-					ev, ok := gtx.Event(pointer.Filter{Target: hover, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Drag})
+					ev, ok := gtx.Event(pointer.Filter{Target: hover, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel})
 					if !ok {
 						break
 					}
