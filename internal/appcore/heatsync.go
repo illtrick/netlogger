@@ -55,6 +55,7 @@ func (a *App) heatSyncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-a.heatKick:
 		}
 		a.heatMu.Lock()
 		from, to, bucket := a.heatFrom, a.heatTo, a.heatBucket
@@ -120,9 +121,17 @@ func collapseMachine(host string, rows []HeatRow, buckets int) MachineRow {
 				m.Sev[b] = v
 			}
 			if v > 0 {
-				piece := r.Label + " " + strconv.Itoa(int(v+0.5)) + "%"
-				if r.Label == "NIC link" {
-					piece = "NIC reset"
+				pct := strconv.Itoa(int(v+0.5)) + "%"
+				var piece string
+				switch r.Label {
+				case "NIC link":
+					piece = "NIC link reset"
+				case "Gateway":
+					piece = "gateway loss " + pct
+				case "Internet":
+					piece = "internet loss " + pct
+				default:
+					piece = "loss → " + r.Label + " " + pct
 				}
 				if m.Detail[b] != "" {
 					m.Detail[b] += ", "
@@ -149,11 +158,18 @@ func (a *App) heatWindow(windowSec, bucketSec int) (from int64, bucket int, loca
 	from, to := fromB*b, toB*b
 
 	a.heatMu.Lock()
+	changed := a.heatFrom != from || a.heatBucket != bucketSec
 	a.heatFrom, a.heatTo, a.heatBucket = from, to, bucketSec
 	if a.heatPeerFrom == from && a.heatPeerBucket == bucketSec {
 		peerRows = a.heatPeerRows
 	}
 	a.heatMu.Unlock()
+	if changed { // window moved (scroll boundary or zoom) → pull peers now, don't wait for the tick
+		select {
+		case a.heatKick <- struct{}{}:
+		default:
+		}
+	}
 	return from, bucketSec, a.LossHeat(from, to, bucketSec), peerRows
 }
 

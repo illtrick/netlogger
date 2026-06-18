@@ -176,6 +176,7 @@ type App struct {
 	heatPeerRows   map[string][]HeatRow // peer host → its rows for (heatPeerFrom,heatPeerBucket)
 	heatPeerFrom   int64
 	heatPeerBucket int
+	heatKick       chan struct{} // signals the sync loop to pull immediately on a window change
 }
 
 // EventInfo is one connectivity-timeline entry; also the /api/events wire shape.
@@ -256,6 +257,7 @@ func New(dataDir string) *App {
 		peerReports: make(map[string]LinkReport),
 		peerEvents:  make(map[string][]MergedEvent),
 		peerHosts:   make(map[string]string),
+		heatKick:    make(chan struct{}, 1),
 		FetchLinks: func(baseURL string) (LinkReport, error) {
 			return fetchLinks(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},

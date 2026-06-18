@@ -10,6 +10,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
@@ -27,11 +28,12 @@ const (
 )
 
 // heatHover tracks the pointer over the heatmap cells so a hovered cell's detail
-// can be shown. It is its own event tag (stable across frames).
+// can be shown and the cell highlighted. It is its own event tag (stable across frames).
 type heatHover struct {
-	active bool
-	pos    f32.Point
-	text   string
+	active   bool
+	pos      f32.Point
+	text     string
+	mac, bkt int // resolved hovered cell (-1 = none)
 }
 
 var colHeatNone = color.NRGBA{R: 0x24, G: 0x2E, B: 0x3A, A: 0xFF} // visible "no data" cell
@@ -51,9 +53,14 @@ func heatColor(loss float64) color.NRGBA {
 	}
 }
 
-func heatCell(gtx layout.Context, loss float64) layout.Dimensions {
+func heatCell(gtx layout.Context, loss float64, hl bool) layout.Dimensions {
 	cw, ch := gtx.Dp(unit.Dp(heatCellW)), gtx.Dp(unit.Dp(heatRowH))
 	g := gtx.Dp(unit.Dp(1))
+	if hl { // bright frame behind an inset cell to highlight the hovered cell
+		paint.FillShape(gtx.Ops, colTextPri, clip.Rect(image.Rect(0, 0, cw, ch)).Op())
+		paint.FillShape(gtx.Ops, heatColor(loss), clip.Rect(image.Rect(g, g, cw-g, ch-g)).Op())
+		return layout.Dimensions{Size: image.Pt(cw, ch)}
+	}
 	paint.FillShape(gtx.Ops, heatColor(loss), clip.Rect(image.Rect(0, 0, cw-g, ch-g)).Op())
 	return layout.Dimensions{Size: image.Pt(cw, ch)}
 }
@@ -81,13 +88,14 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 	}
 
 	// Resolve the hovered cell from last frame's pointer position.
-	hover.text = ""
+	hover.text, hover.mac, hover.bkt = "", -1, -1
 	if hover.active && mh.Buckets > 0 && len(mh.Machines) > 0 {
 		cw := float32(gtx.Dp(heatCellW))
 		rh := float32(gtx.Dp(heatRowH))
 		bkt := list.Position.First + int((hover.pos.X+float32(list.Position.Offset))/cw)
 		mac := int(hover.pos.Y / rh)
 		if mac >= 0 && mac < len(mh.Machines) && bkt >= 0 && bkt < mh.Buckets {
+			hover.mac, hover.bkt = mac, bkt
 			m := mh.Machines[mac]
 			tt := time.Unix(mh.FromUnix+int64(bkt*mh.BucketSec), 0).Format("15:04")
 			d := "clean"
@@ -161,7 +169,8 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 							sev = mh.Machines[r].Sev[i]
 						}
 						s := sev
-						col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, s) }))
+						hl := r == hover.mac && i == hover.bkt
+						col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, s, hl) }))
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, col...)
 				})
@@ -188,13 +197,64 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 		)
 	}
 
+	axisRow := func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(heatLabelW)), gtx.Dp(unit.Dp(16)))}
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return heatAxis(gtx, th, mh, list) }),
+		)
+	}
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(header),
 		layout.Rigid(gap(10)),
 		layout.Rigid(grid),
+		layout.Rigid(gap(2)),
+		layout.Rigid(axisRow),
 		layout.Rigid(gap(8)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatLegend(gtx, th) }),
 	)
+}
+
+// heatAxis draws time labels along the bottom, aligned to the scrolled cells (a
+// label every ~58 dp). gtx is constrained to the cells width.
+func heatAxis(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, list *widget.List) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	h := gtx.Dp(unit.Dp(16))
+	cw := gtx.Dp(unit.Dp(heatCellW))
+	if cw == 0 || mh.Buckets == 0 {
+		return layout.Dimensions{Size: image.Pt(w, h)}
+	}
+	tickEvery := (gtx.Dp(unit.Dp(58)) + cw - 1) / cw
+	if tickEvery < 1 {
+		tickEvery = 1
+	}
+	first := list.Position.First
+	off := list.Position.Offset
+	for b := first - (first % tickEvery); b < mh.Buckets; b += tickEvery {
+		if b < first {
+			continue
+		}
+		x := (b-first)*cw - off
+		if x < 0 {
+			continue
+		}
+		if x > w {
+			break
+		}
+		t := time.Unix(mh.FromUnix+int64(b*mh.BucketSec), 0).Format("15:04")
+		st := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		g2 := gtx
+		g2.Constraints.Min = image.Point{}
+		g2.Constraints.Max.X = gtx.Dp(unit.Dp(60))
+		l := material.Label(th, unit.Sp(10), t)
+		l.Color = colTextMut
+		l.MaxLines = 1
+		l.Layout(g2)
+		st.Pop()
+	}
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 func bucketLabel(sec int) string {

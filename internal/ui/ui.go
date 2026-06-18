@@ -50,6 +50,7 @@ func Run(a *appcore.App) error {
 	var heatView appcore.MeshHeat
 	var heatAt time.Time
 	var heatInit bool
+	var heatReanchor int64 // unix time to keep at the left edge across a zoom (0 = none)
 	var heatHov heatHover
 	var hZoomOut, hZoomIn, hNow widget.Clickable
 	var ed editor
@@ -80,11 +81,13 @@ func Run(a *appcore.App) error {
 			if sleepBtn.Clicked(gtx) {
 				a.SetPreventSleep(!snap.PreventSleep)
 			}
-			if hZoomIn.Clicked(gtx) && heatBucket > 30 {
+			if hZoomIn.Clicked(gtx) && heatBucket > 15 {
+				heatReanchor = heatView.FromUnix + int64(heatList.Position.First*heatView.BucketSec)
 				heatBucket /= 2
 				heatAt = time.Time{}
 			}
 			if hZoomOut.Clicked(gtx) && heatBucket < 1800 {
+				heatReanchor = heatView.FromUnix + int64(heatList.Position.First*heatView.BucketSec)
 				heatBucket *= 2
 				heatAt = time.Time{}
 			}
@@ -92,7 +95,18 @@ func Run(a *appcore.App) error {
 				heatView = a.LossHeatByMachine(heatWindowSec, heatBucket)
 				heatAt = time.Now()
 			}
-			if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {
+			if heatReanchor != 0 && heatView.Buckets > 0 { // keep the same left-edge time after a zoom
+				nf := int((heatReanchor - heatView.FromUnix) / int64(heatBucket))
+				if nf < 0 {
+					nf = 0
+				}
+				if nf > heatView.Buckets {
+					nf = heatView.Buckets
+				}
+				heatList.Position.First = nf
+				heatList.Position.Offset = 0
+				heatReanchor = 0
+			} else if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {
 				heatList.Position.First = heatView.Buckets // clamps to the live edge
 				heatInit = true
 			}

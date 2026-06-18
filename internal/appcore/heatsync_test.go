@@ -20,8 +20,8 @@ func TestCollapseMachine(t *testing.T) {
 	if m.Sev[1] != 100 { // NIC reset + peer 100% → worst = 100
 		t.Fatalf("bucket1 sev should be 100: %v", m.Sev[1])
 	}
-	if !strings.Contains(m.Detail[1], "NIC reset") || !strings.Contains(m.Detail[1], "ProjectorPC 100%") {
-		t.Fatalf("bucket1 detail should name the problems: %q", m.Detail[1])
+	if !strings.Contains(m.Detail[1], "NIC link reset") || !strings.Contains(m.Detail[1], "ProjectorPC 100%") {
+		t.Fatalf("bucket1 detail should name the problems by type: %q", m.Detail[1])
 	}
 	if m.Sev[2] != -1 { // no link reported → no data
 		t.Fatalf("bucket2 should be no-data: %v", m.Sev[2])
