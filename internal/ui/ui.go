@@ -43,6 +43,14 @@ func Run(a *appcore.App) error {
 	var statusMsg string
 	var mainList widget.List
 	mainList.Axis = layout.Vertical
+	var heatList widget.List
+	heatList.Axis = layout.Horizontal
+	heatBucket := 120
+	const heatWindowSec = 24 * 3600
+	var heatView appcore.HeatView
+	var heatAt time.Time
+	var heatInit bool
+	var hZoomOut, hZoomIn, hNow widget.Clickable
 	var ed editor
 
 	var ops op.Ops
@@ -70,6 +78,23 @@ func Run(a *appcore.App) error {
 			}
 			if sleepBtn.Clicked(gtx) {
 				a.SetPreventSleep(!snap.PreventSleep)
+			}
+			if hZoomIn.Clicked(gtx) && heatBucket > 30 {
+				heatBucket /= 2
+				heatAt = time.Time{}
+			}
+			if hZoomOut.Clicked(gtx) && heatBucket < 1800 {
+				heatBucket *= 2
+				heatAt = time.Time{}
+			}
+			if heatAt.IsZero() || time.Since(heatAt) > 2*time.Second {
+				nowUnix := time.Now().Unix()
+				heatView = a.LossHeat(nowUnix-heatWindowSec, nowUnix, heatBucket)
+				heatAt = time.Now()
+			}
+			if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {
+				heatList.Position.First = heatView.Buckets // clamps to the live edge
+				heatInit = true
 			}
 			if ed.editOpen.Clicked(gtx) {
 				ed.active = true
@@ -110,6 +135,10 @@ func Run(a *appcore.App) error {
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTopology(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
+				gap(12),
+				cardSection(func(gtx layout.Context) layout.Dimensions {
+					return layoutHeatmap(gtx, th, heatView, &heatList, &hZoomOut, &hZoomIn, &hNow)
+				}),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
 				gap(16),
