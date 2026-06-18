@@ -34,6 +34,17 @@ type heatHover struct {
 	pos      f32.Point
 	text     string
 	mac, bkt int // resolved hovered cell (-1 = none)
+	dragging bool
+	lastX    float32
+}
+
+// panElements converts a horizontal drag of dxPx pixels into a list ScrollBy
+// amount in elements (cells): dragging right reveals earlier time (scroll back).
+func panElements(dxPx, cellWpx int) float32 {
+	if cellWpx <= 0 {
+		return 0
+	}
+	return -float32(dxPx) / float32(cellWpx)
 }
 
 var colHeatNone = color.NRGBA{R: 0x24, G: 0x2E, B: 0x3A, A: 0xFF} // visible "no data" cell
@@ -181,18 +192,35 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 				event.Op(gtx.Ops, hover)
 				area.Pop()
 				pass.Pop()
+				cwpx := gtx.Dp(unit.Dp(heatCellW))
+				strip := float32(gtx.Dp(unit.Dp(16))) // bottom scrollbar strip — leave it to the scrollbar
 				for {
-					ev, ok := gtx.Event(pointer.Filter{Target: hover, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel})
+					ev, ok := gtx.Event(pointer.Filter{Target: hover, Kinds: pointer.Move | pointer.Press | pointer.Drag | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel})
 					if !ok {
 						break
 					}
-					if pe, ok := ev.(pointer.Event); ok {
-						if pe.Kind == pointer.Leave || pe.Kind == pointer.Cancel {
-							hover.active = false
-						} else {
-							hover.active = true
-							hover.pos = pe.Position
+					pe, ok := ev.(pointer.Event)
+					if !ok {
+						continue
+					}
+					switch pe.Kind {
+					case pointer.Leave, pointer.Cancel:
+						hover.active, hover.dragging = false, false
+					case pointer.Press:
+						hover.active, hover.pos = true, pe.Position
+						if pe.Buttons == pointer.ButtonPrimary && pe.Position.Y < float32(dims.Size.Y)-strip {
+							hover.dragging, hover.lastX = true, pe.Position.X
 						}
+					case pointer.Drag:
+						hover.active, hover.pos = true, pe.Position
+						if hover.dragging {
+							list.ScrollBy(panElements(int(pe.Position.X-hover.lastX), cwpx))
+							hover.lastX = pe.Position.X
+						}
+					case pointer.Release:
+						hover.dragging = false
+					default: // Move / Enter
+						hover.active, hover.pos = true, pe.Position
 					}
 				}
 				return dims
