@@ -47,9 +47,10 @@ func Run(a *appcore.App) error {
 	heatList.Axis = layout.Horizontal
 	heatBucket := 120
 	const heatWindowSec = 24 * 3600
-	var heatView appcore.HeatView
+	var heatView appcore.MeshHeat
 	var heatAt time.Time
 	var heatInit bool
+	var heatHov heatHover
 	var hZoomOut, hZoomIn, hNow widget.Clickable
 	var ed editor
 
@@ -88,7 +89,7 @@ func Run(a *appcore.App) error {
 				heatAt = time.Time{}
 			}
 			if heatAt.IsZero() || time.Since(heatAt) > 2*time.Second {
-				heatView = a.LossHeatMesh(heatWindowSec, heatBucket)
+				heatView = a.LossHeatByMachine(heatWindowSec, heatBucket)
 				heatAt = time.Now()
 			}
 			if hNow.Clicked(gtx) || (!heatInit && heatView.Buckets > 0) {
@@ -136,7 +137,7 @@ func Run(a *appcore.App) error {
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutMatrixSection(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions {
-					return layoutHeatmap(gtx, th, heatView, &heatList, &hZoomOut, &hZoomIn, &hNow)
+					return layoutHeatmap(gtx, th, heatView, &heatList, &heatHov, &hZoomOut, &hZoomIn, &hNow)
 				}),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),

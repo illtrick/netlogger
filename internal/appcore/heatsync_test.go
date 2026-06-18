@@ -3,25 +3,28 @@ package appcore
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestMergeHeatLabelsAndOrders(t *testing.T) {
-	local := HeatView{FromUnix: 100, BucketSec: 60, Buckets: 2, Rows: []HeatRow{
-		{Label: "Gateway", Loss: []float64{0, 50}},
-	}}
-	peers := map[string][]HeatRow{
-		"sarah-pc": {{Label: "ProjectorPC", Loss: []float64{0, 0}}},
+func TestCollapseMachine(t *testing.T) {
+	rows := []HeatRow{
+		{Label: "Gateway", Loss: []float64{0, 0, -1}},
+		{Label: "NIC link", Loss: []float64{-1, 100, -1}},
+		{Label: "ProjectorPC", Loss: []float64{0, 100, -1}},
 	}
-	v := mergeHeat("ryzen", local, peers)
-	if v.Buckets != 2 || len(v.Rows) != 2 {
-		t.Fatalf("want 2 rows over 2 buckets: %+v", v)
+	m := collapseMachine("ryzen", rows, 3)
+	if m.Sev[0] != 0 || m.Detail[0] != "" { // all links clean → green, no detail
+		t.Fatalf("bucket0 should be clean: sev=%v det=%q", m.Sev[0], m.Detail[0])
 	}
-	if v.Rows[0].Label != "ryzen · Gateway" { // self first, host-prefixed
-		t.Fatalf("self row mislabeled: %q", v.Rows[0].Label)
+	if m.Sev[1] != 100 { // NIC reset + peer 100% → worst = 100
+		t.Fatalf("bucket1 sev should be 100: %v", m.Sev[1])
 	}
-	if v.Rows[1].Label != "sarah-pc · ProjectorPC" || v.Rows[1].Loss[1] != 0 {
-		t.Fatalf("peer row mislabeled: %+v", v.Rows[1])
+	if !strings.Contains(m.Detail[1], "NIC reset") || !strings.Contains(m.Detail[1], "ProjectorPC 100%") {
+		t.Fatalf("bucket1 detail should name the problems: %q", m.Detail[1])
+	}
+	if m.Sev[2] != -1 { // no link reported → no data
+		t.Fatalf("bucket2 should be no-data: %v", m.Sev[2])
 	}
 }
 

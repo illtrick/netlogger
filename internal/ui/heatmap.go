@@ -6,6 +6,9 @@ import (
 	"image/color"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -18,10 +21,18 @@ import (
 )
 
 const (
-	heatRowH   = 22 // dp per link row
-	heatCellW  = 9  // dp per time bucket
-	heatLabelW = 96 // dp for the fixed left labels
+	heatRowH   = 24  // dp per machine row
+	heatCellW  = 10  // dp per time bucket
+	heatLabelW = 104 // dp for the fixed left labels
 )
+
+// heatHover tracks the pointer over the heatmap cells so a hovered cell's detail
+// can be shown. It is its own event tag (stable across frames).
+type heatHover struct {
+	active bool
+	pos    f32.Point
+	text   string
+}
 
 var colHeatNone = color.NRGBA{R: 0x24, G: 0x2E, B: 0x3A, A: 0xFF} // visible "no data" cell
 
@@ -59,27 +70,65 @@ func fixedH(h int, w layout.Widget) layout.Widget {
 	}
 }
 
-// layoutHeatmap renders the time-normalized "loss by link" grid: a fixed label
-// column + a virtualized, horizontally-scrollable strip of buckets, every link on
-// one shared time axis so concurrent problems line up vertically.
-func layoutHeatmap(gtx layout.Context, th *material.Theme, v appcore.HeatView, list *widget.List, zoomOut, zoomIn, now *widget.Clickable) layout.Dimensions {
-	firstT := time.Unix(v.FromUnix+int64(list.Position.First*v.BucketSec), 0)
-	title := "Loss by link · collecting samples…"
-	if v.Buckets > 0 {
-		title = fmt.Sprintf("Loss by link · viewing ~%s · %s/cell", firstT.Format("15:04"), bucketLabel(v.BucketSec))
+// layoutHeatmap renders one row per machine on a shared, scrollable time axis: a
+// cell is the worst severity across that machine's links/NIC in that bucket, and
+// hovering a cell shows what failed and when.
+func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, list *widget.List, hover *heatHover, zoomOut, zoomIn, now *widget.Clickable) layout.Dimensions {
+	firstT := time.Unix(mh.FromUnix+int64(list.Position.First*mh.BucketSec), 0)
+	title := "Activity by machine · collecting samples…"
+	if mh.Buckets > 0 {
+		title = fmt.Sprintf("Activity by machine · from ~%s · %s/cell", firstT.Format("15:04"), bucketLabel(mh.BucketSec))
+	}
+
+	// Resolve the hovered cell from last frame's pointer position.
+	hover.text = ""
+	if hover.active && mh.Buckets > 0 && len(mh.Machines) > 0 {
+		cw := float32(gtx.Dp(heatCellW))
+		rh := float32(gtx.Dp(heatRowH))
+		bkt := list.Position.First + int((hover.pos.X+float32(list.Position.Offset))/cw)
+		mac := int(hover.pos.Y / rh)
+		if mac >= 0 && mac < len(mh.Machines) && bkt >= 0 && bkt < mh.Buckets {
+			m := mh.Machines[mac]
+			tt := time.Unix(mh.FromUnix+int64(bkt*mh.BucketSec), 0).Format("15:04")
+			d := "clean"
+			if bkt < len(m.Sev) && m.Sev[bkt] < 0 {
+				d = "no data"
+			}
+			if bkt < len(m.Detail) && m.Detail[bkt] != "" {
+				d = m.Detail[bkt]
+			}
+			hover.text = tt + " · " + m.Host + " — " + d
+		}
 	}
 
 	header := func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return sectionTitle(gtx, th, title) }),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
-			smallBtn(th, zoomOut, "−"),
-			smallBtn(th, zoomIn, "+"),
-			smallBtn(th, now, "Now"),
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return sectionTitle(gtx, th, title) }),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
+					smallBtn(th, zoomOut, "−"),
+					smallBtn(th, zoomIn, "+"),
+					smallBtn(th, now, "Now"),
+				)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				txt := hover.text
+				col := colTextPri
+				if txt == "" {
+					txt, col = "hover a cell for details", colTextMut
+				}
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(th, unit.Sp(12), txt)
+					l.Color = col
+					l.MaxLines = 1
+					return l.Layout(gtx)
+				})
+			}),
 		)
 	}
 
-	if v.Buckets == 0 || len(v.Rows) == 0 {
+	if mh.Buckets == 0 || len(mh.Machines) == 0 {
 		return header(gtx)
 	}
 
@@ -88,12 +137,12 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, v appcore.HeatView, l
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(heatLabelW))
 				gtx.Constraints.Max.X = gtx.Constraints.Min.X
-				ch := make([]layout.FlexChild, 0, len(v.Rows))
-				for i := range v.Rows {
-					label := v.Rows[i].Label
+				ch := make([]layout.FlexChild, 0, len(mh.Machines))
+				for i := range mh.Machines {
+					label := mh.Machines[i].Host
 					ch = append(ch, layout.Rigid(fixedH(heatRowH, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(th, unit.Sp(12), label)
+						return layout.Inset{Right: unit.Dp(8), Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(th, unit.Sp(13), label)
 							l.Color = colTextSec
 							l.Alignment = text.End
 							l.MaxLines = 1
@@ -104,18 +153,37 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, v appcore.HeatView, l
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return material.List(th, list).Layout(gtx, v.Buckets, func(gtx layout.Context, i int) layout.Dimensions {
-					col := make([]layout.FlexChild, 0, len(v.Rows))
-					for r := range v.Rows {
-						loss := -1.0
-						if i < len(v.Rows[r].Loss) {
-							loss = v.Rows[r].Loss[i]
+				dims := material.List(th, list).Layout(gtx, mh.Buckets, func(gtx layout.Context, i int) layout.Dimensions {
+					col := make([]layout.FlexChild, 0, len(mh.Machines))
+					for r := range mh.Machines {
+						sev := -1.0
+						if i < len(mh.Machines[r].Sev) {
+							sev = mh.Machines[r].Sev[i]
 						}
-						l := loss
-						col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, l) }))
+						s := sev
+						col = append(col, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return heatCell(gtx, s) }))
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, col...)
 				})
+				// Capture pointer hover over the whole cells area for next frame.
+				area := clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops)
+				event.Op(gtx.Ops, hover)
+				area.Pop()
+				for {
+					ev, ok := gtx.Event(pointer.Filter{Target: hover, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Drag})
+					if !ok {
+						break
+					}
+					if pe, ok := ev.(pointer.Event); ok {
+						if pe.Kind == pointer.Leave || pe.Kind == pointer.Cancel {
+							hover.active = false
+						} else {
+							hover.active = true
+							hover.pos = pe.Position
+						}
+					}
+				}
+				return dims
 			}),
 		)
 	}

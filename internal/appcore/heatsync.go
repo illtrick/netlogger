@@ -83,30 +83,60 @@ func (a *App) heatSyncLoop(ctx context.Context) {
 	}
 }
 
-// mergeHeat stacks this machine's loss rows and every peer's onto one view, each
-// row prefixed with the host that measured it (self first, peers host-sorted).
-func mergeHeat(selfHost string, local HeatView, peerRows map[string][]HeatRow) HeatView {
-	view := HeatView{FromUnix: local.FromUnix, BucketSec: local.BucketSec, Buckets: local.Buckets}
-	for _, r := range local.Rows {
-		view.Rows = append(view.Rows, HeatRow{Label: selfHost + " · " + r.Label, Loss: r.Loss})
-	}
-	hosts := make([]string, 0, len(peerRows))
-	for h := range peerRows {
-		hosts = append(hosts, h)
-	}
-	sort.Strings(hosts)
-	for _, h := range hosts {
-		for _, r := range peerRows[h] {
-			view.Rows = append(view.Rows, HeatRow{Label: h + " · " + r.Label, Loss: r.Loss})
-		}
-	}
-	return view
+// MachineRow is one machine's health timeline: per bucket, the worst severity
+// across all of that machine's links/NIC (Sev: loss%, 100 = NIC reset, -1 = no
+// data) plus a human Detail of what failed (empty when clean).
+type MachineRow struct {
+	Host   string
+	Sev    []float64
+	Detail []string
 }
 
-// LossHeatMesh returns the mesh-wide loss heatmap: this machine's links plus every
-// peer's, stacked on one absolute, bucket-snapped time axis. windowSec is how far
-// back to show; the peer rows come from the background sync loop's cache.
-func (a *App) LossHeatMesh(windowSec, bucketSec int) HeatView {
+// MeshHeat is the per-machine heatmap: one row per machine on a shared time axis.
+type MeshHeat struct {
+	FromUnix  int64
+	BucketSec int
+	Buckets   int
+	Machines  []MachineRow
+}
+
+// collapseMachine folds a machine's per-link rows into one row: each bucket takes
+// the worst severity across its links, and a detail string naming the problems.
+func collapseMachine(host string, rows []HeatRow, buckets int) MachineRow {
+	m := MachineRow{Host: host, Sev: make([]float64, buckets), Detail: make([]string, buckets)}
+	for i := range m.Sev {
+		m.Sev[i] = -1
+	}
+	for _, r := range rows {
+		for b := 0; b < buckets && b < len(r.Loss); b++ {
+			v := r.Loss[b]
+			if v < 0 {
+				continue // this link has no data in this bucket
+			}
+			if m.Sev[b] < 0 {
+				m.Sev[b] = 0 // at least one link reporting → clean unless a worse value follows
+			}
+			if v > m.Sev[b] {
+				m.Sev[b] = v
+			}
+			if v > 0 {
+				piece := r.Label + " " + strconv.Itoa(int(v+0.5)) + "%"
+				if r.Label == "NIC link" {
+					piece = "NIC reset"
+				}
+				if m.Detail[b] != "" {
+					m.Detail[b] += ", "
+				}
+				m.Detail[b] += piece
+			}
+		}
+	}
+	return m
+}
+
+// heatWindow snaps the requested window to an absolute bucket grid, records it for
+// the sync loop, and returns the local link rows plus any matching cached peer rows.
+func (a *App) heatWindow(windowSec, bucketSec int) (from int64, bucket int, local HeatView, peerRows map[string][]HeatRow) {
 	if bucketSec <= 0 {
 		bucketSec = 120
 	}
@@ -120,11 +150,26 @@ func (a *App) LossHeatMesh(windowSec, bucketSec int) HeatView {
 
 	a.heatMu.Lock()
 	a.heatFrom, a.heatTo, a.heatBucket = from, to, bucketSec
-	var peerRows map[string][]HeatRow
 	if a.heatPeerFrom == from && a.heatPeerBucket == bucketSec {
 		peerRows = a.heatPeerRows
 	}
 	a.heatMu.Unlock()
+	return from, bucketSec, a.LossHeat(from, to, bucketSec), peerRows
+}
 
-	return mergeHeat(a.hostName(), a.LossHeat(from, to, bucketSec), peerRows)
+// LossHeatByMachine returns the mesh heatmap as one collapsed row per machine
+// (this machine first, peers host-sorted) on one absolute, bucket-snapped axis.
+func (a *App) LossHeatByMachine(windowSec, bucketSec int) MeshHeat {
+	from, bucket, local, peerRows := a.heatWindow(windowSec, bucketSec)
+	mh := MeshHeat{FromUnix: from, BucketSec: bucket, Buckets: local.Buckets}
+	mh.Machines = append(mh.Machines, collapseMachine(a.hostName(), local.Rows, local.Buckets))
+	hosts := make([]string, 0, len(peerRows))
+	for h := range peerRows {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	for _, h := range hosts {
+		mh.Machines = append(mh.Machines, collapseMachine(h, peerRows[h], local.Buckets))
+	}
+	return mh
 }
