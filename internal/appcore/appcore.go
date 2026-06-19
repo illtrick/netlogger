@@ -156,6 +156,12 @@ type App struct {
 	nicMu       sync.Mutex
 	nics        []NICInfo
 
+	// stressRunner runs one capped iperf3 client (defaults to iperf.RunClientCtx);
+	// injectable for tests.
+	stressRunner func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error)
+	stressMu     sync.Mutex
+	stress       *stressRun
+
 	// eventMu (leaf) guards an in-memory ring of the most recent connectivity
 	// events so the UI can show a live log without re-reading the store.
 	eventMu sync.Mutex
@@ -264,6 +270,7 @@ func New(dataDir string) *App {
 		localSpeed: func(req SpeedReq) SpeedResult {
 			return runSpeedTest(iperf.RunClient, req.Target, req)
 		},
+		stressRunner: iperf.RunClientCtx,
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
 		rttHist:      make(map[string]*histRing),
