@@ -215,6 +215,8 @@ func speedPairs(nodes []SpeedNode) []SpeedPair {
 }
 
 // speedColorBucket maps a download Mbit/s to a severity bucket. -1 = not run.
+// Thresholds assume a 1 GbE baseline (the mesh's link speed); on faster links
+// every healthy pair reads "good", which is the intended conservative default.
 func speedColorBucket(mbit float64) string {
 	switch {
 	case mbit < 0:

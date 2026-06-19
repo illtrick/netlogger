@@ -117,6 +117,51 @@ func TestSpeedColor(t *testing.T) {
 	}
 }
 
+func TestRunSpeedTestBothDownLegFails(t *testing.T) {
+	// Up leg succeeds, down leg (-R) fails: keep the up number, surface the error,
+	// leave down at zero (partial-result contract).
+	run := func(target string, o iperf.Opts) (iperf.Result, error) {
+		if o.Reverse {
+			return iperf.Result{}, errors.New("down failed")
+		}
+		return iperf.Result{SumBitsPerSec: 800e6}, nil
+	}
+	got := runSpeedTest(run, "h", SpeedReq{Direction: "both"})
+	if round1(got.UpMbit) != 800 {
+		t.Fatalf("up should still be measured, got %v", got.UpMbit)
+	}
+	if got.Err == "" {
+		t.Fatalf("down failure should set Err")
+	}
+	if got.DownMbit != 0 {
+		t.Fatalf("down should be 0 on failure, got %v", got.DownMbit)
+	}
+}
+
+func TestSpeedTestHandlerClampsDuration(t *testing.T) {
+	var seen SpeedReq
+	h := speedTestHandler(func(req SpeedReq) SpeedResult { seen = req; return SpeedResult{} })
+	for _, body := range []string{
+		`{"target":"h","direction":"up","duration_s":0}`,
+		`{"target":"h","direction":"up","duration_s":120}`,
+	} {
+		rr := httptest.NewRecorder()
+		h(rr, httptest.NewRequest(http.MethodPost, "/api/speedtest", strings.NewReader(body)))
+		if seen.DurationS != 10 {
+			t.Fatalf("duration not clamped to 10 for %q, got %d", body, seen.DurationS)
+		}
+	}
+}
+
+func TestSpeedSweepZeroPeers(t *testing.T) {
+	a := &App{nodeID: "self"}
+	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{} }
+	m := a.SpeedSweep(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"})
+	if len(m.Nodes) != 1 || len(m.Cells) != 0 {
+		t.Fatalf("zero-peer sweep: nodes=%d cells=%d, want 1/0", len(m.Nodes), len(m.Cells))
+	}
+}
+
 func TestSpeedSweepRunsEveryPair(t *testing.T) {
 	a := &App{nodeID: "self"}
 	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{DownMbit: 900} }
