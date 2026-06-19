@@ -80,14 +80,15 @@ var errStressBusy = errors.New("a stress run is already active")
 
 // stressRun is one active stress run on this node.
 type stressRun struct {
-	runID   string
-	cancel  context.CancelFunc
-	starts  int64
-	ends    int64
-	mu      sync.Mutex
-	links   map[string]*LinkLoad
-	wg      sync.WaitGroup
-	running bool
+	runID    string
+	cancel   context.CancelFunc
+	starts   int64
+	ends     int64
+	mu       sync.Mutex
+	links    map[string]*LinkLoad
+	wg       sync.WaitGroup
+	running  bool
+	finalize func() // closes the heatmap test window when the run ends
 }
 
 // startStressLocal schedules and launches the load goroutines. Rejects a start
@@ -113,6 +114,9 @@ func (a *App) startStressLocal(o StressOpts) error {
 		run.links[tg] = &LinkLoad{Target: tg}
 	}
 	a.stress = run
+
+	a.recordTestEvent("stress test started (full mesh, " + strconv.Itoa(o.PerLinkCapMbit) + " Mbit/s)")
+	run.finalize = a.markTestSpan("stress test", int64(dur)*1000)
 
 	capMbit := o.PerLinkCapMbit
 	proto := o.Proto
@@ -148,6 +152,10 @@ func (a *App) startStressLocal(o StressOpts) error {
 			cancel()
 		}
 		run.wg.Wait()
+		if run.finalize != nil {
+			run.finalize()
+		}
+		a.recordTestEvent("stress test ended")
 		a.stressMu.Lock()
 		run.mu.Lock()
 		run.running = false

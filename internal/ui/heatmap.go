@@ -117,6 +117,9 @@ func layoutHeatmap(gtx layout.Context, th *material.Theme, mh appcore.MeshHeat, 
 				d = m.Detail[bkt]
 			}
 			hover.text = tt + " · " + m.Host + " — " + d
+			if bkt < len(mh.Notes) && mh.Notes[bkt] != "" {
+				hover.text += "  ·  " + mh.Notes[bkt] + " running"
+			}
 		}
 	}
 

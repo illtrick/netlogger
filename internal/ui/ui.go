@@ -137,7 +137,9 @@ func Run(a *appcore.App) error {
 				if !alreadyRunning {
 					self, peers := snap.SelfPeer, snap.Peers
 					go func() {
+						done := a.BeginSpeedTestNote()
 						m := a.SpeedSweep(self, peers, appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2})
+						done()
 						tst.mu.Lock()
 						tst.matrix = m
 						tst.haveMatrix = true

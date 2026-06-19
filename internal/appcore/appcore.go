@@ -162,6 +162,10 @@ type App struct {
 	stressMu     sync.Mutex
 	stress       *stressRun
 
+	// testWindows records spans during which a test ran, for the heatmap hover.
+	testWinMu   sync.Mutex
+	testWindows []*testWindow
+
 	// Stress orchestration seams (default to the HTTP clients / local manager).
 	FetchStressStart  func(baseURL string, o StressOpts) error
 	FetchStressStop   func(baseURL, runID string) error

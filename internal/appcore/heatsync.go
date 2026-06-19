@@ -99,6 +99,9 @@ type MeshHeat struct {
 	BucketSec int
 	Buckets   int
 	Machines  []MachineRow
+	// Notes is a mesh-wide per-bucket label of any test running then (e.g. "stress
+	// test"), so the UI can show what was happening when a cell is hovered.
+	Notes []string
 }
 
 // collapseMachine folds a machine's per-link rows into one row: each bucket takes
@@ -220,5 +223,6 @@ func (a *App) LossHeatByMachine(windowSec, bucketSec int) MeshHeat {
 	for _, h := range hosts {
 		mh.Machines = append(mh.Machines, collapseMachine(h, peerRows[h], local.Buckets))
 	}
+	mh.Notes = a.testNotes(from, bucket, local.Buckets)
 	return mh
 }
