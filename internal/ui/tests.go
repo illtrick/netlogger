@@ -224,6 +224,9 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		}),
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return stressLatencyChart(gtx, th, snap)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if !on && len(nodes) == 0 {
 				lbl := material.Caption(th, "no active run")
 				lbl.Color = colTextMut
@@ -231,6 +234,60 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 			}
 			return layoutStressList(gtx, th, nodes, snap)
 		}),
+	)
+}
+
+// linkColors cycles per-link line/legend colors for the latency chart.
+var linkColors = []color.NRGBA{colBad, colAccent, colGood, colWatch, {R: 0x7e, G: 0xe0, B: 0xa0, A: 0xff}}
+
+// stressLatencyChart draws the per-peer RTT histories on one shared scale — the
+// "latency under load" readout: lines spike as the stress test saturates links.
+func stressLatencyChart(gtx layout.Context, th *material.Theme, snap appcore.Snapshot) layout.Dimensions {
+	var series [][]float64
+	var names []string
+	for _, p := range snap.Peers {
+		if len(p.RTTHist) >= 2 {
+			series = append(series, p.RTTHist)
+			names = append(names, p.Host)
+		}
+	}
+	if len(series) == 0 {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Latency under load · last minute")
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(gap(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
+			return multiSparkline(gtx, series, linkColors, w, 80)
+		}),
+		layout.Rigid(gap(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ch := make([]layout.FlexChild, 0, len(names))
+			for i, name := range names {
+				i, name := i, name
+				ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(dotWidget(linkColors[i%len(linkColors)], 8)),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Caption(th, name)
+									lbl.Color = colTextSec
+									return lbl.Layout(gtx)
+								})
+							}),
+						)
+					})
+				}))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
+		}),
+		layout.Rigid(gap(14)),
 	)
 }
 
@@ -534,8 +591,10 @@ func matrixCellSub(res appcore.SpeedResult) string {
 		return fmt.Sprintf("%.1f%% loss", res.LossPct)
 	case res.DownMbit > 0 && res.DownMbit < 400:
 		return "slow"
-	case res.RTTms > 0:
+	case res.RTTms > 0: // mean TCP RTT, when the platform reports it
 		return fmt.Sprintf("%.1f ms", res.RTTms)
+	case res.UpMbit > 0: // otherwise show the upload leg (down/up asymmetry)
+		return fmt.Sprintf("↑ %.0f", res.UpMbit)
 	default:
 		return ""
 	}
