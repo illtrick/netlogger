@@ -44,3 +44,13 @@ func TestBuildArgsSpeedFlags(t *testing.T) {
 		t.Fatalf("udp capped + streams: %v", udp)
 	}
 }
+
+func TestBuildArgsTCPRateCap(t *testing.T) {
+	got := buildArgs("h", Opts{DurationS: 5, BitrateMbit: 200})
+	if !contains(got, "-b") || !contains(got, "200M") {
+		t.Fatalf("tcp cap should emit -b 200M: %v", got)
+	}
+	if contains(got, "-u") {
+		t.Fatalf("tcp cap must not imply -u: %v", got)
+	}
+}

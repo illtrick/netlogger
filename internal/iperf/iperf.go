@@ -3,6 +3,7 @@
 package iperf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -185,25 +186,31 @@ func buildArgs(target string, o Opts) []string {
 	}
 	if o.UDP {
 		args = append(args, "-u")
-		if o.BitrateMbit > 0 {
-			args = append(args, "-b", strconv.Itoa(o.BitrateMbit)+"M")
-		}
+	}
+	if o.BitrateMbit > 0 {
+		args = append(args, "-b", strconv.Itoa(o.BitrateMbit)+"M")
 	}
 	return args
 }
 
-// RunClient runs iperf3 (bundled or on PATH) and parses the result. It returns
-// a clear error if no iperf3 binary is found.
-func RunClient(target string, o Opts) (Result, error) {
+// RunClientCtx is RunClient with a context: cancelling ctx kills the iperf3
+// process (used by the stress test's kill-switch and duration cap).
+func RunClientCtx(ctx context.Context, target string, o Opts) (Result, error) {
 	bin := binary()
 	if bin == "" {
 		return Result{}, fmt.Errorf("iperf3 not found (bundle it next to NetLogger or install it) — cannot run load test")
 	}
-	cc := exec.Command(bin, buildArgs(target, o)...)
+	cc := exec.CommandContext(ctx, bin, buildArgs(target, o)...)
 	hideConsole(cc)
 	out, err := cc.Output()
 	if err != nil && len(out) == 0 {
 		return Result{}, fmt.Errorf("iperf3 run: %w", err)
 	}
 	return Parse(out)
+}
+
+// RunClient runs iperf3 (bundled or on PATH) and parses the result. It returns
+// a clear error if no iperf3 binary is found.
+func RunClient(target string, o Opts) (Result, error) {
+	return RunClientCtx(context.Background(), target, o)
 }
