@@ -228,17 +228,11 @@ func Run(a *appcore.App) error {
 			navBar := func(gtx layout.Context) layout.Dimensions {
 				tabBtn := func(b *widget.Clickable, t navTab) layout.FlexChild {
 					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(th, b, tabLabel(t))
-							if nav != t {
-								btn.Background = colCardAlt
-								btn.Color = colTextPri
-							}
-							return btn.Layout(gtx)
-						})
+						return navTabBtn(gtx, th, b, tabLabel(t), nav == t)
 					})
 				}
-				return layout.Flex{}.Layout(gtx, tabBtn(&navDash, navDashboard), tabBtn(&navTst, navTests), tabBtn(&navEvt, navEvents))
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					tabBtn(&navDash, navDashboard), tabBtn(&navTst, navTests), tabBtn(&navEvt, navEvents))
 			}
 
 			var items []layout.Widget
@@ -281,11 +275,9 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 	if !s.PreventSleep {
 		sleepLabel = "Sleep: allowed"
 	}
-	btn := func(b *widget.Clickable, label string) layout.FlexChild {
+	hdrBtn := func(render func(gtx layout.Context) layout.Dimensions) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.Button(th, b, label).Layout(gtx)
-			})
+			return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, render)
 		})
 	}
 	caption := func(txt string, col color.NRGBA) layout.FlexChild {
@@ -328,9 +320,9 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: gtx.Constraints.Min}
 				}),
-				btn(sleepBtn, sleepLabel),
-				btn(resetBtn, "Reset all"),
-				btn(exportBtn, "Export"),
+				hdrBtn(func(gtx layout.Context) layout.Dimensions { return ghostBtn(gtx, th, sleepBtn, sleepLabel) }),
+				hdrBtn(func(gtx layout.Context) layout.Dimensions { return dangerGhostBtn(gtx, th, resetBtn, "Reset all") }),
+				hdrBtn(func(gtx layout.Context) layout.Dimensions { return ghostBtn(gtx, th, exportBtn, "Export") }),
 			)
 		}),
 		caption(skew, colBad),

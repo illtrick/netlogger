@@ -298,10 +298,7 @@ func bucketLabel(sec int) string {
 func smallBtn(th *material.Theme, b *widget.Clickable, label string) layout.FlexChild {
 	return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			bt := material.Button(th, b, label)
-			bt.TextSize = unit.Sp(12)
-			bt.Inset = layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(10), Right: unit.Dp(10)}
-			return bt.Layout(gtx)
+			return ghostBtn(gtx, th, b, label)
 		})
 	})
 }

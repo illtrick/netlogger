@@ -114,19 +114,10 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.
 // segment uses the accent background (like the active nav tab); the inactive one
 // uses colCardAlt + colTextPri.
 func layoutSubSeg(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
-	seg := func(b *widget.Clickable, idx int) layout.FlexChild {
-		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				btn := material.Button(th, b, subLabel(idx))
-				if st.sub != idx {
-					btn.Background = colCardAlt
-					btn.Color = colTextPri
-				}
-				return btn.Layout(gtx)
-			})
-		})
-	}
-	return layout.Flex{}.Layout(gtx, seg(&st.speedSeg, 0), seg(&st.stressSeg, 1))
+	return segControl(gtx, th,
+		segSpec{click: &st.speedSeg, label: subLabel(0), active: st.sub == 0},
+		segSpec{click: &st.stressSeg, label: subLabel(1), active: st.sub == 1},
+	)
 }
 
 // layoutSpeed renders the Speed (LAN) sub-view.
@@ -143,7 +134,9 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				label = "Running…"
 			}
 			return layout.Flex{}.Layout(gtx,
-				layout.Rigid(material.Button(th, &st.runBtn, label).Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return primaryBtn(gtx, th, &st.runBtn, label)
+				}),
 			)
 		}),
 		layout.Rigid(gap(6)),
@@ -181,9 +174,9 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState) layout
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{}.Layout(gtx, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if on {
-					return material.Button(th, &st.stopStress, "Stop").Layout(gtx)
+					return dangerBtn(gtx, th, &st.stopStress, "Stop")
 				}
-				return material.Button(th, &st.startStress, "Start").Layout(gtx)
+				return primaryBtn(gtx, th, &st.startStress, "Start")
 			}))
 		}),
 		layout.Rigid(gap(12)),
