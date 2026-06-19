@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestParseReceivedBits(t *testing.T) {
+	js := []byte(`{"intervals":[],"end":{
+		"sum_sent":{"bits_per_second":100000000,"retransmits":7},
+		"sum_received":{"bits_per_second":940000000},
+		"sum":{"jitter_ms":0.3,"lost_percent":0.1}}}`)
+	res, err := Parse(js)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.SumBitsPerSec != 100000000 {
+		t.Fatalf("sent = %v, want 1e8", res.SumBitsPerSec)
+	}
+	if res.SumRecvBitsPerSec != 940000000 {
+		t.Fatalf("received = %v, want 9.4e8", res.SumRecvBitsPerSec)
+	}
+}
+
 func TestBuildArgsSpeedFlags(t *testing.T) {
 	got := buildArgs("10.0.0.5", Opts{DurationS: 10, Streams: 4, OmitS: 2, Port: 5201})
 	want := []string{"-c", "10.0.0.5", "--json", "-i", "1", "-t", "10", "-p", "5201", "-P", "4", "-O", "2"}

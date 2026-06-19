@@ -27,8 +27,9 @@ type Interval struct {
 // Result is the parsed iperf3 run.
 type Result struct {
 	Intervals      []Interval `json:"intervals"`
-	SumBitsPerSec  float64    `json:"sum_bits_per_second"`
-	SumRetransmits int        `json:"sum_retransmits"`
+	SumBitsPerSec     float64    `json:"sum_bits_per_second"`
+	SumRecvBitsPerSec float64    `json:"sum_recv_bits_per_second"` // client-received rate; the meaningful number for -R/--bidir download
+	SumRetransmits    int        `json:"sum_retransmits"`
 	UDPLostPercent float64    `json:"udp_lost_percent"`
 	UDPJitterMs    float64    `json:"udp_jitter_ms"`
 }
@@ -50,6 +51,9 @@ type rawResult struct {
 			BitsPerSecond float64 `json:"bits_per_second"`
 			Retransmits   int     `json:"retransmits"`
 		} `json:"sum_sent"`
+		SumReceived struct {
+			BitsPerSecond float64 `json:"bits_per_second"`
+		} `json:"sum_received"`
 		Sum struct {
 			JitterMs    float64 `json:"jitter_ms"`
 			LostPercent float64 `json:"lost_percent"`
@@ -73,6 +77,7 @@ func Parse(data []byte) (Result, error) {
 		UDPLostPercent: raw.End.Sum.LostPercent,
 		UDPJitterMs:    raw.End.Sum.JitterMs,
 	}
+	res.SumRecvBitsPerSec = raw.End.SumReceived.BitsPerSecond
 	for _, iv := range raw.Intervals {
 		res.Intervals = append(res.Intervals, Interval{
 			StartS:        iv.Sum.Start,
