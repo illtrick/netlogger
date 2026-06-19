@@ -107,7 +107,7 @@ const (
 	cfUpStreams   = 3
 	cfWarmup      = 3 * time.Second
 	cfMeasure     = 10 * time.Second
-	cfDownBytes   = 100_000_000 // per request; streams loop until the window ends
+	cfDownBytes   = 25_000_000 // Cloudflare 403s above ~25MB/request; streams loop to sustain load
 	cfUpBytes     = 50_000_000
 )
 
@@ -257,8 +257,12 @@ func cfDownload(ctx context.Context, client *http.Client) (float64, float64, err
 		if err != nil {
 			return err
 		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return fmt.Errorf("download status %d", resp.StatusCode)
+		}
 		_, _ = io.Copy(countWriter{total}, resp.Body)
-		resp.Body.Close()
 		return nil
 	})
 }
@@ -291,8 +295,11 @@ func cfUpload(ctx context.Context, client *http.Client) (float64, float64, error
 		if err != nil {
 			return err
 		}
+		defer resp.Body.Close()
 		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("upload status %d", resp.StatusCode)
+		}
 		return nil
 	})
 }
