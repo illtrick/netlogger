@@ -19,3 +19,18 @@ func TestMatrixCellStyle(t *testing.T) {
 		t.Fatalf("cell text wrong")
 	}
 }
+
+func TestStressLoadColor(t *testing.T) {
+	if stressHealthColor(true) != colBad {
+		t.Fatalf("aborted link should be red")
+	}
+	if stressHealthColor(false) != colGood {
+		t.Fatalf("healthy link should be green")
+	}
+}
+
+func TestSubViewLabel(t *testing.T) {
+	if subLabel(0) != "Speed (LAN)" || subLabel(1) != "Stress" || subLabel(2) != "Internet" {
+		t.Fatalf("sub-view labels wrong")
+	}
+}

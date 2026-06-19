@@ -38,6 +38,26 @@ func tabLabel(t navTab) string {
 // nextTab returns the selected tab (explicit selection wins); pure for testing.
 func nextTab(current, selected navTab) navTab { return selected }
 
+// subLabel names the Tests sub-views. Pure.
+func subLabel(i int) string {
+	switch i {
+	case 1:
+		return "Stress"
+	case 2:
+		return "Internet"
+	default:
+		return "Speed (LAN)"
+	}
+}
+
+// stressHealthColor maps a link's aborted flag to the severity palette. Pure.
+func stressHealthColor(aborted bool) color.NRGBA {
+	if aborted {
+		return colBad
+	}
+	return colGood
+}
+
 // testsState holds the Tests tab's widget + result state across frames.
 // mu guards matrix/haveMatrix/running/status because SpeedSweep runs on a
 // background goroutine while the UI reads these every frame.
@@ -48,6 +68,15 @@ type testsState struct {
 	haveMatrix bool
 	running    bool
 	status     string
+
+	sub         int // 0 Speed, 1 Stress
+	speedSeg    widget.Clickable
+	stressSeg   widget.Clickable
+	startStress widget.Clickable
+	stopStress  widget.Clickable
+	stressMu    sync.Mutex
+	stressOn    bool
+	stressNodes []appcore.StressStatus
 }
 
 func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string) {
@@ -56,8 +85,52 @@ func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string) {
 	return st.matrix, st.haveMatrix, st.running, st.status
 }
 
-// layoutTests renders the Tests tab (Speed sub-view for Build #1).
+// stressSnapshot reads the stress run state safely (the poll goroutine writes
+// these while the UI reads them every frame).
+func (st *testsState) stressSnapshot() (bool, []appcore.StressStatus) {
+	st.stressMu.Lock()
+	defer st.stressMu.Unlock()
+	return st.stressOn, st.stressNodes
+}
+
+// layoutTests renders the Tests tab: a segmented control (Speed / Stress) on
+// top of the matching sub-view.
 func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutSubSeg(gtx, th, st)
+		}),
+		layout.Rigid(gap(14)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.sub == 1 {
+				return layoutStress(gtx, th, st)
+			}
+			return layoutSpeed(gtx, th, st)
+		}),
+	)
+}
+
+// layoutSubSeg draws a two-button segmented control switching st.sub. The active
+// segment uses the accent background (like the active nav tab); the inactive one
+// uses colCardAlt + colTextPri.
+func layoutSubSeg(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	seg := func(b *widget.Clickable, idx int) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				btn := material.Button(th, b, subLabel(idx))
+				if st.sub != idx {
+					btn.Background = colCardAlt
+					btn.Color = colTextPri
+				}
+				return btn.Layout(gtx)
+			})
+		})
+	}
+	return layout.Flex{}.Layout(gtx, seg(&st.speedSeg, 0), seg(&st.stressSeg, 1))
+}
+
+// layoutSpeed renders the Speed (LAN) sub-view.
+func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
 	matrix, have, running, status := st.snapshot()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -92,6 +165,80 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.
 			return layoutSpeedMatrix(gtx, th, matrix)
 		}),
 	)
+}
+
+// layoutStress renders the Stress sub-view: a full-mesh start/stop kill-switch
+// and a live per-node / per-link readout.
+func layoutStress(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	on, nodes := st.stressSnapshot()
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Full mesh · per-link cap 200 Mbit/s · TCP")
+			lbl.Color = colTextSec
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(gap(8)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{}.Layout(gtx, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if on {
+					return material.Button(th, &st.stopStress, "Stop").Layout(gtx)
+				}
+				return material.Button(th, &st.startStress, "Start").Layout(gtx)
+			}))
+		}),
+		layout.Rigid(gap(12)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !on && len(nodes) == 0 {
+				lbl := material.Caption(th, "no active run")
+				lbl.Color = colTextMut
+				return lbl.Layout(gtx)
+			}
+			return layoutStressList(gtx, th, nodes)
+		}),
+	)
+}
+
+// layoutStressList renders one row per (node, link): target, sent rate, and a
+// health dot colored via stressHealthColor.
+func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus) layout.Dimensions {
+	rows := make([]layout.FlexChild, 0)
+	for _, n := range nodes {
+		for _, l := range n.Links {
+			l := l
+			rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return roundedBG(gtx, colCardAlt, unit.Dp(6), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(dotWidget(stressHealthColor(l.Aborted), 8)),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, l.Target)
+									lbl.Color = colTextPri
+									return lbl.Layout(gtx)
+								})
+							}),
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return layout.Dimensions{Size: gtx.Constraints.Min}
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, fmt.Sprintf("%.0f Mbit/s", l.SentMbit))
+									lbl.Color = colTextSec
+									return lbl.Layout(gtx)
+								})
+							}),
+						)
+					})
+				})
+			}))
+		}
+	}
+	if len(rows) == 0 {
+		lbl := material.Caption(th, "starting…")
+		lbl.Color = colTextMut
+		return lbl.Layout(gtx)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 
 // matrixCellColor maps a download Mbit/s to the severity palette. Pure.

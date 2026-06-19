@@ -147,6 +147,58 @@ func Run(a *appcore.App) error {
 					}()
 				}
 			}
+			if tst.speedSeg.Clicked(gtx) {
+				tst.sub = 0
+			}
+			if tst.stressSeg.Clicked(gtx) {
+				tst.sub = 1
+			}
+			if tst.startStress.Clicked(gtx) {
+				tst.stressMu.Lock()
+				already := tst.stressOn
+				if !already {
+					tst.stressOn = true
+				}
+				tst.stressMu.Unlock()
+				if !already {
+					self, peers := snap.SelfPeer, snap.Peers
+					a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: 200, Proto: "tcp", DurationS: 120})
+					go func() {
+						for {
+							tst.stressMu.Lock()
+							on := tst.stressOn
+							tst.stressMu.Unlock()
+							if !on {
+								return
+							}
+							ns := a.PollStress(self, peers)
+							anyRunning := false
+							for _, s := range ns {
+								if s.Running {
+									anyRunning = true
+								}
+							}
+							tst.stressMu.Lock()
+							tst.stressNodes = ns
+							if !anyRunning {
+								tst.stressOn = false
+							}
+							tst.stressMu.Unlock()
+							if !anyRunning {
+								return
+							}
+							time.Sleep(time.Second)
+						}
+					}()
+				}
+			}
+			if tst.stopStress.Clicked(gtx) {
+				self, peers := snap.SelfPeer, snap.Peers
+				a.StopStress(self, peers, "")
+				tst.stressMu.Lock()
+				tst.stressOn = false
+				tst.stressMu.Unlock()
+			}
 
 			cardSection := func(w layout.Widget) layout.Widget {
 				return func(gtx layout.Context) layout.Dimensions {
