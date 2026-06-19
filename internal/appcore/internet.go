@@ -5,20 +5,15 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-// errRateLimited is surfaced when the endpoint throttles the test (HTTP 429).
-// Cloudflare's open endpoint rate-limits aggressively per IP; the message tells
-// the user how to recover. Set a custom endpoint to avoid it entirely.
-var errRateLimited = errors.New("endpoint rate-limited the test (HTTP 429) — wait ~1 minute and retry, or set a custom endpoint")
 
 // InternetResult is a device→internet test outcome.
 type InternetResult struct {
@@ -71,7 +66,7 @@ func internetResult(endpoint string, down, up, idle, loaded, jitter, loss float6
 	}
 }
 
-// internetDeps are the injectable network measurements (real impls hit Cloudflare).
+// internetDeps are the injectable network measurements (real impls hit LibreSpeed).
 type internetDeps struct {
 	endpoint string
 	idle     func() float64 // a quiet-line latency sample (ms)
@@ -82,7 +77,7 @@ type internetDeps struct {
 // runInternet runs the three phases (idle → download → upload) and grades the
 // result. Pure orchestration over the injected measurements.
 func runInternet(d internetDeps) InternetResult {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
 	idle := d.idle()
 	down, ld, derr := d.download(ctx)
@@ -100,21 +95,41 @@ func runInternet(d internetDeps) InternetResult {
 	return res
 }
 
-// --- real Cloudflare measurements (manual-gated; behind the seams above) ---
+// --- real measurements over LibreSpeed (manual-gated; behind the seams above) ---
 //
-// Accuracy on fast links depends on: PARALLEL streams (one TCP connection each, so
-// each gets its own congestion window — HTTP/2 multiplexing over one conn would
-// cap us at a single window), a WARM-UP window discarded before measuring, and a
-// multi-second STEADY-STATE measurement window.
+// LibreSpeed's open servers serve large garbage.php chunks and accept looped
+// empty.php uploads with NO Cloudflare-style 403 size cap or 429 rate limiting,
+// so they actually saturate a fast (1 Gb) link. Accuracy still depends on PARALLEL
+// streams (one TCP connection each → independent congestion windows), a discarded
+// WARM-UP, and a multi-second STEADY-STATE window.
+
+// speedServer is one LibreSpeed backend (full URLs for each sub-endpoint).
+type speedServer struct {
+	Name  string
+	DLURL string // garbage.php — GET ?ckSize=<MB>
+	ULURL string // empty.php  — POST a chunk, discarded
+	Ping  string // empty.php  — GET, timed
+}
+
+// libreServers is the pre-loaded pool, US-west-coast first so a west-coast user
+// auto-selects a nearby server. Sourced from the official LibreSpeed list.
+var libreServers = []speedServer{
+	{"Los Angeles (Clouvider)", "https://la.speedtest.clouvider.net/backend/garbage.php", "https://la.speedtest.clouvider.net/backend/empty.php", "https://la.speedtest.clouvider.net/backend/empty.php"},
+	{"Los Angeles (Sharktech)", "https://laxspeed.sharktech.net/backend/garbage.php", "https://laxspeed.sharktech.net/backend/empty.php", "https://laxspeed.sharktech.net/backend/empty.php"},
+	{"Las Vegas (Sharktech)", "https://lasspeed.sharktech.net/backend/garbage.php", "https://lasspeed.sharktech.net/backend/empty.php", "https://lasspeed.sharktech.net/backend/empty.php"},
+	{"Denver (Sharktech)", "https://denspeed.sharktech.net/backend/garbage.php", "https://denspeed.sharktech.net/backend/empty.php", "https://denspeed.sharktech.net/backend/empty.php"},
+	{"Chicago (Sharktech)", "https://chispeed.sharktech.net/backend/garbage.php", "https://chispeed.sharktech.net/backend/empty.php", "https://chispeed.sharktech.net/backend/empty.php"},
+	{"Atlanta (Clouvider)", "https://atl.speedtest.clouvider.net/backend/garbage.php", "https://atl.speedtest.clouvider.net/backend/empty.php", "https://atl.speedtest.clouvider.net/backend/empty.php"},
+	{"New York (Clouvider)", "https://nyc.speedtest.clouvider.net/backend/garbage.php", "https://nyc.speedtest.clouvider.net/backend/empty.php", "https://nyc.speedtest.clouvider.net/backend/empty.php"},
+}
 
 const (
-	cfBase        = "https://speed.cloudflare.com"
-	cfDownStreams = 6
-	cfUpStreams   = 3
-	cfWarmup      = 3 * time.Second
-	cfMeasure     = 10 * time.Second
-	cfDownBytes   = 25_000_000 // Cloudflare 403s above ~25MB/request; streams loop to sustain load
-	cfUpBytes     = 50_000_000
+	lsDownStreams = 6
+	lsUpStreams   = 3
+	lsWarmup      = 3 * time.Second
+	lsMeasure     = 10 * time.Second
+	lsDownCkMB    = 100       // garbage.php ?ckSize=100 → 100MB; streams loop to sustain load
+	lsUpBytes     = 4_000_000 // 4MB/POST (servers 413 above ~4–8MB); streams loop
 )
 
 func median(v []float64) float64 {
@@ -134,16 +149,15 @@ func testClient() *http.Client {
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 32,
 		IdleConnTimeout:     30 * time.Second,
-		// Disable HTTP/2 so each request opens its own TCP connection.
-		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
+		TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{}, // disable HTTP/2
 	}
 	return &http.Client{Transport: tr, Timeout: 60 * time.Second}
 }
 
-// latencyMs times a tiny request — an HTTP round-trip over a (kept-alive) conn.
-func latencyMs(client *http.Client) float64 {
+// latencyMs times a GET to url — an HTTP round-trip over a (kept-alive) conn.
+func latencyMs(client *http.Client, url string) float64 {
 	t0 := time.Now()
-	resp, err := client.Get(cfBase + "/__down?bytes=0")
+	resp, err := client.Get(url)
 	if err != nil {
 		return 0
 	}
@@ -152,15 +166,35 @@ func latencyMs(client *http.Client) float64 {
 	return float64(time.Since(t0).Microseconds()) / 1000
 }
 
+// pickServer measures latency to each pre-loaded server and returns the closest
+// reachable one (west-coast entries naturally win for a west-coast user).
+func pickServer(client *http.Client) speedServer {
+	best := libreServers[0]
+	bestPing := math.Inf(1)
+	for _, s := range libreServers {
+		m := math.Inf(1)
+		for i := 0; i < 2; i++ {
+			if v := latencyMs(client, s.Ping); v > 0 && v < m {
+				m = v
+			}
+		}
+		if m < bestPing {
+			bestPing = m
+			best = s
+		}
+	}
+	return best
+}
+
 // idleLatency warms the connection, then takes the median of many quiet samples
 // (so a single cold/TLS-setup sample can't inflate the idle baseline).
-func idleLatency(client *http.Client) float64 {
+func idleLatency(client *http.Client, pingURL string) float64 {
 	for i := 0; i < 3; i++ {
-		_ = latencyMs(client) // warm TLS + conn
+		_ = latencyMs(client, pingURL)
 	}
 	var s []float64
 	for i := 0; i < 15; i++ {
-		if m := latencyMs(client); m > 0 {
+		if m := latencyMs(client, pingURL); m > 0 {
 			s = append(s, m)
 		}
 	}
@@ -185,11 +219,29 @@ func (r countReader) Read(p []byte) (int, error) {
 	return k, err
 }
 
-// streamThroughput runs `streams` parallel transfers (each calling do, which must
-// add the bytes it moves to the shared counter) for cfWarmup+cfMeasure. It returns
-// the steady-state Mbit/s over the measurement window and the median latency
-// sampled during it (loaded latency).
-func streamThroughput(ctx context.Context, client *http.Client, streams int, do func(ctx context.Context, total *int64) error) (float64, float64, error) {
+// zeroReader yields n zero bytes then EOF (the upload payload, sized per request).
+type zeroReader struct{ n int }
+
+func (z *zeroReader) Read(p []byte) (int, error) {
+	if z.n <= 0 {
+		return 0, io.EOF
+	}
+	k := len(p)
+	if k > z.n {
+		k = z.n
+	}
+	for i := 0; i < k; i++ {
+		p[i] = 0
+	}
+	z.n -= k
+	return k, nil
+}
+
+// streamThroughput runs `streams` parallel transfers (each calling do, which adds
+// the bytes it moves to the shared counter) for lsWarmup+lsMeasure, sampling
+// latency at pingURL during the measurement window. Returns steady-state Mbit/s
+// and the median loaded latency.
+func streamThroughput(ctx context.Context, client *http.Client, streams int, pingURL string, do func(ctx context.Context, total *int64) error) (float64, float64, error) {
 	var total int64
 	var firstErr atomic.Value
 	done := make(chan struct{})
@@ -222,17 +274,16 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, do 
 		}()
 	}
 
-	// warm-up (discarded), then measure steady-state while sampling loaded latency.
 	select {
-	case <-time.After(cfWarmup):
+	case <-time.After(lsWarmup):
 	case <-ctx.Done():
 	}
 	b0 := atomic.LoadInt64(&total)
 	t0 := time.Now()
 	var lat []float64
-	deadline := time.Now().Add(cfMeasure)
+	deadline := time.Now().Add(lsMeasure)
 	for time.Now().Before(deadline) {
-		if m := latencyMs(client); m > 0 {
+		if m := latencyMs(client, pingURL); m > 0 {
 			lat = append(lat, m)
 		}
 		select {
@@ -252,22 +303,18 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, do 
 		}
 		return 0, median(lat), nil
 	}
-	mbit := float64(b1-b0) * 8 / 1e6 / dt
-	return mbit, median(lat), nil
+	return float64(b1-b0) * 8 / 1e6 / dt, median(lat), nil
 }
 
-func cfDownload(ctx context.Context, client *http.Client) (float64, float64, error) {
-	return streamThroughput(ctx, client, cfDownStreams, func(ctx context.Context, total *int64) error {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/__down?bytes=%d", cfBase, cfDownBytes), nil)
+func lsDownload(ctx context.Context, client *http.Client, srv speedServer) (float64, float64, error) {
+	url := fmt.Sprintf("%s?ckSize=%d", srv.DLURL, lsDownCkMB)
+	return streamThroughput(ctx, client, lsDownStreams, srv.Ping, func(ctx context.Context, total *int64) error {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusTooManyRequests {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			return errRateLimited
-		}
 		if resp.StatusCode != http.StatusOK {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			return fmt.Errorf("download status %d", resp.StatusCode)
@@ -277,39 +324,18 @@ func cfDownload(ctx context.Context, client *http.Client) (float64, float64, err
 	})
 }
 
-// zeroReader yields n zero bytes then EOF (the upload payload, sized per request).
-type zeroReader struct{ n int }
-
-func (z *zeroReader) Read(p []byte) (int, error) {
-	if z.n <= 0 {
-		return 0, io.EOF
-	}
-	k := len(p)
-	if k > z.n {
-		k = z.n
-	}
-	for i := 0; i < k; i++ {
-		p[i] = 0
-	}
-	z.n -= k
-	return k, nil
-}
-
-func cfUpload(ctx context.Context, client *http.Client) (float64, float64, error) {
-	return streamThroughput(ctx, client, cfUpStreams, func(ctx context.Context, total *int64) error {
-		body := countReader{r: &zeroReader{n: cfUpBytes}, n: total}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfBase+"/__up", body)
+func lsUpload(ctx context.Context, client *http.Client, srv speedServer) (float64, float64, error) {
+	return streamThroughput(ctx, client, lsUpStreams, srv.Ping, func(ctx context.Context, total *int64) error {
+		body := countReader{r: &zeroReader{n: lsUpBytes}, n: total}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.ULURL, body)
 		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = int64(cfUpBytes)
+		req.ContentLength = int64(lsUpBytes)
 		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}
 		defer resp.Body.Close()
 		_, _ = io.Copy(io.Discard, resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			return errRateLimited
-		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("upload status %d", resp.StatusCode)
 		}
@@ -317,14 +343,16 @@ func cfUpload(ctx context.Context, client *http.Client) (float64, float64, error
 	})
 }
 
-// defaultInternetDeps wires the real Cloudflare measurements.
-func defaultInternetDeps(endpoint string) internetDeps {
+// defaultInternetDeps auto-selects the nearest LibreSpeed server and wires the
+// real measurements against it.
+func defaultInternetDeps(_ string) internetDeps {
 	client := testClient()
+	srv := pickServer(client)
 	return internetDeps{
-		endpoint: endpoint,
-		idle:     func() float64 { return idleLatency(client) },
-		download: func(ctx context.Context) (float64, float64, error) { return cfDownload(ctx, client) },
-		upload:   func(ctx context.Context) (float64, float64, error) { return cfUpload(ctx, client) },
+		endpoint: "LibreSpeed · " + srv.Name,
+		idle:     func() float64 { return idleLatency(client, srv.Ping) },
+		download: func(ctx context.Context) (float64, float64, error) { return lsDownload(ctx, client, srv) },
+		upload:   func(ctx context.Context) (float64, float64, error) { return lsUpload(ctx, client, srv) },
 	}
 }
 
@@ -376,9 +404,6 @@ func (a *App) runLocalInternet(endpoint string) InternetResult {
 // InternetTest runs the internet test on `node` (locally if it is this device,
 // else over the peer's control plane) and returns the graded result.
 func (a *App) InternetTest(node PeerInfo, endpoint string) InternetResult {
-	if endpoint == "" {
-		endpoint = "Cloudflare"
-	}
 	if node.ID == a.nodeID || node.ID == "" {
 		return a.runLocalInternet(endpoint)
 	}

@@ -58,7 +58,11 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				}),
 				layout.Rigid(gapX(8)),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return chipLabel(gtx, th, "Cloudflare · auto", colTextPri, colCardAlt)
+					ep := "LibreSpeed · auto"
+					if res.Endpoint != "" {
+						ep = res.Endpoint
+					}
+					return chipLabel(gtx, th, ep, colTextPri, colCardAlt)
 				}),
 				layout.Rigid(gapX(10)),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
