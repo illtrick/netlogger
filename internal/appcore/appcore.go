@@ -323,6 +323,9 @@ func defaultStartIperf(dir string) (func(), string) {
 		log.Printf("iperf3 bootstrap: %v", err)
 	}
 	ver := iperf.Version()
+	if ver != "" {
+		log.Printf("iperf3 ready: %s (parallel/-P and --bidir require >= 3.16/3.7)", ver)
+	}
 	srv := iperf.StartServer(0)
 	if srv == nil {
 		// No iperf3 binary available: report no server (nil stop).
@@ -391,6 +394,9 @@ func (a *App) Start() error {
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		mux.Handle("/api/events", eventsHandler(a.recentEvents))
 		mux.Handle("/api/lossbuckets", lossBucketsHandler(a.LossHeat))
+		mux.Handle("/api/speedtest", speedTestHandler(func(req SpeedReq) SpeedResult {
+			return runSpeedTest(iperf.RunClient, req.Target, req)
+		}))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
