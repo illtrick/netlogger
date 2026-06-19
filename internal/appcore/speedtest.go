@@ -227,3 +227,37 @@ func speedColorBucket(mbit float64) string {
 		return "bad"
 	}
 }
+
+// SpeedSweep runs every directed pair and assembles a SpeedMatrix. Pairs run
+// with bounded concurrency (4 at a time) so a large mesh doesn't open dozens of
+// simultaneous iperf3 streams (which would distort the measurements).
+func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMatrix {
+	nodes := speedNodes(self, peers)
+	pairs := speedPairs(nodes)
+	cells := make(map[string]SpeedResult, len(pairs))
+	byID := map[string]PeerInfo{self.ID: self}
+	for _, p := range peers {
+		byID[p.ID] = p
+	}
+
+	type result struct {
+		key string
+		res SpeedResult
+	}
+	sem := make(chan struct{}, 4)
+	ch := make(chan result, len(pairs))
+	for _, pr := range pairs {
+		pr := pr
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			from := byID[pr.From.ID]
+			ch <- result{key: speedKey(pr.From.ID, pr.To.ID), res: a.SpeedTest(from, pr.To.Addr, req)}
+		}()
+	}
+	for range pairs {
+		r := <-ch
+		cells[r.key] = r.res
+	}
+	return SpeedMatrix{Nodes: nodes, Cells: cells}
+}

@@ -116,3 +116,26 @@ func TestSpeedColor(t *testing.T) {
 		t.Fatalf("color buckets wrong")
 	}
 }
+
+func TestSpeedSweepRunsEveryPair(t *testing.T) {
+	a := &App{nodeID: "self"}
+	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{DownMbit: 900} }
+	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) { return SpeedResult{DownMbit: 500}, nil }
+
+	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
+	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
+	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 3})
+
+	if len(m.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(m.Nodes))
+	}
+	if len(m.Cells) != 2 {
+		t.Fatalf("cells = %d, want 2", len(m.Cells))
+	}
+	if c := m.Cells[speedKey("self", "p")]; c.DownMbit != 900 {
+		t.Fatalf("self->p should be local 900, got %v", c.DownMbit)
+	}
+	if c := m.Cells[speedKey("p", "self")]; c.DownMbit != 500 {
+		t.Fatalf("p->self should be remote 500, got %v", c.DownMbit)
+	}
+}
