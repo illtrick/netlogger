@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// errRateLimited is surfaced when the endpoint throttles the test (HTTP 429).
+// Cloudflare's open endpoint rate-limits aggressively per IP; the message tells
+// the user how to recover. Set a custom endpoint to avoid it entirely.
+var errRateLimited = errors.New("endpoint rate-limited the test (HTTP 429) — wait ~1 minute and retry, or set a custom endpoint")
 
 // InternetResult is a device→internet test outcome.
 type InternetResult struct {
@@ -258,6 +264,10 @@ func cfDownload(ctx context.Context, client *http.Client) (float64, float64, err
 			return err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return errRateLimited
+		}
 		if resp.StatusCode != http.StatusOK {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			return fmt.Errorf("download status %d", resp.StatusCode)
@@ -297,6 +307,9 @@ func cfUpload(ctx context.Context, client *http.Client) (float64, float64, error
 		}
 		defer resp.Body.Close()
 		_, _ = io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return errRateLimited
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("upload status %d", resp.StatusCode)
 		}
