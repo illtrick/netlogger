@@ -420,6 +420,9 @@ func (a *App) Start() error {
 		mux.Handle("/api/speedtest", speedTestHandler(func(req SpeedReq) SpeedResult {
 			return runSpeedTest(iperf.RunClient, req.Target, req)
 		}))
+		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
+		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))
+		mux.Handle("/api/stress/status", stressStatusHandler(a.stressStatusLocal))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
@@ -1025,6 +1028,7 @@ func (a *App) SetPreventSleep(on bool) {
 func (a *App) Stop() error {
 	var err error
 	a.stopOnce.Do(func() {
+		a.stopStressLocal("") // kill any in-flight stress load on app shutdown
 		if a.cancel != nil {
 			a.cancel()
 		}
