@@ -90,6 +90,21 @@ func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 	}
 }
 
+func TestSpeedTestStripsControlPortForIperf(t *testing.T) {
+	a := &App{nodeID: "self"}
+	var gotTarget string
+	a.localSpeed = func(req SpeedReq) SpeedResult { gotTarget = req.Target; return SpeedResult{} }
+	// Self is the From node → runs locally; the iperf target must be the bare host
+	// (control port 8088 stripped) so iperf3 hits the peer's :5201 server.
+	a.SpeedTest(PeerInfo{ID: "self"}, "10.0.0.2:8088", SpeedReq{Direction: "down"})
+	if gotTarget != "10.0.0.2" {
+		t.Fatalf("iperf target = %q, want 10.0.0.2 (control port stripped)", gotTarget)
+	}
+	if iperfHost("bare-host") != "bare-host" {
+		t.Fatalf("bare host should pass through unchanged")
+	}
+}
+
 func TestSpeedNodesAndPairs(t *testing.T) {
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
 	peers := []PeerInfo{

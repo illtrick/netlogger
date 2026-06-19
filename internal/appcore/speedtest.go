@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 
@@ -152,7 +153,10 @@ func postSpeedTest(client *http.Client, baseURL string, req SpeedReq) (SpeedResu
 // otherwise it POSTs to the peer's control plane. Orchestrator-agnostic — the
 // caller need not be either endpoint.
 func (a *App) SpeedTest(from PeerInfo, targetAddr string, req SpeedReq) SpeedResult {
-	req.Target = targetAddr
+	// Node addresses are host:controlPort (e.g. 10.0.0.2:8088). iperf3's server
+	// listens on its own default port (5201) and `-c` wants a bare host, so strip
+	// the control port before handing the target to iperf3.
+	req.Target = iperfHost(targetAddr)
 	if from.ID == a.nodeID {
 		return a.localSpeed(req)
 	}
@@ -161,6 +165,15 @@ func (a *App) SpeedTest(from PeerInfo, targetAddr string, req SpeedReq) SpeedRes
 		return SpeedResult{Err: err.Error()}
 	}
 	return out
+}
+
+// iperfHost returns the bare host of a node address, stripping the control
+// port if present (iperf3 connects to its own default port on the peer).
+func iperfHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
 }
 
 // SpeedNode is a row/column of the matrix.
