@@ -53,6 +53,9 @@ func Run(a *appcore.App) error {
 	var heatReanchor int64 // unix time to keep at the left edge across a zoom (0 = none)
 	var heatHov heatHover
 	var hZoomOut, hZoomIn, hNow widget.Clickable
+	var nav navTab = navDashboard
+	var navDash, navTst, navEvt widget.Clickable
+	var tst testsState
 
 	var ops op.Ops
 	for {
@@ -114,13 +117,43 @@ func Run(a *appcore.App) error {
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
 			}
+			if navDash.Clicked(gtx) {
+				nav = nextTab(nav, navDashboard)
+			}
+			if navTst.Clicked(gtx) {
+				nav = nextTab(nav, navTests)
+			}
+			if navEvt.Clicked(gtx) {
+				nav = nextTab(nav, navEvents)
+			}
+			if tst.runBtn.Clicked(gtx) {
+				tst.mu.Lock()
+				alreadyRunning := tst.running
+				if !alreadyRunning {
+					tst.running = true
+					tst.status = "running matrix…"
+				}
+				tst.mu.Unlock()
+				if !alreadyRunning {
+					self, peers := snap.SelfPeer, snap.Peers
+					go func() {
+						m := a.SpeedSweep(self, peers, appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2})
+						tst.mu.Lock()
+						tst.matrix = m
+						tst.haveMatrix = true
+						tst.running = false
+						tst.status = "done"
+						tst.mu.Unlock()
+					}()
+				}
+			}
 
 			cardSection := func(w layout.Widget) layout.Widget {
 				return func(gtx layout.Context) layout.Dimensions {
 					return card(gtx, colCard, colBorder, w)
 				}
 			}
-			items := []layout.Widget{
+			dashItems := []layout.Widget{
 				func(gtx layout.Context) layout.Dimensions {
 					return layoutHeader(gtx, th, snap, &resetBtn, &exportBtn, &sleepBtn, statusMsg)
 				},
@@ -136,10 +169,41 @@ func Run(a *appcore.App) error {
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutPeers(gtx, th, snap) }),
 				gap(12),
 				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutAdapters(gtx, th, snap) }),
-				gap(12),
-				cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
 				gap(16),
 				func(gtx layout.Context) layout.Dimensions { return layoutFooter(gtx, th, snap) },
+			}
+
+			navBar := func(gtx layout.Context) layout.Dimensions {
+				tabBtn := func(b *widget.Clickable, t navTab) layout.FlexChild {
+					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							btn := material.Button(th, b, tabLabel(t))
+							if nav != t {
+								btn.Background = colCard
+							}
+							return btn.Layout(gtx)
+						})
+					})
+				}
+				return layout.Flex{}.Layout(gtx, tabBtn(&navDash, navDashboard), tabBtn(&navTst, navTests), tabBtn(&navEvt, navEvents))
+			}
+
+			var items []layout.Widget
+			switch nav {
+			case navTests:
+				items = []layout.Widget{
+					navBar,
+					gap(16),
+					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTests(gtx, th, &tst) }),
+				}
+			case navEvents:
+				items = []layout.Widget{
+					navBar,
+					gap(16),
+					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
+				}
+			default:
+				items = append([]layout.Widget{navBar, gap(16)}, dashItems...)
 			}
 			// The list spans full width so its scrollbar hugs the window's right
 			// edge; horizontal margin is applied per item instead.

@@ -42,6 +42,7 @@ type Snapshot struct {
 	LastRTTms        float64
 	LossPct          float64
 	Peers            []PeerInfo
+	SelfPeer         PeerInfo
 	GatewayIP        string
 	GatewayRTTms     float64
 	GatewayLossPct   float64
@@ -761,6 +762,7 @@ func (a *App) Snapshot() Snapshot {
 		LastRTTms:      a.lastRTTms,
 		LossPct:        loss,
 		Peers:          peers,
+		SelfPeer:       PeerInfo{ID: a.nodeID, Host: a.host, Addr: "127.0.0.1:" + strconv.Itoa(controlPort)},
 		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
 		SessionUptimeSec: int64(time.Since(a.startedAt).Seconds()),
 		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
