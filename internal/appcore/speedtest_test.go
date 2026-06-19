@@ -89,3 +89,30 @@ func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 		t.Fatalf("peer-from should POST to peer, got %v url=%q", remote.UpMbit, gotURL)
 	}
 }
+
+func TestSpeedNodesAndPairs(t *testing.T) {
+	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
+	peers := []PeerInfo{
+		{ID: "b", Host: "proj", Addr: "10.0.0.2:8088"},
+		{ID: "a", Host: "nas", Addr: "10.0.0.3:8088"},
+	}
+	nodes := speedNodes(self, peers)
+	if len(nodes) != 3 || nodes[0].Host != "nas" || nodes[2].Host != "ryzen" {
+		t.Fatalf("nodes not sorted by host: %+v", nodes)
+	}
+	pairs := speedPairs(nodes)
+	if len(pairs) != 6 {
+		t.Fatalf("pairs = %d, want 6", len(pairs))
+	}
+	for _, p := range pairs {
+		if p.From.ID == p.To.ID {
+			t.Fatalf("diagonal pair leaked: %+v", p)
+		}
+	}
+}
+
+func TestSpeedColor(t *testing.T) {
+	if speedColorBucket(950) != "good" || speedColorBucket(600) != "watch" || speedColorBucket(120) != "bad" || speedColorBucket(-1) != "none" {
+		t.Fatalf("color buckets wrong")
+	}
+}

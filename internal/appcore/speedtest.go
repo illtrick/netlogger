@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 
 	"netlogger/internal/iperf"
 )
@@ -160,4 +161,69 @@ func (a *App) SpeedTest(from PeerInfo, targetAddr string, req SpeedReq) SpeedRes
 		return SpeedResult{Err: err.Error()}
 	}
 	return out
+}
+
+// SpeedNode is a row/column of the matrix.
+type SpeedNode struct {
+	ID   string
+	Host string
+	Addr string
+}
+
+// SpeedPair is one directed test From->To.
+type SpeedPair struct {
+	From SpeedNode
+	To   SpeedNode
+}
+
+// SpeedMatrix is the assembled grid of completed runs, keyed From\x00To.
+type SpeedMatrix struct {
+	Nodes []SpeedNode
+	Cells map[string]SpeedResult
+}
+
+func speedKey(from, to string) string { return from + "\x00" + to }
+
+func toNode(p PeerInfo) SpeedNode { return SpeedNode{ID: p.ID, Host: p.Host, Addr: p.Addr} }
+
+// speedNodes returns self + peers, sorted by host then id for a stable layout.
+func speedNodes(self PeerInfo, peers []PeerInfo) []SpeedNode {
+	out := []SpeedNode{toNode(self)}
+	for _, p := range peers {
+		out = append(out, toNode(p))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Host != out[j].Host {
+			return out[i].Host < out[j].Host
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// speedPairs enumerates every directed off-diagonal pair.
+func speedPairs(nodes []SpeedNode) []SpeedPair {
+	var ps []SpeedPair
+	for _, f := range nodes {
+		for _, t := range nodes {
+			if f.ID != t.ID {
+				ps = append(ps, SpeedPair{From: f, To: t})
+			}
+		}
+	}
+	return ps
+}
+
+// speedColorBucket maps a download Mbit/s to a severity bucket. -1 = not run.
+func speedColorBucket(mbit float64) string {
+	switch {
+	case mbit < 0:
+		return "none"
+	case mbit >= 900:
+		return "good"
+	case mbit >= 400:
+		return "watch"
+	default:
+		return "bad"
+	}
 }
