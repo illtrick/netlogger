@@ -111,6 +111,10 @@ type App struct {
 	FetchLinks func(baseURL string) (LinkReport, error)
 	// FetchEvents fetches a peer's recent-event ring; defaults to an HTTP call.
 	FetchEvents func(baseURL string) ([]EventInfo, error)
+	// FetchSpeed asks a peer to run a speed test (defaults to postSpeedTest).
+	FetchSpeed func(baseURL string, req SpeedReq) (SpeedResult, error)
+	// localSpeed runs a speed test on this node (defaults to runSpeedTest+iperf.RunClient).
+	localSpeed  func(req SpeedReq) SpeedResult
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
@@ -252,6 +256,12 @@ func New(dataDir string) *App {
 		},
 		FetchEvents: func(baseURL string) ([]EventInfo, error) {
 			return fetchEvents(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
+		},
+		FetchSpeed: func(baseURL string, req SpeedReq) (SpeedResult, error) {
+			return postSpeedTest(&http.Client{Timeout: 90 * time.Second}, baseURL, req)
+		},
+		localSpeed: func(req SpeedReq) SpeedResult {
+			return runSpeedTest(iperf.RunClient, req.Target, req)
 		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),

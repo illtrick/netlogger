@@ -70,3 +70,22 @@ func TestSpeedTestHandlerRejectsGet(t *testing.T) {
 		t.Fatalf("GET status = %d, want 405", rr.Code)
 	}
 }
+
+func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
+	a := &App{nodeID: "self", host: "ryzen"}
+	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{UpMbit: 111, Proto: "tcp"} }
+	var gotURL string
+	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) {
+		gotURL = baseURL
+		return SpeedResult{UpMbit: 222}, nil
+	}
+
+	local := a.SpeedTest(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
+	if local.UpMbit != 111 {
+		t.Fatalf("self-from should run locally, got %v", local.UpMbit)
+	}
+	remote := a.SpeedTest(PeerInfo{ID: "p1", Host: "proj", Addr: "10.0.0.2:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
+	if remote.UpMbit != 222 || gotURL != "http://10.0.0.2:8088" {
+		t.Fatalf("peer-from should POST to peer, got %v url=%q", remote.UpMbit, gotURL)
+	}
+}

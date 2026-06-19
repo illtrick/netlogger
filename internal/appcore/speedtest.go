@@ -145,3 +145,19 @@ func postSpeedTest(client *http.Client, baseURL string, req SpeedReq) (SpeedResu
 	}
 	return out, nil
 }
+
+// SpeedTest orchestrates a single pair: it tells the `from` node to run an
+// iperf3 client against `targetAddr`. If `from` is this node, it runs locally;
+// otherwise it POSTs to the peer's control plane. Orchestrator-agnostic — the
+// caller need not be either endpoint.
+func (a *App) SpeedTest(from PeerInfo, targetAddr string, req SpeedReq) SpeedResult {
+	req.Target = targetAddr
+	if from.ID == a.nodeID {
+		return a.localSpeed(req)
+	}
+	out, err := a.FetchSpeed("http://"+from.Addr, req)
+	if err != nil {
+		return SpeedResult{Err: err.Error()}
+	}
+	return out
+}
