@@ -3,13 +3,14 @@ package appcore
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -75,7 +76,7 @@ type internetDeps struct {
 // runInternet runs the three phases (idle → download → upload) and grades the
 // result. Pure orchestration over the injected measurements.
 func runInternet(d internetDeps) InternetResult {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	idle := d.idle()
 	down, ld, derr := d.download(ctx)
@@ -94,8 +95,21 @@ func runInternet(d internetDeps) InternetResult {
 }
 
 // --- real Cloudflare measurements (manual-gated; behind the seams above) ---
+//
+// Accuracy on fast links depends on: PARALLEL streams (one TCP connection each, so
+// each gets its own congestion window — HTTP/2 multiplexing over one conn would
+// cap us at a single window), a WARM-UP window discarded before measuring, and a
+// multi-second STEADY-STATE measurement window.
 
-const cfBase = "https://speed.cloudflare.com"
+const (
+	cfBase        = "https://speed.cloudflare.com"
+	cfDownStreams = 6
+	cfUpStreams   = 3
+	cfWarmup      = 3 * time.Second
+	cfMeasure     = 10 * time.Second
+	cfDownBytes   = 100_000_000 // per request; streams loop until the window ends
+	cfUpBytes     = 50_000_000
+)
 
 func median(v []float64) float64 {
 	if len(v) == 0 {
@@ -106,8 +120,22 @@ func median(v []float64) float64 {
 	return s[len(s)/2]
 }
 
-// cfLatencyMs times a zero-byte request — an HTTP round-trip to the endpoint.
-func cfLatencyMs(client *http.Client) float64 {
+// testClient is tuned for parallel throughput: HTTP/1.1 only (one TCP connection
+// per stream → independent congestion windows) with enough idle conns to reuse.
+func testClient() *http.Client {
+	tr := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 32,
+		IdleConnTimeout:     30 * time.Second,
+		// Disable HTTP/2 so each request opens its own TCP connection.
+		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
+	}
+	return &http.Client{Transport: tr, Timeout: 60 * time.Second}
+}
+
+// latencyMs times a tiny request — an HTTP round-trip over a (kept-alive) conn.
+func latencyMs(client *http.Client) float64 {
 	t0 := time.Now()
 	resp, err := client.Get(cfBase + "/__down?bytes=0")
 	if err != nil {
@@ -118,59 +146,124 @@ func cfLatencyMs(client *http.Client) float64 {
 	return float64(time.Since(t0).Microseconds()) / 1000
 }
 
-// sampleUnderLoad runs work while sampling latency every 250ms; returns work's
-// result and the median loaded latency.
-func sampleUnderLoad(client *http.Client, work func() float64) (float64, float64) {
-	stop := make(chan struct{})
-	var mu sync.Mutex
-	var samples []float64
-	go func() {
-		t := time.NewTicker(250 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-t.C:
-				if m := cfLatencyMs(client); m > 0 {
-					mu.Lock()
-					samples = append(samples, m)
-					mu.Unlock()
+// idleLatency warms the connection, then takes the median of many quiet samples
+// (so a single cold/TLS-setup sample can't inflate the idle baseline).
+func idleLatency(client *http.Client) float64 {
+	for i := 0; i < 3; i++ {
+		_ = latencyMs(client) // warm TLS + conn
+	}
+	var s []float64
+	for i := 0; i < 15; i++ {
+		if m := latencyMs(client); m > 0 {
+			s = append(s, m)
+		}
+	}
+	return median(s)
+}
+
+type countWriter struct{ n *int64 }
+
+func (w countWriter) Write(p []byte) (int, error) {
+	atomic.AddInt64(w.n, int64(len(p)))
+	return len(p), nil
+}
+
+type countReader struct {
+	r io.Reader
+	n *int64
+}
+
+func (r countReader) Read(p []byte) (int, error) {
+	k, err := r.r.Read(p)
+	atomic.AddInt64(r.n, int64(k))
+	return k, err
+}
+
+// streamThroughput runs `streams` parallel transfers (each calling do, which must
+// add the bytes it moves to the shared counter) for cfWarmup+cfMeasure. It returns
+// the steady-state Mbit/s over the measurement window and the median latency
+// sampled during it (loaded latency).
+func streamThroughput(ctx context.Context, client *http.Client, streams int, do func(ctx context.Context, total *int64) error) (float64, float64, error) {
+	var total int64
+	var firstErr atomic.Value
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < streams; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ctx.Done():
+					return
+				default:
+				}
+				if err := do(ctx, &total); err != nil {
+					if firstErr.Load() == nil {
+						firstErr.Store(err)
+					}
+					select {
+					case <-done:
+						return
+					case <-ctx.Done():
+						return
+					case <-time.After(150 * time.Millisecond):
+					}
 				}
 			}
+		}()
+	}
+
+	// warm-up (discarded), then measure steady-state while sampling loaded latency.
+	select {
+	case <-time.After(cfWarmup):
+	case <-ctx.Done():
+	}
+	b0 := atomic.LoadInt64(&total)
+	t0 := time.Now()
+	var lat []float64
+	deadline := time.Now().Add(cfMeasure)
+	for time.Now().Before(deadline) {
+		if m := latencyMs(client); m > 0 {
+			lat = append(lat, m)
 		}
-	}()
-	res := work()
-	close(stop)
-	mu.Lock()
-	defer mu.Unlock()
-	return res, median(samples)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			deadline = time.Now()
+		}
+	}
+	b1 := atomic.LoadInt64(&total)
+	dt := time.Since(t0).Seconds()
+	close(done)
+	wg.Wait()
+
+	if b1-b0 == 0 {
+		if e, ok := firstErr.Load().(error); ok {
+			return 0, 0, e
+		}
+		return 0, median(lat), nil
+	}
+	mbit := float64(b1-b0) * 8 / 1e6 / dt
+	return mbit, median(lat), nil
 }
 
 func cfDownload(ctx context.Context, client *http.Client) (float64, float64, error) {
-	const bytesN = 25_000_000
-	var n int64
-	var err error
-	mbit, loaded := sampleUnderLoad(client, func() float64 {
-		t0 := time.Now()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, cfBase+"/__down?bytes="+strconv.Itoa(bytesN), nil)
-		var resp *http.Response
-		resp, err = client.Do(req)
+	return streamThroughput(ctx, client, cfDownStreams, func(ctx context.Context, total *int64) error {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/__down?bytes=%d", cfBase, cfDownBytes), nil)
+		resp, err := client.Do(req)
 		if err != nil {
-			return 0
+			return err
 		}
-		n, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(countWriter{total}, resp.Body)
 		resp.Body.Close()
-		dt := time.Since(t0).Seconds()
-		if dt <= 0 {
-			return 0
-		}
-		return float64(n) * 8 / 1e6 / dt
+		return nil
 	})
-	return mbit, loaded, err
 }
 
-// zeroReader yields n zero bytes then EOF (the upload payload).
+// zeroReader yields n zero bytes then EOF (the upload payload, sized per request).
 type zeroReader struct{ n int }
 
 func (z *zeroReader) Read(p []byte) (int, error) {
@@ -189,42 +282,27 @@ func (z *zeroReader) Read(p []byte) (int, error) {
 }
 
 func cfUpload(ctx context.Context, client *http.Client) (float64, float64, error) {
-	const bytesN = 10_000_000
-	var err error
-	mbit, loaded := sampleUnderLoad(client, func() float64 {
-		t0 := time.Now()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfBase+"/__up", &zeroReader{n: bytesN})
+	return streamThroughput(ctx, client, cfUpStreams, func(ctx context.Context, total *int64) error {
+		body := countReader{r: &zeroReader{n: cfUpBytes}, n: total}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfBase+"/__up", body)
 		req.Header.Set("Content-Type", "application/octet-stream")
-		var resp *http.Response
-		resp, err = client.Do(req)
+		req.ContentLength = int64(cfUpBytes)
+		resp, err := client.Do(req)
 		if err != nil {
-			return 0
+			return err
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-		dt := time.Since(t0).Seconds()
-		if dt <= 0 {
-			return 0
-		}
-		return float64(bytesN) * 8 / 1e6 / dt
+		return nil
 	})
-	return mbit, loaded, err
 }
 
 // defaultInternetDeps wires the real Cloudflare measurements.
 func defaultInternetDeps(endpoint string) internetDeps {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := testClient()
 	return internetDeps{
 		endpoint: endpoint,
-		idle: func() float64 {
-			var s []float64
-			for i := 0; i < 5; i++ {
-				if m := cfLatencyMs(client); m > 0 {
-					s = append(s, m)
-				}
-			}
-			return median(s)
-		},
+		idle:     func() float64 { return idleLatency(client) },
 		download: func(ctx context.Context) (float64, float64, error) { return cfDownload(ctx, client) },
 		upload:   func(ctx context.Context) (float64, float64, error) { return cfUpload(ctx, client) },
 	}
