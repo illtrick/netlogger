@@ -155,6 +155,9 @@ func Run(a *appcore.App) error {
 			if tst.stressSeg.Clicked(gtx) {
 				tst.sub = 1
 			}
+			if tst.internetSeg.Clicked(gtx) {
+				tst.sub = 2
+			}
 			if tst.startStress.Clicked(gtx) {
 				tst.stressMu.Lock()
 				already := tst.stressOn
@@ -227,40 +230,36 @@ func Run(a *appcore.App) error {
 				func(gtx layout.Context) layout.Dimensions { return layoutFooter(gtx, th, snap) },
 			}
 
-			navBar := func(gtx layout.Context) layout.Dimensions {
-				tabBtn := func(b *widget.Clickable, t navTab) layout.FlexChild {
-					return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return navTabBtn(gtx, th, b, tabLabel(t), nav == t)
-					})
-				}
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					tabBtn(&navDash, navDashboard), tabBtn(&navTst, navTests), tabBtn(&navEvt, navEvents))
-			}
-
 			var items []layout.Widget
 			switch nav {
 			case navTests:
 				items = []layout.Widget{
-					navBar,
 					gap(16),
 					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTests(gtx, th, &tst, snap) }),
 				}
 			case navEvents:
 				items = []layout.Widget{
-					navBar,
 					gap(16),
 					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutEvents(gtx, th, snap) }),
 				}
 			default:
-				items = append([]layout.Widget{navBar, gap(16)}, dashItems...)
+				items = append([]layout.Widget{gap(4)}, dashItems...)
 			}
-			// The list spans full width so its scrollbar hugs the window's right
-			// edge; horizontal margin is applied per item instead.
-			layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.List(th, &mainList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(18)}.Layout(gtx, items[i])
-				})
-			})
+			// Fixed title bar on top; the scrolling content list fills the rest. The
+			// list spans full width so its scrollbar hugs the window's right edge;
+			// horizontal margin is applied per item instead.
+			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return material.List(th, &mainList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(18)}.Layout(gtx, items[i])
+						})
+					})
+				}),
+			)
 
 			e.Frame(gtx.Ops)
 		}

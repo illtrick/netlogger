@@ -29,6 +29,8 @@ var (
 	colGood     = color.NRGBA{R: 0x3F, G: 0xB9, B: 0x50, A: 0xFF}
 	colWatch    = color.NRGBA{R: 0xD2, G: 0x99, B: 0x22, A: 0xFF}
 	colBad      = color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0xFF}
+	colBadTint  = color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0x18} // low-alpha red wash for the running-stress banner
+	colTrack    = color.NRGBA{R: 0x0A, G: 0x11, B: 0x19, A: 0xFF} // recessed track behind load bars
 )
 
 // Semantic aliases kept so existing call sites read naturally on the new palette.

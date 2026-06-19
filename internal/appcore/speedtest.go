@@ -28,10 +28,27 @@ type SpeedResult struct {
 	DownMbit    float64 `json:"down_mbit"`
 	UpMbit      float64 `json:"up_mbit"`
 	Retransmits int     `json:"retransmits"`
+	RTTms       float64 `json:"rtt_ms"` // mean TCP RTT over the run (0 if unavailable)
 	JitterMs    float64 `json:"jitter_ms"`
 	LossPct     float64 `json:"loss_pct"`
 	Proto       string  `json:"proto"`
 	Err         string  `json:"err,omitempty"`
+}
+
+// meanRTTms averages the non-zero per-interval TCP RTTs (microseconds) into ms.
+func meanRTTms(ivs []iperf.Interval) float64 {
+	var sum float64
+	var n int
+	for _, iv := range ivs {
+		if iv.RTTus > 0 {
+			sum += float64(iv.RTTus)
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return round1(sum / float64(n) / 1000)
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
@@ -64,6 +81,9 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 		res.Retransmits += r.SumRetransmits
 		res.JitterMs = r.UDPJitterMs
 		res.LossPct = r.UDPLostPercent
+		if rtt := meanRTTms(r.Intervals); rtt > 0 {
+			res.RTTms = rtt
+		}
 		return true
 	}
 	doDown := func() bool {
@@ -99,6 +119,7 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 			res.UpMbit = mbit(r.SumBitsPerSec)
 			res.DownMbit = mbit(r.SumRecvBitsPerSec)
 			res.Retransmits = r.SumRetransmits
+			res.RTTms = meanRTTms(r.Intervals)
 			res.JitterMs = r.UDPJitterMs
 			res.LossPct = r.UDPLostPercent
 		}

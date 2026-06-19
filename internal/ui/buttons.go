@@ -5,13 +5,9 @@ package ui
 // primary/destructive action (filled accent/red), and minor utility (ghost outline).
 
 import (
-	"image"
 	"image/color"
 
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -60,30 +56,28 @@ func dangerGhostBtn(gtx layout.Context, th *material.Theme, c *widget.Clickable,
 	return outlineBtn(gtx, th, c, label, colBad, color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0x55})
 }
 
-// navTabBtn renders a top-level nav item: a flat label, muted when inactive, with
-// an accent underline (the label's width) when active. No button chrome.
-func navTabBtn(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool) layout.Dimensions {
+// navPill renders a top-level nav item: the active tab is a raised neutral surface
+// (colCard) with primary text; inactive tabs are plain muted text. A raised pill,
+// never the bright accent, so nav is clearly distinct from a primary action.
+func navPill(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool) layout.Dimensions {
 	return material.Clickable(gtx, c, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(14), Right: unit.Dp(14), Top: unit.Dp(8), Bottom: unit.Dp(6)}.Layout(gtx,
-			func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Label(th, unit.Sp(15), label)
-				lbl.Color = colTextMut
-				if active {
-					lbl.Color = colTextPri
-				}
-				macro := op.Record(gtx.Ops)
-				dims := lbl.Layout(gtx)
-				call := macro.Stop()
-				call.Add(gtx.Ops)
-				if active {
-					y0 := dims.Size.Y + gtx.Dp(unit.Dp(4))
-					y1 := y0 + gtx.Dp(unit.Dp(2))
-					rect := image.Rect(0, y0, dims.Size.X, y1)
-					paint.FillShape(gtx.Ops, colAccent, clip.Rect(rect).Op())
-					dims.Size.Y = y1
-				}
-				return dims
-			})
+		bg := color.NRGBA{}
+		fg := colTextSec
+		if active {
+			bg = colCard
+			fg = colTextPri
+		}
+		return roundedBG(gtx, bg, unit.Dp(8), unit.Dp(0), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(13), Right: unit.Dp(13)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Label(th, unit.Sp(14), label)
+					lbl.Color = fg
+					if active {
+						lbl.Font.Weight = 500
+					}
+					return lbl.Layout(gtx)
+				})
+		})
 	})
 }
 

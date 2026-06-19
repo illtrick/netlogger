@@ -26,6 +26,48 @@ destructive action, or a minor utility — without reading the label.
 | `colAccent` (blue) | accent, primary actions, active nav |
 | `colGood` / `colWatch` / `colBad` | severity: green / amber / red |
 
+## App chrome
+
+- **Title bar** (`chrome.go` · `titleBar`): a fixed full-width bar on `colTitleBar`
+  with a hairline bottom border. Left → the **NetLogger** wordmark (`Net` in
+  `colTextPri`, `Logger` in `colAccent`). Center → the primary **nav pills**. Right →
+  a muted status string `"<host> · N nodes online"`. The bar gives the nav context,
+  so the tabs read as navigation, not actions.
+- The title bar is **outside** the scrolling content list (it doesn't scroll).
+
+## Nav vs. actions
+
+- **Nav pills** (`navPill`): the active tab is a raised surface (`colCard`) with
+  `colTextPri`; inactive tabs are plain `colTextSec` text. A raised-but-neutral
+  pill — never the bright accent — so it's distinct from a primary action.
+- **Sub-view segmented control** (`segControl`): for Speed / Stress / Internet
+  inside the Tests tab. Disabled/not-yet-built segments render muted and inert.
+
+## Status banner (`statusBanner`)
+
+For a live, ongoing operation (stress running): a full-width tinted strip — pulsing
+status dot, a short bold state ("Stress running"), a muted descriptor
+("full mesh · N link-pairs"), an elapsed/total **timer** right-aligned, and the
+primary control (a `dangerBtn` Stop / kill-switch) at the far right. Tint matches
+severity (running load → red-tinted `colBad` at low alpha).
+
+## Chips, metric cards, badges
+
+- **Config chips** (`configChips` over `chipLabel`): small rounded pills stating fixed
+  run parameters ("Topology · full mesh", "Per-link cap · 200 Mbit/s"). *Implemented.*
+- **Legend** (`matrixLegend`): a row of `color swatch + range` items under any
+  severity-colored grid. *Implemented (matrix).*
+- **Metric cards** / **grade badge** / **phase strip** — the Internet tab's
+  down/up/latency tiles, the A–F bufferbloat badge, and the phase progress row.
+  *Specified here; built in Build #3 (the Internet sub-view is a placeholder until then.)*
+
+## Tables & grids
+
+- Column headers and row labels are `colTextSec` `Caption`. Directional headers get a
+  `↓`/`→` glyph. Below the grid: a legend and a one-line key
+  ("row = client → col = server"). Cells may carry a small second line (RTT, "slow",
+  loss %) under the primary value.
+
 ## Button hierarchy (`buttons.go`)
 
 | Helper | Looks like | Use for |
