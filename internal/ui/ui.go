@@ -243,7 +243,7 @@ func Run(a *appcore.App) error {
 				items = []layout.Widget{
 					navBar,
 					gap(16),
-					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTests(gtx, th, &tst) }),
+					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTests(gtx, th, &tst, snap) }),
 				}
 			case navEvents:
 				items = []layout.Widget{

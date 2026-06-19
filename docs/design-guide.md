@@ -56,6 +56,26 @@ Rules:
 - Loss/throughput cells and dots use `colGood`/`colWatch`/`colBad` via the shared
   `sevColor` / `matrixCellColor` / `stressHealthColor` helpers — never inline a hex.
 
+## Device naming & identity
+
+A device has two identifiers with different jobs: the **common name** (hostname,
+e.g. `ProjectorPC`) is what a human recognizes; the **IP** (e.g. `192.168.0.127`)
+is the precise address. Lead with the name, demote the IP.
+
+- **Primary = the common name**, in the largest/most-readable weight of the context
+  (`Body2`+ in `colTextPri`). It's the label the operator scans for.
+- **Secondary = the IP**, smaller (`~11sp`) and muted (`colTextMut`), shown *when
+  space allows* — beneath the name in a list row, or omitted in tight chips.
+- When only an address is known (unresolved peer, raw target), the **IP stands
+  alone as the primary** — never show a blank name or a redundant `IP / IP`.
+- Resolve names centrally via `Snapshot.DeviceName(hostOrIP)` (maps a bare
+  host/IP to its device name, or passes the input through unchanged). Render with
+  the shared `deviceLabel(gtx, th, name, ip)` helper — don't format identity
+  strings ad-hoc at call sites.
+
+This applies everywhere a device appears: the test matrix, the stress per-link
+list, the peers table, and event rows.
+
 ## When adding a control
 
 Pick the helper whose role matches the *consequence* of the click, not its

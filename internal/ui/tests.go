@@ -95,7 +95,7 @@ func (st *testsState) stressSnapshot() (bool, []appcore.StressStatus) {
 
 // layoutTests renders the Tests tab: a segmented control (Speed / Stress) on
 // top of the matching sub-view.
-func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+func layoutTests(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutSubSeg(gtx, th, st)
@@ -103,7 +103,7 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.sub == 1 {
-				return layoutStress(gtx, th, st)
+				return layoutStress(gtx, th, st, snap)
 			}
 			return layoutSpeed(gtx, th, st)
 		}),
@@ -162,7 +162,7 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 
 // layoutStress renders the Stress sub-view: a full-mesh start/stop kill-switch
 // and a live per-node / per-link readout.
-func layoutStress(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
 	on, nodes := st.stressSnapshot()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -186,14 +186,14 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState) layout
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutStressList(gtx, th, nodes)
+			return layoutStressList(gtx, th, nodes, snap)
 		}),
 	)
 }
 
-// layoutStressList renders one row per (node, link): target, sent rate, and a
-// health dot colored via stressHealthColor.
-func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus) layout.Dimensions {
+// layoutStressList renders one row per (node, link): the target device (name large,
+// IP small), sent rate, and a health dot colored via stressHealthColor.
+func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot) layout.Dimensions {
 	rows := make([]layout.FlexChild, 0)
 	for _, n := range nodes {
 		for _, l := range n.Links {
@@ -205,9 +205,7 @@ func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.St
 							layout.Rigid(dotWidget(stressHealthColor(l.Aborted), 8)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, l.Target)
-									lbl.Color = colTextPri
-									return lbl.Layout(gtx)
+									return deviceLabel(gtx, th, snap.DeviceName(l.Target), l.Target)
 								})
 							}),
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

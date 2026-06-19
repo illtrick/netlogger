@@ -104,6 +104,33 @@ func chipLabel(gtx layout.Context, th *material.Theme, txt string, fg, bg color.
 	return dims
 }
 
+// deviceLabel renders a device identity per the naming convention in
+// docs/design-guide.md: the common device name large and primary, with the IP
+// smaller and muted beneath it when the IP adds information (i.e. differs from the
+// name). When only an address is known, the address stands alone as the primary.
+func deviceLabel(gtx layout.Context, th *material.Theme, name, ip string) layout.Dimensions {
+	primary := name
+	if primary == "" {
+		primary = ip
+	}
+	showIP := ip != "" && ip != primary
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, primary)
+			lbl.Color = colTextPri
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !showIP {
+				return layout.Dimensions{}
+			}
+			lbl := material.Label(th, unit.Sp(11), ip)
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
+		}),
+	)
+}
+
 // darkTheme returns a copy of base with the dark palette applied.
 func darkTheme(base *material.Theme) *material.Theme {
 	th := *base

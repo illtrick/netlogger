@@ -176,6 +176,18 @@ func iperfHost(addr string) string {
 	return addr
 }
 
+// DeviceName resolves a bare host/IP (e.g. a stress/iperf target) to its device
+// (host) name, or returns the input unchanged when unknown. The UI leads with the
+// device name and shows the IP as smaller secondary text — see docs/design-guide.md.
+func (s Snapshot) DeviceName(hostOrIP string) string {
+	for _, p := range append([]PeerInfo{s.SelfPeer}, s.Peers...) {
+		if p.Host == hostOrIP || iperfHost(p.Addr) == hostOrIP {
+			return p.Host
+		}
+	}
+	return hostOrIP
+}
+
 // SpeedNode is a row/column of the matrix.
 type SpeedNode struct {
 	ID   string

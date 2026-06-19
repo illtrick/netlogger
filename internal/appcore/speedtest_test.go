@@ -105,6 +105,22 @@ func TestSpeedTestStripsControlPortForIperf(t *testing.T) {
 	}
 }
 
+func TestSnapshotDeviceName(t *testing.T) {
+	s := Snapshot{
+		SelfPeer: PeerInfo{Host: "ryzen", Addr: "10.0.0.1:8088"},
+		Peers:    []PeerInfo{{Host: "ProjectorPC", Addr: "192.168.0.127:8088"}},
+	}
+	if got := s.DeviceName("192.168.0.127"); got != "ProjectorPC" {
+		t.Fatalf("ip → name = %q, want ProjectorPC", got)
+	}
+	if got := s.DeviceName("10.0.0.1"); got != "ryzen" {
+		t.Fatalf("self ip → name = %q, want ryzen", got)
+	}
+	if got := s.DeviceName("8.8.8.8"); got != "8.8.8.8" {
+		t.Fatalf("unknown should pass through, got %q", got)
+	}
+}
+
 func TestSpeedNodesAndPairs(t *testing.T) {
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
 	peers := []PeerInfo{
