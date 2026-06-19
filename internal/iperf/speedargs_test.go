@@ -44,4 +44,3 @@ func TestBuildArgsSpeedFlags(t *testing.T) {
 		t.Fatalf("udp capped + streams: %v", udp)
 	}
 }
-

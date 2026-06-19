@@ -26,12 +26,12 @@ type Interval struct {
 
 // Result is the parsed iperf3 run.
 type Result struct {
-	Intervals      []Interval `json:"intervals"`
+	Intervals         []Interval `json:"intervals"`
 	SumBitsPerSec     float64    `json:"sum_bits_per_second"`
 	SumRecvBitsPerSec float64    `json:"sum_recv_bits_per_second"` // client-received rate; the meaningful number for -R/--bidir download
 	SumRetransmits    int        `json:"sum_retransmits"`
-	UDPLostPercent float64    `json:"udp_lost_percent"`
-	UDPJitterMs    float64    `json:"udp_jitter_ms"`
+	UDPLostPercent    float64    `json:"udp_lost_percent"`
+	UDPJitterMs       float64    `json:"udp_jitter_ms"`
 }
 
 type rawResult struct {
