@@ -1,9 +1,13 @@
 package appcore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -232,4 +236,86 @@ func sortedKeys(m map[string]*LinkLoad) []string {
 	}
 	sort.Strings(ks)
 	return ks
+}
+
+// stressStartHandler accepts POST StressOpts and starts a local run.
+func stressStartHandler(start func(StressOpts) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var o StressOpts
+		if err := json.NewDecoder(r.Body).Decode(&o); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := start(o); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+type stressStopReq struct {
+	RunID string `json:"run_id"`
+}
+
+// stressStopHandler accepts POST {run_id} and cancels the matching run.
+func stressStopHandler(stop func(string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req stressStopReq
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		stop(req.RunID)
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// stressStatusHandler returns the node's current StressStatus.
+func stressStatusHandler(status func() StressStatus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status())
+	}
+}
+
+func postStressStart(client *http.Client, baseURL string, o StressOpts) error {
+	body, _ := json.Marshal(o)
+	resp, err := client.Post(baseURL+"/api/stress/start", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stress start: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func postStressStop(client *http.Client, baseURL, runID string) error {
+	body, _ := json.Marshal(stressStopReq{RunID: runID})
+	resp, err := client.Post(baseURL+"/api/stress/stop", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func fetchStressStatus(client *http.Client, baseURL string) (StressStatus, error) {
+	resp, err := client.Get(baseURL + "/api/stress/status")
+	if err != nil {
+		return StressStatus{}, err
+	}
+	defer resp.Body.Close()
+	var st StressStatus
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return StressStatus{}, err
+	}
+	return st, nil
 }

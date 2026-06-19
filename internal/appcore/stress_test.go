@@ -2,7 +2,11 @@ package appcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,4 +112,40 @@ func TestStressAutoAbortsFailingLink(t *testing.T) {
 		t.Fatalf("the failing link should auto-abort: %+v", st.Links)
 	}
 	a.stopStressLocal("r2")
+}
+
+func TestStressStartStopStatusHandlers(t *testing.T) {
+	a := &App{}
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error) {
+		select {
+		case <-ctx.Done():
+			return iperf.Result{}, ctx.Err()
+		case <-time.After(2 * time.Millisecond):
+		}
+		return iperf.Result{SumBitsPerSec: 10e6}, nil
+	}
+	start := stressStartHandler(a.startStressLocal)
+	rr := httptest.NewRecorder()
+	body := `{"run_id":"rx","targets":["10.0.0.2"],"per_link_cap_mbit":50,"proto":"tcp","duration_s":2}`
+	start(rr, httptest.NewRequest(http.MethodPost, "/api/stress/start", strings.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start status %d", rr.Code)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	status := stressStatusHandler(a.stressStatusLocal)
+	rr2 := httptest.NewRecorder()
+	status(rr2, httptest.NewRequest(http.MethodGet, "/api/stress/status", nil))
+	var st StressStatus
+	_ = json.Unmarshal(rr2.Body.Bytes(), &st)
+	if !st.Running {
+		t.Fatalf("status should report running: %s", rr2.Body.String())
+	}
+
+	stop := stressStopHandler(a.stopStressLocal)
+	rr3 := httptest.NewRecorder()
+	stop(rr3, httptest.NewRequest(http.MethodPost, "/api/stress/stop", strings.NewReader(`{"run_id":"rx"}`)))
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("stop status %d", rr3.Code)
+	}
 }
