@@ -162,6 +162,12 @@ type App struct {
 	stressMu     sync.Mutex
 	stress       *stressRun
 
+	// Stress orchestration seams (default to the HTTP clients / local manager).
+	FetchStressStart  func(baseURL string, o StressOpts) error
+	FetchStressStop   func(baseURL, runID string) error
+	FetchStressStatus func(baseURL string) (StressStatus, error)
+	startLocalStress  func(StressOpts) error
+
 	// eventMu (leaf) guards an in-memory ring of the most recent connectivity
 	// events so the UI can show a live log without re-reading the store.
 	eventMu sync.Mutex
@@ -271,6 +277,15 @@ func New(dataDir string) *App {
 			return runSpeedTest(iperf.RunClient, req.Target, req)
 		},
 		stressRunner: iperf.RunClientCtx,
+		FetchStressStart: func(baseURL string, o StressOpts) error {
+			return postStressStart(&http.Client{Timeout: 10 * time.Second}, baseURL, o)
+		},
+		FetchStressStop: func(baseURL, runID string) error {
+			return postStressStop(&http.Client{Timeout: 5 * time.Second}, baseURL, runID)
+		},
+		FetchStressStatus: func(baseURL string) (StressStatus, error) {
+			return fetchStressStatus(&http.Client{Timeout: 3 * time.Second}, baseURL)
+		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
 		rttHist:      make(map[string]*histRing),

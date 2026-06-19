@@ -114,6 +114,35 @@ func TestStressAutoAbortsFailingLink(t *testing.T) {
 	a.stopStressLocal("r2")
 }
 
+func TestStartStressFansOutPerNodeTargets(t *testing.T) {
+	a := &App{nodeID: "self"}
+	started := map[string]StressOpts{}
+	var localOpts StressOpts
+	a.startLocalStress = func(o StressOpts) error { localOpts = o; return nil }
+	a.FetchStressStart = func(baseURL string, o StressOpts) error {
+		started[baseURL] = o
+		return nil
+	}
+	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "10.0.0.1:8088"}
+	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
+
+	a.StartStress(self, peers, StressParams{PerLinkCapMbit: 100, Proto: "tcp", DurationS: 30, NowUnixUS: 1_000_000})
+
+	if len(localOpts.Targets) != 1 || localOpts.Targets[0] != "10.0.0.2" {
+		t.Fatalf("self targets wrong: %+v", localOpts.Targets)
+	}
+	po, ok := started["http://10.0.0.2:8088"]
+	if !ok || len(po.Targets) != 1 || po.Targets[0] != "10.0.0.1" {
+		t.Fatalf("peer command wrong: %+v", started)
+	}
+	if localOpts.RunID == "" || localOpts.RunID != po.RunID {
+		t.Fatalf("run ids must match and be non-empty")
+	}
+	if localOpts.StartAtUnixUS != 1_000_000+2_000_000 {
+		t.Fatalf("start_at should be now+2s, got %d", localOpts.StartAtUnixUS)
+	}
+}
+
 func TestStressStartStopStatusHandlers(t *testing.T) {
 	a := &App{}
 	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error) {

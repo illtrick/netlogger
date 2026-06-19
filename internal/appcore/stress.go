@@ -9,11 +9,14 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"netlogger/internal/iperf"
 )
+
+var timeNow = time.Now
 
 const stressAbortAfter = 3 // consecutive iperf3 client errors against a target → abort that link
 
@@ -318,4 +321,66 @@ func fetchStressStatus(client *http.Client, baseURL string) (StressStatus, error
 		return StressStatus{}, err
 	}
 	return st, nil
+}
+
+// StressParams is the orchestrator-level request (topology is full mesh in v1).
+type StressParams struct {
+	PerLinkCapMbit int
+	Proto          string
+	DurationS      int
+	NowUnixUS      int64 // injected for tests; 0 => time.Now()
+}
+
+// StartStress fans a full-mesh stress run out to every node with a shared run id
+// and a start time 2 seconds ahead so all nodes begin together.
+func (a *App) StartStress(self PeerInfo, peers []PeerInfo, p StressParams) string {
+	now := p.NowUnixUS
+	if now == 0 {
+		now = timeNow().UnixMicro()
+	}
+	runID := "stress-" + strconv.FormatInt(now, 10)
+	startAt := now + 2_000_000
+	targets := meshTargets(self, peers)
+	byID := map[string]PeerInfo{self.ID: self}
+	for _, pr := range peers {
+		byID[pr.ID] = pr
+	}
+	mk := func(id string) StressOpts {
+		return StressOpts{
+			RunID: runID, Targets: targets[id], PerLinkCapMbit: p.PerLinkCapMbit,
+			Proto: p.Proto, DurationS: p.DurationS, StartAtUnixUS: startAt,
+		}
+	}
+	local := a.startLocalStress
+	if local == nil {
+		local = a.startStressLocal
+	}
+	for id, node := range byID {
+		o := mk(id)
+		if id == a.nodeID {
+			_ = local(o)
+		} else {
+			_ = a.FetchStressStart("http://"+node.Addr, o)
+		}
+	}
+	return runID
+}
+
+// StopStress fans a stop to self + every peer.
+func (a *App) StopStress(self PeerInfo, peers []PeerInfo, runID string) {
+	a.stopStressLocal(runID)
+	for _, p := range peers {
+		_ = a.FetchStressStop("http://"+p.Addr, runID)
+	}
+}
+
+// PollStress aggregates each node's status (self + peers).
+func (a *App) PollStress(self PeerInfo, peers []PeerInfo) []StressStatus {
+	out := []StressStatus{a.stressStatusLocal()}
+	for _, p := range peers {
+		if st, err := a.FetchStressStatus("http://" + p.Addr); err == nil {
+			out = append(out, st)
+		}
+	}
+	return out
 }
