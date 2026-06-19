@@ -172,6 +172,10 @@ type App struct {
 	FetchStressStatus func(baseURL string) (StressStatus, error)
 	startLocalStress  func(StressOpts) error
 
+	// Internet test seams.
+	localInternet func(endpoint string) InternetResult
+	FetchInternet func(baseURL, endpoint string) (InternetResult, error)
+
 	// eventMu (leaf) guards an in-memory ring of the most recent connectivity
 	// events so the UI can show a live log without re-reading the store.
 	eventMu sync.Mutex
@@ -289,6 +293,12 @@ func New(dataDir string) *App {
 		},
 		FetchStressStatus: func(baseURL string) (StressStatus, error) {
 			return fetchStressStatus(&http.Client{Timeout: 3 * time.Second}, baseURL)
+		},
+		localInternet: func(endpoint string) InternetResult {
+			return runInternet(defaultInternetDeps(endpoint))
+		},
+		FetchInternet: func(baseURL, endpoint string) (InternetResult, error) {
+			return postInternet(&http.Client{Timeout: 60 * time.Second}, baseURL, endpoint)
 		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
@@ -427,6 +437,7 @@ func (a *App) Start() error {
 		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
 		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))
 		mux.Handle("/api/stress/status", stressStatusHandler(a.stressStatusLocal))
+		mux.Handle("/api/internet", internetHandler(a.runLocalInternet))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}

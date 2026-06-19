@@ -57,9 +57,12 @@ severity (running load → red-tinted `colBad` at low alpha).
   run parameters ("Topology · full mesh", "Per-link cap · 200 Mbit/s"). *Implemented.*
 - **Legend** (`matrixLegend`): a row of `color swatch + range` items under any
   severity-colored grid. *Implemented (matrix).*
-- **Metric cards** / **grade badge** / **phase strip** — the Internet tab's
-  down/up/latency tiles, the A–F bufferbloat badge, and the phase progress row.
-  *Specified here; built in Build #3 (the Internet sub-view is a placeholder until then.)*
+- **Metric cards** (`metricCardChild`): a `colCardAlt` tile — muted label on top, a
+  large value + small unit below. Flexed in a row of 4 (Internet down/up/idle/loaded).
+- **Grade badge** (`gradeBadge`): a large A–F letter in a tinted rounded square
+  (severity-colored via `gradeColor`) beside the numeric basis (+ms under load, RPM).
+- **Phase strip** (`phaseStrip`): equal-width green-outlined chips for the test
+  phases (idle ping · download · upload · loaded ping). *All implemented (Internet tab).*
 
 ## Tables & grids
 

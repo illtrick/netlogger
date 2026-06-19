@@ -82,6 +82,12 @@ type testsState struct {
 	stressMu    sync.Mutex
 	stressOn    bool
 	stressNodes []appcore.StressStatus
+
+	internetRun  widget.Clickable
+	internetMu   sync.Mutex
+	internetOn   bool
+	internetHave bool
+	internetRes  appcore.InternetResult
 }
 
 // cap returns the configured per-link cap, clamped to [stressCapMin, stressCapMax].
@@ -126,7 +132,7 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState, snap ap
 			case 1:
 				return layoutStress(gtx, th, st, snap)
 			case 2:
-				return layoutInternetPlaceholder(gtx, th)
+				return layoutInternet(gtx, th, st, snap)
 			default:
 				return layoutSpeed(gtx, th, st)
 			}
@@ -142,21 +148,6 @@ func layoutSubSeg(gtx layout.Context, th *material.Theme, st *testsState) layout
 		segSpec{click: &st.speedSeg, label: subLabel(0), active: st.sub == 0},
 		segSpec{click: &st.stressSeg, label: subLabel(1), active: st.sub == 1},
 		segSpec{click: &st.internetSeg, label: subLabel(2), active: st.sub == 2},
-	)
-}
-
-// layoutInternetPlaceholder is shown for the Internet sub-view until Build #3.
-func layoutInternetPlaceholder(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.Body1(th, "Internet").Layout(gtx)
-		}),
-		layout.Rigid(gap(8)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Device→internet speed test with bufferbloat grade — arriving in the next build.")
-			lbl.Color = colTextMut
-			return lbl.Layout(gtx)
-		}),
 	)
 }
 

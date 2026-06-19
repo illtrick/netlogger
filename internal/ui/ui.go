@@ -158,6 +158,25 @@ func Run(a *appcore.App) error {
 			if tst.internetSeg.Clicked(gtx) {
 				tst.sub = 2
 			}
+			if tst.internetRun.Clicked(gtx) {
+				tst.internetMu.Lock()
+				running := tst.internetOn
+				if !running {
+					tst.internetOn = true
+				}
+				tst.internetMu.Unlock()
+				if !running {
+					self := snap.SelfPeer
+					go func() {
+						res := a.InternetTest(self, "Cloudflare")
+						tst.internetMu.Lock()
+						tst.internetRes = res
+						tst.internetHave = true
+						tst.internetOn = false
+						tst.internetMu.Unlock()
+					}()
+				}
+			}
 			if tst.capDec.Clicked(gtx) && tst.cap() > stressCapMin {
 				tst.capMbit = tst.cap() - stressCapStep
 			}
