@@ -158,6 +158,12 @@ func Run(a *appcore.App) error {
 			if tst.internetSeg.Clicked(gtx) {
 				tst.sub = 2
 			}
+			if tst.capDec.Clicked(gtx) && tst.cap() > stressCapMin {
+				tst.capMbit = tst.cap() - stressCapStep
+			}
+			if tst.capInc.Clicked(gtx) && tst.cap() < stressCapMax {
+				tst.capMbit = tst.cap() + stressCapStep
+			}
 			if tst.startStress.Clicked(gtx) {
 				tst.stressMu.Lock()
 				already := tst.stressOn
@@ -167,7 +173,7 @@ func Run(a *appcore.App) error {
 				tst.stressMu.Unlock()
 				if !already {
 					self, peers := snap.SelfPeer, snap.Peers
-					a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: 200, Proto: "tcp", DurationS: 120})
+					a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: tst.cap(), Proto: "tcp", DurationS: 120})
 					go func() {
 						for {
 							tst.stressMu.Lock()

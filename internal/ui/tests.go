@@ -76,9 +76,27 @@ type testsState struct {
 	internetSeg widget.Clickable
 	startStress widget.Clickable
 	stopStress  widget.Clickable
+	capDec      widget.Clickable
+	capInc      widget.Clickable
+	capMbit     int // per-link cap; 0 → stressDefaultCap
 	stressMu    sync.Mutex
 	stressOn    bool
 	stressNodes []appcore.StressStatus
+}
+
+// cap returns the configured per-link cap, clamped to [stressCapMin, stressCapMax].
+func (st *testsState) cap() int {
+	c := st.capMbit
+	if c == 0 {
+		c = stressDefaultCap
+	}
+	if c < stressCapMin {
+		c = stressCapMin
+	}
+	if c > stressCapMax {
+		c = stressCapMax
+	}
+	return c
 }
 
 func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string) {
@@ -189,7 +207,12 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 
 // layoutStress renders the Stress sub-view: a full-mesh start/stop kill-switch
 // and a live per-node / per-link readout.
-const stressCapMbit = 200
+const (
+	stressDefaultCap = 200
+	stressCapMin     = 50
+	stressCapMax     = 2000
+	stressCapStep    = 50
+)
 
 func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
 	on, nodes := st.stressSnapshot()
@@ -205,11 +228,9 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return primaryBtn(gtx, th, &st.startStress, "Start stress test")
 				}),
-				layout.Rigid(gapX(12)),
+				layout.Rigid(gapX(16)),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, "loads every link, then stops automatically")
-					lbl.Color = colTextMut
-					return lbl.Layout(gtx)
+					return capStepper(gtx, th, st)
 				}),
 			)
 		}),
@@ -217,7 +238,7 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return configChips(gtx, th,
 				"Topology · full mesh",
-				fmt.Sprintf("Per-link cap · %d Mbit/s", stressCapMbit),
+				fmt.Sprintf("Per-link cap · %d Mbit/s", st.cap()),
 				"Protocol · TCP",
 				"Probes · continuous",
 			)
@@ -232,8 +253,30 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutStressList(gtx, th, nodes, snap)
+			return layoutStressList(gtx, th, nodes, snap, st.cap())
 		}),
+	)
+}
+
+// capStepper is the per-link bandwidth control: − value + (ghost buttons).
+func capStepper(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Per-link cap")
+			lbl.Color = colTextSec
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(gapX(8)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return ghostBtn(gtx, th, &st.capDec, "−") }),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(86))
+				lbl := material.Body2(th, fmt.Sprintf("%d Mbit/s", st.cap()))
+				lbl.Color = colTextPri
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return ghostBtn(gtx, th, &st.capInc, "+") }),
 	)
 }
 
@@ -363,7 +406,7 @@ func mmss(sec int64) string {
 
 // layoutStressList renders one row per (node, link): the target device (name large,
 // IP small), a load bar (sent vs cap), and a health label/dot.
-func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot) layout.Dimensions {
+func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot, cap int) layout.Dimensions {
 	rows := make([]layout.FlexChild, 0)
 	for _, n := range nodes {
 		for _, l := range n.Links {
@@ -384,11 +427,11 @@ func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.St
 								col := colGood
 								if l.Aborted {
 									col = colBad
-								} else if l.SentMbit < float64(stressCapMbit)*0.5 {
+								} else if l.SentMbit < float64(cap)*0.5 {
 									col = colWatch
 								}
 								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return loadBar(gtx, l.SentMbit/float64(stressCapMbit), col)
+									return loadBar(gtx, l.SentMbit/float64(cap), col)
 								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
