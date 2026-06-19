@@ -150,8 +150,12 @@ func Version() string {
 type Opts struct {
 	DurationS   int
 	UDP         bool
-	BitrateMbit int // UDP target bitrate in Mbit/s; 0 = iperf3 default
-	Port        int // 0 = iperf3 default (5201)
+	BitrateMbit int  // UDP target bitrate in Mbit/s; 0 = iperf3 default
+	Port        int  // 0 = iperf3 default (5201)
+	Streams     int  // -P parallel streams; 0 = single stream (one-thread-per-stream needs iperf3 >= 3.16)
+	Reverse     bool // -R: server sends, client receives (download from the client's seat)
+	Bidir       bool // --bidir: simultaneous both directions (needs iperf3 >= 3.7)
+	OmitS       int  // -O: omit the first N seconds (skip TCP slow-start)
 }
 
 func buildArgs(target string, o Opts) []string {
@@ -161,6 +165,18 @@ func buildArgs(target string, o Opts) []string {
 	args := []string{"-c", target, "--json", "-i", "1", "-t", strconv.Itoa(o.DurationS)}
 	if o.Port > 0 {
 		args = append(args, "-p", strconv.Itoa(o.Port))
+	}
+	if o.Streams > 0 {
+		args = append(args, "-P", strconv.Itoa(o.Streams))
+	}
+	if o.OmitS > 0 {
+		args = append(args, "-O", strconv.Itoa(o.OmitS))
+	}
+	if o.Reverse {
+		args = append(args, "-R")
+	}
+	if o.Bidir {
+		args = append(args, "--bidir")
 	}
 	if o.UDP {
 		args = append(args, "-u")
