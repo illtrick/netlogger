@@ -179,7 +179,8 @@ func Run(a *appcore.App) error {
 						return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(th, b, tabLabel(t))
 							if nav != t {
-								btn.Background = colCard
+								btn.Background = colCardAlt
+								btn.Color = colTextPri
 							}
 							return btn.Layout(gtx)
 						})

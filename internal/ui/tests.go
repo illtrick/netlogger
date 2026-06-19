@@ -69,7 +69,9 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState) layout.
 			if running {
 				label = "Running…"
 			}
-			return material.Button(th, &st.runBtn, label).Layout(gtx)
+			return layout.Flex{}.Layout(gtx,
+				layout.Rigid(material.Button(th, &st.runBtn, label).Layout),
+			)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -123,31 +125,47 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 		return material.Body2(th, "no live devices").Layout(gtx)
 	}
 	cellH := gtx.Dp(unit.Dp(46))
+	labelW := gtx.Dp(unit.Dp(104))
+	gut := unit.Dp(5)
 
-	// header label: a Caption in the requested color, centered/aligned in a
-	// fixed-height cell with the gutter inset applied.
-	headerCell := func(txt string, align layout.Direction) layout.FlexChild {
-		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, cellH)
-				return align.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, txt)
-						lbl.Color = colTextSec
-						return lbl.Layout(gtx)
-					})
+	// labelCell is the fixed-width, left-aligned row-label / corner cell. Fixed
+	// width (not flexed) so the data columns get the rest of the width and the
+	// labels don't float in dead space.
+	labelCell := func(txt string) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = image.Pt(labelW, cellH)
+			gtx.Constraints.Max.X = labelW
+			return layout.Inset{Right: gut}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, txt)
+					lbl.Color = colTextSec
+					return lbl.Layout(gtx)
 				})
 			})
 		})
 	}
 
-	// dataCell paints a rounded filled rect with centered text, filling its flex
-	// column and the fixed row height.
+	// headerCol is an equal-weight centered column header.
+	headerCol := func(txt string) layout.FlexChild {
+		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: gut, Bottom: gut}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, cellH)
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, txt)
+					lbl.Color = colTextSec
+					return lbl.Layout(gtx)
+				})
+			})
+		})
+	}
+
+	// dataCell paints a rounded filled rect with centered text, filling its
+	// equal-weight flex column and the fixed row height.
 	dataCell := func(bg, fg color.NRGBA, txt string) layout.FlexChild {
 		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, cellH)
+			return layout.Inset{Right: gut, Bottom: gut}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				size := image.Pt(gtx.Constraints.Max.X, cellH)
+				gtx.Constraints.Min = size
 				rect := image.Rectangle{Max: size}
 				paint.FillShape(gtx.Ops, bg, clip.UniformRRect(rect, gtx.Dp(unit.Dp(6))).Op(gtx.Ops))
 				layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -162,22 +180,22 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 
 	rows := make([]layout.FlexChild, 0, len(m.Nodes)+1)
 
-	// header row: empty row-label cell + one header per node.
+	// header row: fixed corner cell + one centered header per node.
 	header := make([]layout.FlexChild, 0, len(m.Nodes)+1)
-	header = append(header, headerCell("", layout.Center))
+	header = append(header, labelCell(""))
 	for _, n := range m.Nodes {
-		header = append(header, headerCell(n.Host, layout.Center))
+		header = append(header, headerCol(n.Host))
 	}
 	rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, header...)
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, header...)
 	}))
 
-	// one row per "from" node.
+	// one row per "from" node: fixed label + equal-weight data cells.
 	for _, from := range m.Nodes {
 		from := from
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			cells := make([]layout.FlexChild, 0, len(m.Nodes)+1)
-			cells = append(cells, headerCell(from.Host, layout.E))
+			cells = append(cells, labelCell(from.Host))
 			for _, to := range m.Nodes {
 				switch {
 				case from.ID == to.ID:
@@ -191,7 +209,7 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 					}
 				}
 			}
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, cells...)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, cells...)
 		}))
 	}
 
