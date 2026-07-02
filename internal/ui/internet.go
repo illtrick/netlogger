@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -21,10 +22,19 @@ import (
 // tint returns c with its alpha replaced (for low-alpha fills behind badges).
 func tint(c color.NRGBA, a uint8) color.NRGBA { c.A = a; return c }
 
-func (st *testsState) internetSnapshot() (bool, bool, appcore.InternetResult, appcore.InternetProgress) {
+type internetView struct {
+	on   bool
+	have bool
+	res  appcore.InternetResult
+	prog appcore.InternetProgress
+	at   time.Time
+	host string
+}
+
+func (st *testsState) internetSnapshot() internetView {
 	st.internetMu.Lock()
 	defer st.internetMu.Unlock()
-	return st.internetOn, st.internetHave, st.internetRes, st.internetProg
+	return internetView{st.internetOn, st.internetHave, st.internetRes, st.internetProg, st.internetAt, st.internetHost}
 }
 
 // gradeColor maps an A–F bufferbloat grade to the severity palette.
@@ -41,13 +51,11 @@ func gradeColor(grade string) color.NRGBA {
 
 var upGreen = color.NRGBA{R: 0x7e, G: 0xe0, B: 0xa0, A: 0xff}
 
-// layoutInternet renders the Internet sub-view.
+// layoutInternet renders the Internet sub-view. The "from" row is a node picker:
+// the test can run on any online device (remote nodes report only the final
+// result over the control plane).
 func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
-	on, have, res, prog := st.internetSnapshot()
-	host := snap.SelfPeer.Host
-	if host == "" {
-		host = "this device"
-	}
+	v := st.internetSnapshot()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
@@ -60,59 +68,98 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ep := "LibreSpeed · auto"
 					switch {
-					case on && prog.Endpoint != "":
-						ep = prog.Endpoint
-					case res.Endpoint != "":
-						ep = res.Endpoint
+					case v.on && v.prog.Endpoint != "":
+						ep = v.prog.Endpoint
+					case v.res.Endpoint != "":
+						ep = v.res.Endpoint
 					}
 					return chipLabel(gtx, th, ep, colTextPri, colCardAlt)
-				}),
-				layout.Rigid(gapX(10)),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, "from "+host)
-					lbl.Color = colTextMut
-					return lbl.Layout(gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					label := "Run test"
-					if have {
+					if v.have {
 						label = "Run again"
 					}
-					if on {
+					if v.on {
 						label = "Running…"
 					}
 					return primaryBtn(gtx, th, &st.internetRun, label)
 				}),
 			)
 		}),
+		layout.Rigid(gap(10)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return nodePicker(gtx, th, st, snap)
+		}),
 		layout.Rigid(gap(16)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			switch {
-			case on:
+			case v.on:
 				// A run in progress always wins — showing a previous run's error
 				// here would read as "the retry already failed".
-				return internetLive(gtx, th, prog)
-			case res.Err != "":
-				lbl := material.Body2(th, "error: "+res.Err)
+				return internetLive(gtx, th, v)
+			case v.res.Err != "":
+				lbl := material.Body2(th, "error: "+v.res.Err)
 				lbl.Color = colBad
 				return lbl.Layout(gtx)
-			case !have:
+			case !v.have:
 				lbl := material.Caption(th, "no result yet — run a test")
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			default:
-				return internetResults(gtx, th, res)
+				return internetResults(gtx, th, v)
 			}
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return historyList(gtx, th, st.netHist)
 		}),
 	)
 }
 
-// internetResults lays out the metric cards, grade badge, and phase strip.
-func internetResults(gtx layout.Context, th *material.Theme, res appcore.InternetResult) layout.Dimensions {
+// nodePicker lets the operator choose which device runs the internet test.
+func nodePicker(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
+	nodes := append([]appcore.PeerInfo{snap.SelfPeer}, snap.Peers...)
+	ch := make([]layout.FlexChild, 0, len(nodes)+1)
+	ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Caption(th, "from")
+		lbl.Color = colTextSec
+		return lbl.Layout(gtx)
+	}), layout.Rigid(gapX(8)))
+	for i, n := range nodes {
+		n := n
+		selected := st.netNodeID == n.ID || (st.netNodeID == "" && i == 0)
+		c := clickFor(&st.nodeClicks, n.ID)
+		if c.Clicked(gtx) {
+			st.netNodeID = n.ID
+		}
+		label := n.Host
+		if i == 0 {
+			label += " · this device"
+		}
+		ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return navPill(gtx, th, c, label, selected)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
+}
+
+// internetResults lays out the metric cards, grade badge, phase strip, and the
+// measurement provenance (when + where it ran).
+func internetResults(gtx layout.Context, th *material.Theme, v internetView) layout.Dimensions {
+	res := v.res
 	loadedCol := colTextPri
 	if res.LoadedMs-res.IdleMs >= 60 {
 		loadedCol = colWatch
+	}
+	provenance := ""
+	if !v.at.IsZero() {
+		provenance = "measured " + v.at.Format("Jan 2 15:04")
+		if v.host != "" {
+			provenance += " · on " + v.host
+		}
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -130,6 +177,16 @@ func internetResults(gtx layout.Context, th *material.Theme, res appcore.Interne
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return gradeBadge(gtx, th, res) }),
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th, phaseAllDone) }),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if provenance == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, provenance)
+				lbl.Color = colTextMut
+				return lbl.Layout(gtx)
+			})
+		}),
 	)
 }
 
@@ -221,8 +278,15 @@ func gradeBadge(gtx layout.Context, th *material.Theme, res appcore.InternetResu
 
 // internetLive is the in-flight view: the same metric cards as the results, born
 // as "–" placeholders that fill in as each phase completes — the active
-// throughput card carries the live climbing rate.
-func internetLive(gtx layout.Context, th *material.Theme, prog appcore.InternetProgress) layout.Dimensions {
+// throughput card carries the live climbing rate. Remote runs report no
+// intermediate progress, so they get a plain running notice instead.
+func internetLive(gtx layout.Context, th *material.Theme, v internetView) layout.Dimensions {
+	if v.host != "" {
+		lbl := material.Caption(th, "running on "+v.host+" — a remote test reports only the final result")
+		lbl.Color = colTextSec
+		return lbl.Layout(gtx)
+	}
+	prog := v.prog
 	dash := func(v float64) string {
 		if v <= 0 {
 			return "–"

@@ -376,5 +376,8 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgre
 		launch()
 		report()
 	}
+	if sum, ok := sweepSummary(nodes, cells); ok {
+		a.recordTestResult(sum)
+	}
 	return SpeedMatrix{Nodes: nodes, Cells: cells}
 }

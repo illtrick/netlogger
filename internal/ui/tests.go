@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget/material"
 
 	"netlogger/internal/appcore"
+	"netlogger/internal/store"
 )
 
 type navTab int
@@ -99,6 +100,30 @@ type testsState struct {
 	internetHave bool
 	internetRes  appcore.InternetResult
 	internetProg appcore.InternetProgress // live phase/rate while a test runs
+	internetAt   time.Time                // when the last result landed
+	internetHost string                   // node the running/last test executed on
+
+	// Frame-thread-only view state (no background writers).
+	netNodeID  string                       // internet test target node ("" = this device)
+	nodeClicks map[string]*widget.Clickable // node-picker chips, keyed by node id
+	cellClicks map[string]*widget.Clickable // matrix cells, keyed From\x00To
+	selPairKey string                       // matrix pair opened for detail ("" = none)
+	netHist    []store.TestResult           // recent internet runs (newest first)
+	sweepHist  []store.TestResult           // recent sweep runs (newest first)
+	histAt     time.Time                    // last history refresh
+}
+
+// clickFor returns a persistent Clickable for key from m (allocating on first use).
+func clickFor(m *map[string]*widget.Clickable, key string) *widget.Clickable {
+	if *m == nil {
+		*m = make(map[string]*widget.Clickable)
+	}
+	c := (*m)[key]
+	if c == nil {
+		c = new(widget.Clickable)
+		(*m)[key] = c
+	}
+	return c
 }
 
 // cap returns the configured per-link cap, clamped to [stressCapMin, stressCapMax].
@@ -160,6 +185,59 @@ func layoutSubSeg(gtx layout.Context, th *material.Theme, st *testsState) layout
 		segSpec{click: &st.stressSeg, label: subLabel(1), active: st.sub == 1},
 		segSpec{click: &st.internetSeg, label: subLabel(2), active: st.sub == 2},
 	)
+}
+
+// historyList renders recent persisted test results as compact rows:
+// "Jul 2 14:06 · label · 581↓ 332↑ · detail".
+func historyList(gtx layout.Context, th *material.Theme, rows []store.TestResult) layout.Dimensions {
+	if len(rows) == 0 {
+		return layout.Dimensions{}
+	}
+	ch := make([]layout.FlexChild, 0, len(rows)+2)
+	ch = append(ch, layout.Rigid(gap(16)), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Caption(th, "Recent")
+		lbl.Color = colTextMut
+		return lbl.Layout(gtx)
+	}))
+	for _, r := range rows {
+		r := r
+		ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return roundedBG(gtx, colCardAlt, unit.Dp(6), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Caption(th, time.UnixMicro(r.TSUnixUS).Format("Jan 2 15:04"))
+							l.Color = colTextMut
+							gtx.Constraints.Min.X = gtx.Dp(unit.Dp(84))
+							return l.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Body2(th, r.Label)
+							l.Color = colTextPri
+							return l.Layout(gtx)
+						}),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Body2(th, fmt.Sprintf("%.0f↓ %.0f↑", r.DownMbit, r.UpMbit))
+							l.Color = colTextSec
+							return l.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if r.Detail == "" {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								l := material.Caption(th, r.Detail)
+								l.Color = colTextMut
+								return l.Layout(gtx)
+							})
+						}),
+					)
+				})
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
 }
 
 // sweepStatusLine describes a live sweep for the header caption. Pure.
@@ -244,9 +322,60 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutSpeedMatrix(gtx, th, matrix, active)
+			return layoutSpeedMatrix(gtx, th, st, matrix, active)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return pairDetail(gtx, th, st, matrix)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return historyList(gtx, th, st.sweepHist)
 		}),
 	)
+}
+
+// pairDetail shows the clicked matrix cell's full result: both directions plus
+// the TCP/UDP health numbers hidden inside the cell.
+func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix) layout.Dimensions {
+	if st.selPairKey == "" {
+		return layout.Dimensions{}
+	}
+	res, ok := m.Cells[st.selPairKey]
+	if !ok {
+		return layout.Dimensions{}
+	}
+	hostByID := make(map[string]string, len(m.Nodes))
+	for _, n := range m.Nodes {
+		hostByID[n.ID] = n.Host
+	}
+	from, to := st.selPairKey, ""
+	for i := 0; i < len(st.selPairKey); i++ {
+		if st.selPairKey[i] == 0 {
+			from, to = st.selPairKey[:i], st.selPairKey[i+1:]
+			break
+		}
+	}
+	txt := fmt.Sprintf("%s → %s   ↓ %.0f  ↑ %.0f Mbit/s   retransmits %d",
+		hostByID[from], hostByID[to], res.DownMbit, res.UpMbit, res.Retransmits)
+	if res.RTTms > 0 {
+		txt += fmt.Sprintf("   rtt %.1f ms", res.RTTms)
+	}
+	if res.JitterMs > 0 || res.LossPct > 0 {
+		txt += fmt.Sprintf("   jitter %.1f ms   loss %.1f%%", res.JitterMs, res.LossPct)
+	}
+	if res.Err != "" {
+		txt = fmt.Sprintf("%s → %s   error: %s", hostByID[from], hostByID[to], res.Err)
+	}
+	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return roundedBG(gtx, colCardAlt, unit.Dp(8), unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			l := material.Body2(th, txt)
+			l.Color = colTextPri
+			if res.Err != "" {
+				l.Color = colBad
+			}
+			return l.Layout(gtx)
+		})
+	})
 }
 
 // layoutStress renders the Stress sub-view: a full-mesh start/stop kill-switch
@@ -562,7 +691,8 @@ func speedKeyUI(from, to string) string { return from + "\x00" + to }
 // and a fixed row height. Every column (including the row-label column) uses an
 // equal flex weight so cells never bleed; a small inset is the gutter. Cells in
 // `active` are currently under test and render as a pulsing accent state.
-func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMatrix, active map[string]bool) layout.Dimensions {
+// Clicking a completed cell toggles the pair-detail panel below the grid.
+func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, active map[string]bool) layout.Dimensions {
 	if len(m.Nodes) == 0 {
 		return material.Body2(th, "no live devices").Layout(gtx)
 	}
@@ -601,34 +731,45 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 		})
 	}
 
-	// dataCell paints a rounded filled rect with a centered value and an optional
+	// cellBody paints a rounded filled rect with a centered value and an optional
 	// smaller second line (RTT, "slow", loss %), filling its equal-weight flex
 	// column and the fixed row height.
+	cellBody := func(bg, fg color.NRGBA, txt, sub string) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Max.X, cellH)
+			gtx.Constraints.Min = size
+			rect := image.Rectangle{Max: size}
+			paint.FillShape(gtx.Ops, bg, clip.UniformRRect(rect, gtx.Dp(unit.Dp(6))).Op(gtx.Ops))
+			layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, txt)
+						lbl.Color = fg
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if sub == "" {
+							return layout.Dimensions{}
+						}
+						lbl := material.Label(th, unit.Sp(10), sub)
+						lbl.Color = fg
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+			return layout.Dimensions{Size: size}
+		}
+	}
 	dataCell := func(bg, fg color.NRGBA, txt, sub string) layout.FlexChild {
 		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: gut, Bottom: gut}.Layout(gtx, cellBody(bg, fg, txt, sub))
+		})
+	}
+	// clickableCell is a dataCell that toggles the pair-detail panel.
+	clickableCell := func(c *widget.Clickable, bg, fg color.NRGBA, txt, sub string) layout.FlexChild {
+		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Right: gut, Bottom: gut}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				size := image.Pt(gtx.Constraints.Max.X, cellH)
-				gtx.Constraints.Min = size
-				rect := image.Rectangle{Max: size}
-				paint.FillShape(gtx.Ops, bg, clip.UniformRRect(rect, gtx.Dp(unit.Dp(6))).Op(gtx.Ops))
-				layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(th, txt)
-							lbl.Color = fg
-							return lbl.Layout(gtx)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if sub == "" {
-								return layout.Dimensions{}
-							}
-							lbl := material.Label(th, unit.Sp(10), sub)
-							lbl.Color = fg
-							return lbl.Layout(gtx)
-						}),
-					)
-				})
-				return layout.Dimensions{Size: size}
+				return material.Clickable(gtx, c, cellBody(bg, fg, txt, sub))
 			})
 		})
 	}
@@ -660,11 +801,24 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 					cells = append(cells, dataCell(colTestingBG, colAccent, "testing", "•••"))
 				default:
 					res, ok := m.Cells[key]
-					if ok && res.Err == "" {
-						cells = append(cells, dataCell(matrixCellColor(res.DownMbit), colBg, matrixCellText(res.DownMbit), matrixCellSub(res)))
-					} else {
+					if !ok {
 						cells = append(cells, dataCell(colCardAlt, colTextMut, "·", ""))
+						break
 					}
+					click := clickFor(&st.cellClicks, key)
+					if click.Clicked(gtx) {
+						if st.selPairKey == key {
+							st.selPairKey = "" // second click closes the detail
+						} else {
+							st.selPairKey = key
+						}
+					}
+					bg, fg, txt, sub := colCardAlt, colTextMut, "·", ""
+					if res.Err == "" {
+						bg, fg = matrixCellColor(res.DownMbit), colBg
+						txt, sub = matrixCellText(res.DownMbit), matrixCellSub(res)
+					}
+					cells = append(cells, clickableCell(click, bg, fg, txt, sub))
 				}
 			}
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, cells...)

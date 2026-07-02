@@ -176,12 +176,24 @@ func Run(a *appcore.App) error {
 				}
 				tst.internetMu.Unlock()
 				if !running {
-					self := snap.SelfPeer
+					// Run on the picked node (self by default). Remote nodes report
+					// only the final result, so mark the host for the running view.
+					node := snap.SelfPeer
+					for _, p := range snap.Peers {
+						if p.ID == tst.netNodeID {
+							node = p
+						}
+					}
+					remoteHost := ""
+					if node.ID != snap.SelfPeer.ID {
+						remoteHost = node.Host
+					}
 					tst.internetMu.Lock()
 					tst.internetProg = appcore.InternetProgress{}
+					tst.internetHost = remoteHost
 					tst.internetMu.Unlock()
 					go func() {
-						res := a.InternetTest(self, "auto", func(p appcore.InternetProgress) {
+						res := a.InternetTest(node, "auto", func(p appcore.InternetProgress) {
 							tst.internetMu.Lock()
 							tst.internetProg = p
 							tst.internetMu.Unlock()
@@ -191,6 +203,7 @@ func Run(a *appcore.App) error {
 						tst.internetRes = res
 						tst.internetHave = true
 						tst.internetOn = false
+						tst.internetAt = time.Now()
 						tst.internetMu.Unlock()
 						w.Invalidate()
 					}()
@@ -304,6 +317,13 @@ func Run(a *appcore.App) error {
 			var items []layout.Widget
 			switch nav {
 			case navTests:
+				// Refresh test history at most every 5s while the tab is visible
+				// (a tiny indexed LIMIT query; new runs surface within a tick).
+				if time.Since(tst.histAt) > 5*time.Second {
+					tst.netHist = a.TestHistory("internet", 5)
+					tst.sweepHist = a.TestHistory("sweep", 5)
+					tst.histAt = time.Now()
+				}
 				items = []layout.Widget{
 					gap(16),
 					cardSection(func(gtx layout.Context) layout.Dimensions { return layoutTests(gtx, th, &tst, snap) }),

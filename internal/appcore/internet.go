@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"netlogger/internal/store"
 )
 
 // InternetResult is a device→internet test outcome.
@@ -500,6 +502,13 @@ func (a *App) runLocalInternet(endpoint string, prog func(InternetProgress)) Int
 	done := a.markTestSpan("internet test", 0)
 	res := a.localInternet(endpoint, prog)
 	done()
+	if res.Err == "" {
+		a.recordTestResult(store.TestResult{
+			TSUnixUS: time.Now().UnixMicro(), Kind: "internet", Label: res.Endpoint,
+			DownMbit: res.DownMbit, UpMbit: res.UpMbit,
+			Detail: fmt.Sprintf("%s · idle %.0f ms · loaded %.0f ms", res.Grade, res.IdleMs, res.LoadedMs),
+		})
+	}
 	return res
 }
 
