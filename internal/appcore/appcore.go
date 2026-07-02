@@ -113,9 +113,10 @@ type App struct {
 	// FetchEvents fetches a peer's recent-event ring; defaults to an HTTP call.
 	FetchEvents func(baseURL string) ([]EventInfo, error)
 	// FetchSpeed asks a peer to run a speed test (defaults to postSpeedTest).
-	FetchSpeed func(baseURL string, req SpeedReq) (SpeedResult, error)
-	// localSpeed runs a speed test on this node (defaults to runSpeedTest+iperf.RunClient).
-	localSpeed  func(req SpeedReq) SpeedResult
+	FetchSpeed func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error)
+	// localSpeed runs a speed test on this node (defaults to runSpeedTest over
+	// a ctx-bound iperf.RunClientCtx so a stopped sweep kills the client).
+	localSpeed  func(ctx context.Context, req SpeedReq) SpeedResult
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
@@ -281,11 +282,13 @@ func New(dataDir string) *App {
 		FetchEvents: func(baseURL string) ([]EventInfo, error) {
 			return fetchEvents(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
-		FetchSpeed: func(baseURL string, req SpeedReq) (SpeedResult, error) {
-			return postSpeedTest(&http.Client{Timeout: 90 * time.Second}, baseURL, req)
+		FetchSpeed: func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
+			return postSpeedTest(ctx, &http.Client{Timeout: 90 * time.Second}, baseURL, req)
 		},
-		localSpeed: func(req SpeedReq) SpeedResult {
-			return runSpeedTest(iperf.RunClient, req.Target, req)
+		localSpeed: func(ctx context.Context, req SpeedReq) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
+				return iperf.RunClientCtx(ctx, t, o)
+			}, req.Target, req)
 		},
 		stressRunner: iperf.RunClientCtx,
 		FetchStressStart: func(baseURL string, o StressOpts) error {
@@ -436,8 +439,10 @@ func (a *App) Start() error {
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		mux.Handle("/api/events", eventsHandler(a.recentEvents))
 		mux.Handle("/api/lossbuckets", lossBucketsHandler(a.LossHeat))
-		mux.Handle("/api/speedtest", speedTestHandler(func(req SpeedReq) SpeedResult {
-			return runSpeedTest(iperf.RunClient, req.Target, req)
+		mux.Handle("/api/speedtest", speedTestHandler(func(ctx context.Context, req SpeedReq) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
+				return iperf.RunClientCtx(ctx, t, o) // orchestrator hangs up → iperf3 dies
+			}, req.Target, req)
 		}))
 		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
 		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))

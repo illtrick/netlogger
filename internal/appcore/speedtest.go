@@ -2,6 +2,7 @@ package appcore
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -138,8 +139,10 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 	return res
 }
 
-// speedTestHandler accepts POST SpeedReq and returns SpeedResult JSON.
-func speedTestHandler(do func(SpeedReq) SpeedResult) http.HandlerFunc {
+// speedTestHandler accepts POST SpeedReq and returns SpeedResult JSON. The
+// request context is threaded into the runner so a caller that stops its sweep
+// (dropping the connection) also kills the iperf3 client running here.
+func speedTestHandler(do func(context.Context, SpeedReq) SpeedResult) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -165,14 +168,21 @@ func speedTestHandler(do func(SpeedReq) SpeedResult) http.HandlerFunc {
 			req.CapMbit = 0
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(do(req))
+		_ = json.NewEncoder(w).Encode(do(r.Context(), req))
 	}
 }
 
 // postSpeedTest asks a remote node (baseURL = its control URL) to run a client.
-func postSpeedTest(client *http.Client, baseURL string, req SpeedReq) (SpeedResult, error) {
+// Cancelling ctx drops the connection, which cancels the remote handler's
+// request context and kills its iperf3 run.
+func postSpeedTest(ctx context.Context, client *http.Client, baseURL string, req SpeedReq) (SpeedResult, error) {
 	body, _ := json.Marshal(req)
-	resp, err := client.Post(baseURL+"/api/speedtest", "application/json", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/speedtest", bytes.NewReader(body))
+	if err != nil {
+		return SpeedResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return SpeedResult{}, err
 	}
@@ -190,16 +200,17 @@ func postSpeedTest(client *http.Client, baseURL string, req SpeedReq) (SpeedResu
 // SpeedTest orchestrates a single pair: it tells the `from` node to run an
 // iperf3 client against `targetAddr`. If `from` is this node, it runs locally;
 // otherwise it POSTs to the peer's control plane. Orchestrator-agnostic — the
-// caller need not be either endpoint.
-func (a *App) SpeedTest(from PeerInfo, targetAddr string, req SpeedReq) SpeedResult {
+// caller need not be either endpoint. Cancelling ctx aborts the run (local
+// iperf3 killed; remote request dropped, which kills the remote iperf3 too).
+func (a *App) SpeedTest(ctx context.Context, from PeerInfo, targetAddr string, req SpeedReq) SpeedResult {
 	// Node addresses are host:controlPort (e.g. 10.0.0.2:8088). iperf3's server
 	// listens on its own default port (5201) and `-c` wants a bare host, so strip
 	// the control port before handing the target to iperf3.
 	req.Target = iperfHost(targetAddr)
 	if from.ID == a.nodeID {
-		return a.localSpeed(req)
+		return a.localSpeed(ctx, req)
 	}
-	out, err := a.FetchSpeed("http://"+from.Addr, req)
+	out, err := a.FetchSpeed(ctx, "http://"+from.Addr, req)
 	if err != nil {
 		return SpeedResult{Err: err.Error()}
 	}
@@ -310,8 +321,10 @@ type SweepProgress struct {
 // the rest wait for a completion. This keeps parallelism on larger meshes
 // without the "server is busy" failures a plain semaphore produces.
 // onProgress (optional) is invoked from the scheduling goroutine after every
-// launch and completion, so a UI can fill the matrix in live.
-func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgress func(SweepProgress)) SpeedMatrix {
+// launch and completion, so a UI can fill the matrix in live. Cancelling ctx
+// stops the sweep: no new pairs launch, in-flight runs are killed, and the
+// partial result is returned (and not recorded to history).
+func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, req SpeedReq, onProgress func(SweepProgress)) SpeedMatrix {
 	nodes := speedNodes(self, peers)
 	pairs := speedPairs(nodes)
 	total := len(pairs)
@@ -346,6 +359,9 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgre
 		onProgress(p)
 	}
 	launch := func() {
+		if ctx.Err() != nil {
+			return // stopped — let in-flight runs drain, launch nothing new
+		}
 		for i := 0; i < len(pending); {
 			pr := pending[i]
 			if busy[pr.From.ID] || busy[pr.To.ID] {
@@ -360,7 +376,7 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgre
 			go func(pr SpeedPair, from PeerInfo) {
 				ch <- result{
 					key: speedKey(pr.From.ID, pr.To.ID), from: pr.From.ID, to: pr.To.ID,
-					res: a.SpeedTest(from, pr.To.Addr, req),
+					res: a.SpeedTest(ctx, from, pr.To.Addr, req),
 				}
 			}(pr, from)
 		}
@@ -376,8 +392,10 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgre
 		launch()
 		report()
 	}
-	if sum, ok := sweepSummary(nodes, cells); ok {
-		a.recordTestResult(sum)
+	if ctx.Err() == nil { // a stopped sweep is partial — don't record it
+		if sum, ok := sweepSummary(nodes, cells); ok {
+			a.recordTestResult(sum)
+		}
 	}
 	return SpeedMatrix{Nodes: nodes, Cells: cells}
 }

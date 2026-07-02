@@ -439,15 +439,36 @@ func lsUpload(ctx context.Context, client *http.Client, srv speedServer, live fu
 	})
 }
 
-// defaultInternetDeps auto-selects the nearest LibreSpeed server and wires the
-// real measurements against it. prog (optional) is notified while the server is
-// being selected (runInternet reports every later phase itself).
-func defaultInternetDeps(_ string, prog func(InternetProgress)) internetDeps {
+// SpeedServerNames lists the pre-loaded LibreSpeed servers for the endpoint
+// picker (auto-select is the UI's own first entry).
+func SpeedServerNames() []string {
+	names := make([]string, len(libreServers))
+	for i, s := range libreServers {
+		names[i] = s.Name
+	}
+	return names
+}
+
+// defaultInternetDeps wires the real measurements. endpoint may name one of the
+// pre-loaded servers to pin it; anything else (e.g. "auto") measures latency to
+// every server and picks the nearest. prog (optional) is notified while the
+// server is being selected (runInternet reports every later phase itself).
+func defaultInternetDeps(endpoint string, prog func(InternetProgress)) internetDeps {
 	client := testClient()
 	if prog != nil {
 		prog(InternetProgress{Phase: 0}) // selecting server
 	}
-	srv := pickServer(client)
+	var srv speedServer
+	pinned := false
+	for _, s := range libreServers {
+		if s.Name == endpoint {
+			srv, pinned = s, true
+			break
+		}
+	}
+	if !pinned {
+		srv = pickServer(client)
+	}
 	return internetDeps{
 		endpoint: "LibreSpeed · " + srv.Name,
 		idle:     func() float64 { return idleLatency(client, srv.Ping) },

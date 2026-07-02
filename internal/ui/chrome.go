@@ -62,10 +62,11 @@ func dragArea(gtx layout.Context, w layout.Widget) layout.Dimensions {
 // left, nav pills, the node-count status, and the window caption buttons on the
 // right. Empty stretches drag the window.
 func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav navTab, navDash, navTst, navEvt *widget.Clickable, cs *chromeState) layout.Dimensions {
+	barH := gtx.Dp(unit.Dp(44))
 	pill := func(b *widget.Clickable, t navTab) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return navPill(gtx, th, b, tabLabel(t), nav == t)
+			return layout.Inset{Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return navTabItem(gtx, th, b, tabLabel(t), nav == t, barH)
 			})
 		})
 	}
@@ -74,7 +75,6 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 		host = "this device"
 	}
 	status := fmt.Sprintf("%s · %d nodes online", host, len(s.Peers)+1)
-	barH := gtx.Dp(unit.Dp(44))
 
 	row := func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = barH
@@ -128,6 +128,52 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 	call.Add(gtx.Ops)
 	dims.Size.X = w
 	return dims
+}
+
+// navTabItem renders one top-level tab. The ACTIVE tab is drawn as a connected
+// tab: a top-rounded shape in the content background whose outline joins the
+// bar's bottom hairline — the grey line visibly wraps around the current tab.
+// Inactive tabs are plain muted labels, vertically centered in the bar.
+func navTabItem(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool, barH int) layout.Dimensions {
+	return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
+		return material.Clickable(gtx, c, func(gtx layout.Context) layout.Dimensions {
+			// Measure the label first so the tab hugs it.
+			lbl := material.Label(th, unit.Sp(14), label)
+			lbl.Color = colTextSec
+			if active {
+				lbl.Color = colTextPri
+				lbl.Font.Weight = 500
+			}
+			macro := op.Record(gtx.Ops)
+			lblDims := lbl.Layout(gtx)
+			lblCall := macro.Stop()
+
+			padX := gtx.Dp(unit.Dp(16))
+			w := lblDims.Size.X + 2*padX
+			size := image.Pt(w, barH)
+
+			if active {
+				// Tab shape: starts a little below the bar top, runs flush to the
+				// bar bottom, in the CONTENT background so it merges with the page.
+				top := gtx.Dp(unit.Dp(7))
+				r := gtx.Dp(unit.Dp(9))
+				outer := clip.RRect{Rect: image.Rect(0, top, w, barH), NE: r, NW: r}
+				inner := clip.RRect{Rect: image.Rect(1, top+1, w-1, barH), NE: r - 1, NW: r - 1}
+				paint.FillShape(gtx.Ops, colOutline, outer.Op(gtx.Ops)) // 1px outline (bottom left open)
+				paint.FillShape(gtx.Ops, colBg, inner.Op(gtx.Ops))      // page bg → visually connected
+			}
+			// Center the label in the full bar height (optically a touch lower
+			// inside the active tab, which starts below the bar top).
+			off := image.Pt((size.X-lblDims.Size.X)/2, (size.Y-lblDims.Size.Y)/2)
+			if active {
+				off.Y += gtx.Dp(unit.Dp(3))
+			}
+			t := op.Offset(off).Push(gtx.Ops)
+			lblCall.Add(gtx.Ops)
+			t.Pop()
+			return layout.Dimensions{Size: size}
+		})
+	})
 }
 
 // Caption glyph kinds, drawn with vector strokes (font-independent, crisp).

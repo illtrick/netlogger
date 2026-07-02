@@ -66,14 +66,47 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				}),
 				layout.Rigid(gapX(8)),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					ep := "LibreSpeed · auto"
+					// Dropdown trigger: shows the pinned server, or what the last/
+					// current run resolved "auto" to.
+					ep := "Auto · nearest server"
 					switch {
+					case st.epSel != "":
+						ep = st.epSel
 					case v.on && v.prog.Endpoint != "":
 						ep = v.prog.Endpoint
 					case v.res.Endpoint != "":
 						ep = v.res.Endpoint
 					}
-					return chipLabel(gtx, th, ep, colTextPri, colCardAlt)
+					if st.epBtn.Clicked(gtx) {
+						st.epOpen = !st.epOpen
+					}
+					car := "▾"
+					if st.epOpen {
+						car = "▴"
+					}
+					return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
+						return material.Clickable(gtx, &st.epBtn, func(gtx layout.Context) layout.Dimensions {
+							return widget.Border{Color: colOutline, Width: unit.Dp(1), CornerRadius: unit.Dp(7)}.Layout(gtx,
+								func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx,
+										func(gtx layout.Context) layout.Dimensions {
+											return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													l := material.Body2(th, ep)
+													l.Color = colTextPri
+													return l.Layout(gtx)
+												}),
+												layout.Rigid(gapX(6)),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													l := material.Caption(th, car)
+													l.Color = colTextMut
+													return l.Layout(gtx)
+												}),
+											)
+										})
+								})
+						})
+					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -87,6 +120,12 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 					return primaryBtn(gtx, th, &st.internetRun, label)
 				}),
 			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !st.epOpen {
+				return layout.Dimensions{}
+			}
+			return endpointOptions(gtx, th, st)
 		}),
 		layout.Rigid(gap(10)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -115,6 +154,61 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 			return historyList(gtx, th, st.netHist)
 		}),
 	)
+}
+
+// endpointOptions is the expanded endpoint dropdown: Auto plus every pre-loaded
+// LibreSpeed server. Selecting an entry pins it for subsequent runs.
+func endpointOptions(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	options := append([]string{"Auto · nearest server"}, appcore.SpeedServerNames()...)
+	rows := make([]layout.FlexChild, 0, len(options))
+	for i, name := range options {
+		i, name := i, name
+		sel := (i == 0 && st.epSel == "") || st.epSel == name
+		c := clickFor(&st.epClicks, name)
+		if c.Clicked(gtx) {
+			if i == 0 {
+				st.epSel = ""
+			} else {
+				st.epSel = name
+			}
+			st.epOpen = false
+		}
+		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
+				return material.Clickable(gtx, c, func(gtx layout.Context) layout.Dimensions {
+					bg := color.NRGBA{}
+					if sel {
+						bg = colCard
+					}
+					return roundedBG(gtx, bg, unit.Dp(6), unit.Dp(0), func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return layout.Inset{Top: unit.Dp(7), Bottom: unit.Dp(7), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx,
+							func(gtx layout.Context) layout.Dimensions {
+								mark := "   "
+								if sel {
+									mark = "✓ "
+								}
+								l := material.Body2(th, mark+name)
+								l.Color = colTextPri
+								if !sel {
+									l.Color = colTextSec
+								}
+								return l.Layout(gtx)
+							})
+					})
+				})
+			})
+		}))
+	}
+	return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return widget.Border{Color: colOutline, Width: unit.Dp(1), CornerRadius: unit.Dp(8)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return roundedBG(gtx, colCardAlt, unit.Dp(8), unit.Dp(4), func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+				})
+			})
+	})
 }
 
 // nodePicker lets the operator choose which device runs the internet test.

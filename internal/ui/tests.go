@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -66,13 +67,15 @@ func stressHealthColor(aborted bool) color.NRGBA {
 // mu guards matrix/haveMatrix/running/status because SpeedSweep runs on a
 // background goroutine while the UI reads these every frame.
 type testsState struct {
-	runBtn     widget.Clickable
-	mu         sync.Mutex
-	matrix     appcore.SpeedMatrix
-	haveMatrix bool
-	running    bool
-	status     string
-	sweep      appcore.SweepProgress // live fill while a sweep runs (guarded by mu)
+	runBtn      widget.Clickable
+	sweepStop   widget.Clickable
+	mu          sync.Mutex
+	matrix      appcore.SpeedMatrix
+	haveMatrix  bool
+	running     bool
+	status      string
+	sweep       appcore.SweepProgress // live fill while a sweep runs (guarded by mu)
+	sweepCancel context.CancelFunc    // stops the running sweep (guarded by mu)
 
 	sub         int // 0 Speed, 1 Stress, 2 Internet (placeholder until Build #3)
 	speedSeg    widget.Clickable
@@ -106,6 +109,10 @@ type testsState struct {
 	// Frame-thread-only view state (no background writers).
 	netNodeID  string                       // internet test target node ("" = this device)
 	nodeClicks map[string]*widget.Clickable // node-picker chips, keyed by node id
+	epBtn      widget.Clickable             // endpoint dropdown trigger
+	epOpen     bool                         // endpoint dropdown expanded
+	epSel      string                       // pinned server name ("" = auto)
+	epClicks   map[string]*widget.Clickable // endpoint option rows
 	cellClicks map[string]*widget.Clickable // matrix cells, keyed From\x00To
 	selPairKey string                       // matrix pair opened for detail ("" = none)
 	netHist    []store.TestResult           // recent internet runs (newest first)
@@ -300,7 +307,7 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if running {
-						return busyBtn(gtx, th, &st.runBtn, "Running…")
+						return dangerBtn(gtx, th, &st.sweepStop, "Stop")
 					}
 					return primaryBtn(gtx, th, &st.runBtn, "Run all pairs")
 				}),

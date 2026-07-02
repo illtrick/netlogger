@@ -34,3 +34,12 @@ func TestSubViewLabel(t *testing.T) {
 		t.Fatalf("sub-view labels wrong")
 	}
 }
+
+func TestCoarseAge(t *testing.T) {
+	if coarseAge(42_000_000) != "42s ago" || coarseAge(310_000_000) != "5m ago" || coarseAge(7_300_000_000) != "2h ago" {
+		t.Fatalf("coarse ages wrong: %s %s %s", coarseAge(42_000_000), coarseAge(310_000_000), coarseAge(7_300_000_000))
+	}
+	if coarseAge(-5) != "0s ago" {
+		t.Fatalf("negative age should clamp")
+	}
+}

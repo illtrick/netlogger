@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"os"
@@ -156,16 +157,18 @@ func Run(a *appcore.App) error {
 			if tst.runBtn.Clicked(gtx) {
 				tst.mu.Lock()
 				alreadyRunning := tst.running
+				var ctx context.Context
 				if !alreadyRunning {
 					tst.running = true
 					tst.status = "running matrix…"
+					ctx, tst.sweepCancel = context.WithCancel(context.Background())
 				}
 				tst.mu.Unlock()
 				if !alreadyRunning {
 					self, peers := snap.SelfPeer, snap.Peers
 					go func() {
 						done := a.BeginSpeedTestNote()
-						m := a.SpeedSweep(self, peers,
+						m := a.SpeedSweep(ctx, self, peers,
 							appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2},
 							func(p appcore.SweepProgress) { // live matrix fill
 								tst.mu.Lock()
@@ -174,16 +177,28 @@ func Run(a *appcore.App) error {
 								w.Invalidate()
 							})
 						done()
+						status := "completed " + time.Now().Format("15:04")
+						if ctx.Err() != nil {
+							status = "stopped — partial results"
+						}
 						tst.mu.Lock()
 						tst.matrix = m
 						tst.haveMatrix = true
 						tst.running = false
-						tst.status = "done"
+						tst.status = status
 						tst.sweep = appcore.SweepProgress{}
+						tst.sweepCancel = nil
 						tst.mu.Unlock()
 						w.Invalidate()
 					}()
 				}
+			}
+			if tst.sweepStop.Clicked(gtx) {
+				tst.mu.Lock()
+				if tst.sweepCancel != nil {
+					tst.sweepCancel() // kills local iperf3 + drops remote requests
+				}
+				tst.mu.Unlock()
 			}
 			if tst.speedSeg.Clicked(gtx) {
 				tst.sub = 0
@@ -214,12 +229,16 @@ func Run(a *appcore.App) error {
 					if node.ID != snap.SelfPeer.ID {
 						remoteHost = node.Host
 					}
+					endpoint := tst.epSel // pinned server name, or "" → auto
+					if endpoint == "" {
+						endpoint = "auto"
+					}
 					tst.internetMu.Lock()
 					tst.internetProg = appcore.InternetProgress{}
 					tst.internetHost = remoteHost
 					tst.internetMu.Unlock()
 					go func() {
-						res := a.InternetTest(node, "auto", func(p appcore.InternetProgress) {
+						res := a.InternetTest(node, endpoint, func(p appcore.InternetProgress) {
 							tst.internetMu.Lock()
 							tst.internetProg = p
 							tst.internetMu.Unlock()
@@ -612,21 +631,37 @@ func powerSavingOn(v string) bool {
 // first) so faults — link drops, speed renegotiations, discard spikes — are
 // visible at a glance without exporting. Offline events are vermillion.
 func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
-	if len(s.Events) == 0 {
-		return sectionTitle(gtx, th, "Recent events (mesh-wide): (none yet)")
-	}
 	now := time.Now().UnixMicro()
-	const maxRows = 10
-	children := make([]layout.FlexChild, 0, maxRows+1)
+	children := make([]layout.FlexChild, 0, 32)
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return sectionTitle(gtx, th, "Recent events (mesh-wide)")
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return material.Body1(th, "Events").Layout(gtx)
+			}),
+			layout.Rigid(gapX(10)),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(th, fmt.Sprintf("mesh-wide · %d recorded", len(s.Events)))
+				l.Color = colTextMut
+				return l.Layout(gtx)
+			}),
+		)
 	}))
+	if len(s.Events) == 0 {
+		children = append(children, layout.Rigid(gap(10)), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Caption(th, "none yet — link flaps, loss episodes, and test runs land here")
+			l.Color = colTextMut
+			return l.Layout(gtx)
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	}
+	children = append(children, layout.Rigid(gap(6)))
+	const maxRows = 25
 	shown := 0
 	for i := len(s.Events) - 1; i >= 0 && shown < maxRows; i-- {
 		e := s.Events[i]
 		shown++
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return eventRow(gtx, th, e, now)
 			})
 		}))
@@ -634,8 +669,20 @@ func layoutEvents(gtx layout.Context, th *material.Theme, s appcore.Snapshot) la
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-// eventRow renders one merged event: a severity dot, the relative time (mono),
-// a host chip, and the detail.
+// eventCol lays a fixed-width, vertically-centered column so event rows align
+// into a scannable table.
+func eventCol(width int, w layout.Widget) layout.FlexChild {
+	return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = width
+		gtx.Constraints.Max.X = width
+		dims := w(gtx)
+		dims.Size.X = width
+		return dims
+	})
+}
+
+// eventRow renders one merged event as an aligned table row: severity dot ·
+// absolute time · relative age · host · detail. Offline events tint the detail.
 func eventRow(gtx layout.Context, th *material.Theme, e appcore.MergedEvent, now int64) layout.Dimensions {
 	dotCol := colGood
 	if !e.Online {
@@ -646,30 +693,54 @@ func eventRow(gtx layout.Context, th *material.Theme, e appcore.MergedEvent, now
 		host = "?"
 	}
 	return roundedBG(gtx, colCardAlt, unit.Dp(6), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(dotWidget(dotCol, 8)),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					l := material.Label(th, unit.Sp(12), eventAge(e, now))
-					l.Color = colTextMut
-					l.Font.Typeface = "Go Mono"
-					return l.Layout(gtx)
-				})
+			layout.Rigid(gapX(10)),
+			eventCol(gtx.Dp(unit.Dp(66)), func(gtx layout.Context) layout.Dimensions {
+				l := material.Label(th, unit.Sp(12), time.UnixMicro(e.UnixMicro).Format("15:04:05"))
+				l.Color = colTextSec
+				l.Font.Typeface = "Go Mono"
+				return l.Layout(gtx)
 			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			eventCol(gtx.Dp(unit.Dp(64)), func(gtx layout.Context) layout.Dimensions {
+				l := material.Label(th, unit.Sp(11), coarseAge(now-e.UnixMicro))
+				l.Color = colTextMut
+				return l.Layout(gtx)
+			}),
+			eventCol(gtx.Dp(unit.Dp(104)), func(gtx layout.Context) layout.Dimensions {
+				return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return chipLabel(gtx, th, host, colTextSec, colCard)
 				})
 			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					l := material.Label(th, unit.Sp(13), e.Detail)
-					l.Color = colTextPri
-					return l.Layout(gtx)
-				})
+			layout.Rigid(gapX(6)),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				l := material.Label(th, unit.Sp(13), e.Detail)
+				l.Color = colTextPri
+				if !e.Online {
+					l.Color = colBad
+				}
+				return l.Layout(gtx)
 			}),
 		)
 	})
+}
+
+// coarseAge renders an age in a single unit ("42s ago", "5m ago", "3h ago") —
+// double-unit precision is noise at a glance.
+func coarseAge(ageMicro int64) string {
+	sec := ageMicro / 1_000_000
+	if sec < 0 {
+		sec = 0
+	}
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds ago", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm ago", sec/60)
+	default:
+		return fmt.Sprintf("%dh ago", sec/3600)
+	}
 }
 
 // eventAge renders an event's age as "<dur> ago" relative to nowMicro.

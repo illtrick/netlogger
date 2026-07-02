@@ -1,6 +1,7 @@
 package appcore
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,7 +48,7 @@ func TestSpeedTestHandlerRoundTrip(t *testing.T) {
 	run := func(target string, o iperf.Opts) (iperf.Result, error) {
 		return iperf.Result{SumBitsPerSec: 500e6}, nil
 	}
-	h := speedTestHandler(func(req SpeedReq) SpeedResult { return runSpeedTest(run, req.Target, req) })
+	h := speedTestHandler(func(_ context.Context, req SpeedReq) SpeedResult { return runSpeedTest(run, req.Target, req) })
 
 	body := `{"target":"10.0.0.5","direction":"up","streams":4,"duration_s":3}`
 	rr := httptest.NewRecorder()
@@ -65,7 +66,7 @@ func TestSpeedTestHandlerRoundTrip(t *testing.T) {
 }
 
 func TestSpeedTestHandlerRejectsGet(t *testing.T) {
-	h := speedTestHandler(func(req SpeedReq) SpeedResult { return SpeedResult{} })
+	h := speedTestHandler(func(_ context.Context, req SpeedReq) SpeedResult { return SpeedResult{} })
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/api/speedtest", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -75,18 +76,18 @@ func TestSpeedTestHandlerRejectsGet(t *testing.T) {
 
 func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 	a := &App{nodeID: "self", host: "ryzen"}
-	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{UpMbit: 111, Proto: "tcp"} }
+	a.localSpeed = func(_ context.Context, req SpeedReq) SpeedResult { return SpeedResult{UpMbit: 111, Proto: "tcp"} }
 	var gotURL string
-	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) {
+	a.FetchSpeed = func(_ context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
 		gotURL = baseURL
 		return SpeedResult{UpMbit: 222}, nil
 	}
 
-	local := a.SpeedTest(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
+	local := a.SpeedTest(context.Background(), PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
 	if local.UpMbit != 111 {
 		t.Fatalf("self-from should run locally, got %v", local.UpMbit)
 	}
-	remote := a.SpeedTest(PeerInfo{ID: "p1", Host: "proj", Addr: "10.0.0.2:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
+	remote := a.SpeedTest(context.Background(), PeerInfo{ID: "p1", Host: "proj", Addr: "10.0.0.2:8088"}, "10.0.0.9", SpeedReq{Direction: "up"})
 	if remote.UpMbit != 222 || gotURL != "http://10.0.0.2:8088" {
 		t.Fatalf("peer-from should POST to peer, got %v url=%q", remote.UpMbit, gotURL)
 	}
@@ -95,10 +96,10 @@ func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 func TestSpeedTestStripsControlPortForIperf(t *testing.T) {
 	a := &App{nodeID: "self"}
 	var gotTarget string
-	a.localSpeed = func(req SpeedReq) SpeedResult { gotTarget = req.Target; return SpeedResult{} }
+	a.localSpeed = func(_ context.Context, req SpeedReq) SpeedResult { gotTarget = req.Target; return SpeedResult{} }
 	// Self is the From node → runs locally; the iperf target must be the bare host
 	// (control port 8088 stripped) so iperf3 hits the peer's :5201 server.
-	a.SpeedTest(PeerInfo{ID: "self"}, "10.0.0.2:8088", SpeedReq{Direction: "down"})
+	a.SpeedTest(context.Background(), PeerInfo{ID: "self"}, "10.0.0.2:8088", SpeedReq{Direction: "down"})
 	if gotTarget != "10.0.0.2" {
 		t.Fatalf("iperf target = %q, want 10.0.0.2 (control port stripped)", gotTarget)
 	}
@@ -173,7 +174,7 @@ func TestRunSpeedTestBothDownLegFails(t *testing.T) {
 
 func TestSpeedTestHandlerClampsDuration(t *testing.T) {
 	var seen SpeedReq
-	h := speedTestHandler(func(req SpeedReq) SpeedResult { seen = req; return SpeedResult{} })
+	h := speedTestHandler(func(_ context.Context, req SpeedReq) SpeedResult { seen = req; return SpeedResult{} })
 	for _, body := range []string{
 		`{"target":"h","direction":"up","duration_s":0}`,
 		`{"target":"h","direction":"up","duration_s":120}`,
@@ -188,8 +189,8 @@ func TestSpeedTestHandlerClampsDuration(t *testing.T) {
 
 func TestSpeedSweepZeroPeers(t *testing.T) {
 	a := &App{nodeID: "self"}
-	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{} }
-	m := a.SpeedSweep(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"}, nil)
+	a.localSpeed = func(_ context.Context, req SpeedReq) SpeedResult { return SpeedResult{} }
+	m := a.SpeedSweep(context.Background(), PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"}, nil)
 	if len(m.Nodes) != 1 || len(m.Cells) != 0 {
 		t.Fatalf("zero-peer sweep: nodes=%d cells=%d, want 1/0", len(m.Nodes), len(m.Cells))
 	}
@@ -244,13 +245,13 @@ func TestSpeedSweepEndpointExclusive(t *testing.T) {
 	}
 
 	a := &App{nodeID: "self"}
-	a.localSpeed = func(req SpeedReq) SpeedResult {
+	a.localSpeed = func(_ context.Context, req SpeedReq) SpeedResult {
 		enter("10.0.0.1", req.Target)
 		time.Sleep(5 * time.Millisecond)
 		leave("10.0.0.1", req.Target)
 		return SpeedResult{DownMbit: 900}
 	}
-	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) {
+	a.FetchSpeed = func(_ context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
 		from := norm(baseURL)
 		enter(from, req.Target)
 		time.Sleep(5 * time.Millisecond)
@@ -263,7 +264,7 @@ func TestSpeedSweepEndpointExclusive(t *testing.T) {
 		{ID: "p1", Host: "b", Addr: "10.0.0.2:8088"},
 		{ID: "p2", Host: "c", Addr: "10.0.0.3:8088"},
 	}
-	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 1}, nil)
+	m := a.SpeedSweep(context.Background(), self, peers, SpeedReq{Direction: "down", DurationS: 1}, nil)
 	if len(m.Cells) != 6 { // 3 nodes → 6 directed pairs
 		t.Fatalf("cells = %d, want 6", len(m.Cells))
 	}
@@ -271,12 +272,14 @@ func TestSpeedSweepEndpointExclusive(t *testing.T) {
 
 func TestSpeedSweepRunsEveryPair(t *testing.T) {
 	a := &App{nodeID: "self"}
-	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{DownMbit: 900} }
-	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) { return SpeedResult{DownMbit: 500}, nil }
+	a.localSpeed = func(_ context.Context, req SpeedReq) SpeedResult { return SpeedResult{DownMbit: 900} }
+	a.FetchSpeed = func(_ context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
+		return SpeedResult{DownMbit: 500}, nil
+	}
 
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
 	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
-	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 3}, nil)
+	m := a.SpeedSweep(context.Background(), self, peers, SpeedReq{Direction: "down", DurationS: 3}, nil)
 
 	if len(m.Nodes) != 2 {
 		t.Fatalf("nodes = %d, want 2", len(m.Nodes))
