@@ -12,6 +12,7 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
+	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -27,8 +28,9 @@ import (
 func Run(a *appcore.App) error {
 	w := new(app.Window)
 	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)),
-		app.MinSize(unit.Dp(760), unit.Dp(520))) // keep the layout from squishing into overlap
-	applyDarkTitleBar("NetLogger") // match the native chrome to the dark app surface
+		app.MinSize(unit.Dp(760), unit.Dp(520)), // keep the layout from squishing into overlap
+		app.Decorated(false))                    // the app bar IS the title bar (brand·nav·status·caption)
+	applyDarkTitleBar("NetLogger") // window icon, rounded corners, close-to-tray hook
 	stopTray := startTray("NetLogger")
 	defer stopTray()
 
@@ -63,12 +65,15 @@ func Run(a *appcore.App) error {
 	var nav navTab = navDashboard
 	var navDash, navTst, navEvt widget.Clickable
 	var tst testsState
+	var chrome chromeState
 
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
 		case app.DestroyEvent:
 			return e.Err
+		case app.ConfigEvent:
+			chrome.maximized = e.Config.Mode == app.Maximized
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			paint.Fill(gtx.Ops, colBg)
@@ -123,6 +128,21 @@ func Run(a *appcore.App) error {
 			if hNow.Clicked(gtx) && heatView.Buckets > 0 { // just scroll to now, no zoom change
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
+			}
+			if chrome.minBtn.Clicked(gtx) {
+				w.Perform(system.ActionMinimize)
+			}
+			if chrome.maxBtn.Clicked(gtx) {
+				if chrome.maximized {
+					w.Perform(system.ActionUnmaximize)
+				} else {
+					w.Perform(system.ActionMaximize)
+				}
+			}
+			if chrome.closeBtn.Clicked(gtx) {
+				// Close-to-tray. Asynchronous on purpose: ShowWindow from the frame
+				// handler would deadlock the window's message thread.
+				go hideMainWindow("NetLogger")
 			}
 			if navDash.Clicked(gtx) {
 				nav = nextTab(nav, navDashboard)
@@ -349,7 +369,7 @@ func Run(a *appcore.App) error {
 			// edge to edge.
 			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt)
+					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt, &chrome)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

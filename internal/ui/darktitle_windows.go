@@ -44,13 +44,22 @@ func applyDarkTitleBar(title string) {
 		if err != nil {
 			return
 		}
-		const dwmwaUseImmersiveDarkMode = 20 // Windows 10 2004+ / Windows 11
+		const (
+			dwmwaUseImmersiveDarkMode = 20 // Windows 10 2004+ / Windows 11
+			dwmwaWindowCornerPref     = 33 // Windows 11
+			dwmwcpRound               = 2
+		)
 		for i := 0; i < 50; i++ {
 			hwnd, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(t)))
 			if hwnd != 0 {
 				dark := int32(1)
 				_, _, _ = procDwmSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode,
 					uintptr(unsafe.Pointer(&dark)), unsafe.Sizeof(dark))
+				// The window is undecorated (the app draws its own title bar);
+				// ask DWM for Win11 rounded corners + shadow so it still looks native.
+				corner := int32(dwmwcpRound)
+				_, _, _ = procDwmSetWindowAttribute.Call(hwnd, dwmwaWindowCornerPref,
+					uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
 				setWindowIcon(hwnd)
 				installCloseToTray(hwnd)
 				return
