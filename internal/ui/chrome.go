@@ -36,8 +36,8 @@ func brand(gtx layout.Context, th *material.Theme) layout.Dimensions {
 }
 
 // titleBar is the fixed top bar: brand on the left, nav pills in the middle, and
-// the node-count status + Tray control on the right, on a colTitleBar surface.
-func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav navTab, navDash, navTst, navEvt, trayBtn *widget.Clickable) layout.Dimensions {
+// the node-count status on the right, on a colTitleBar surface.
+func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav navTab, navDash, navTst, navEvt *widget.Clickable) layout.Dimensions {
 	pill := func(b *widget.Clickable, t navTab) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -63,10 +63,6 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 						l := material.Label(th, unit.Sp(12), status)
 						l.Color = colTextMut
 						return l.Layout(gtx)
-					}),
-					layout.Rigid(gapX(12)),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ghostBtn(gtx, th, trayBtn, "Tray")
 					}),
 				)
 			})

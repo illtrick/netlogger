@@ -160,6 +160,7 @@ func startTray(mainTitle string) (stop func()) {
 						showMainWindow(mainTitle)
 					case menuIDQuit:
 						if main := mainWindowHWND(mainTitle); main != 0 {
+							allowAppClose()                   // bypass close-to-tray for a real quit
 							procShowWindow.Call(main, swShow) // Gio needs a visible window to close cleanly
 							procPostMessageW.Call(main, wmClose, 0, 0)
 						}

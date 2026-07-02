@@ -43,7 +43,7 @@ func Run(a *appcore.App) error {
 		}
 	}()
 
-	var resetBtn, exportBtn, sleepBtn, trayBtn widget.Clickable
+	var resetBtn, exportBtn, sleepBtn widget.Clickable
 	var statusMsg string
 	// One scroll list per tab so switching tabs never inherits a stale offset.
 	var tabLists [3]widget.List
@@ -123,9 +123,6 @@ func Run(a *appcore.App) error {
 			if hNow.Clicked(gtx) && heatView.Buckets > 0 { // just scroll to now, no zoom change
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
-			}
-			if trayBtn.Clicked(gtx) {
-				hideMainWindow("NetLogger") // monitoring continues; tray icon reopens
 			}
 			if navDash.Clicked(gtx) {
 				nav = nextTab(nav, navDashboard)
@@ -352,7 +349,7 @@ func Run(a *appcore.App) error {
 			// edge to edge.
 			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt, &trayBtn)
+					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
