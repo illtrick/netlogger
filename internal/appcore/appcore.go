@@ -176,7 +176,7 @@ type App struct {
 	startLocalStress  func(StressOpts) error
 
 	// Internet test seams.
-	localInternet func(endpoint string) InternetResult
+	localInternet func(endpoint string, prog func(InternetProgress)) InternetResult
 	FetchInternet func(baseURL, endpoint string) (InternetResult, error)
 
 	// eventMu (leaf) guards an in-memory ring of the most recent connectivity
@@ -297,8 +297,8 @@ func New(dataDir string) *App {
 		FetchStressStatus: func(baseURL string) (StressStatus, error) {
 			return fetchStressStatus(&http.Client{Timeout: 3 * time.Second}, baseURL)
 		},
-		localInternet: func(endpoint string) InternetResult {
-			return runInternet(defaultInternetDeps(endpoint))
+		localInternet: func(endpoint string, prog func(InternetProgress)) InternetResult {
+			return runInternet(defaultInternetDeps(endpoint, prog), prog)
 		},
 		FetchInternet: func(baseURL, endpoint string) (InternetResult, error) {
 			// Must exceed the remote's full test: server pick + idle baseline +
@@ -442,7 +442,9 @@ func (a *App) Start() error {
 		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
 		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))
 		mux.Handle("/api/stress/status", stressStatusHandler(a.stressStatusLocal))
-		mux.Handle("/api/internet", internetHandler(a.runLocalInternet))
+		mux.Handle("/api/internet", internetHandler(func(ep string) InternetResult {
+			return a.runLocalInternet(ep, nil) // remote callers get only the final result
+		}))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}

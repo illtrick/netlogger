@@ -66,6 +66,15 @@ func internetResult(endpoint string, down, up, idle, loaded, jitter, loss float6
 	}
 }
 
+// InternetProgress is a live update from a running internet test: which phase is
+// active (0 select server · 1 idle latency · 2 download · 3 upload) and, during a
+// throughput phase, the instantaneous rate so the UI can show a climbing number.
+type InternetProgress struct {
+	Phase    int
+	LiveMbit float64
+	Endpoint string
+}
+
 // internetDeps are the injectable network measurements (real impls hit LibreSpeed).
 type internetDeps struct {
 	endpoint string
@@ -75,12 +84,20 @@ type internetDeps struct {
 }
 
 // runInternet runs the three phases (idle → download → upload) and grades the
-// result. Pure orchestration over the injected measurements.
-func runInternet(d internetDeps) InternetResult {
+// result. Pure orchestration over the injected measurements. prog is optional.
+func runInternet(d internetDeps, prog func(InternetProgress)) InternetResult {
+	report := func(phase int, mbit float64) {
+		if prog != nil {
+			prog(InternetProgress{Phase: phase, LiveMbit: mbit, Endpoint: d.endpoint})
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
+	report(1, 0)
 	idle := d.idle()
+	report(2, 0)
 	down, ld, derr := d.download(ctx)
+	report(3, 0)
 	up, lu, uerr := d.upload(ctx)
 	loaded := ld
 	if lu > loaded {
@@ -267,8 +284,9 @@ func (z *zeroReader) Read(p []byte) (int, error) {
 // latency at pingURL during the measurement window. Returns steady-state Mbit/s
 // and the median loaded latency. In-flight transfers are cancelled the moment the
 // window ends (a stream mid-100MB-chunk on a slow link would otherwise block the
-// phase for minutes and burn the shared ctx budget).
-func streamThroughput(ctx context.Context, client *http.Client, streams int, pingURL string, do func(ctx context.Context, total *int64) error) (float64, float64, error) {
+// phase for minutes and burn the shared ctx budget). live (optional) receives the
+// running rate a few times a second so a UI can show the number climbing.
+func streamThroughput(ctx context.Context, client *http.Client, streams int, pingURL string, live func(mbit float64), do func(ctx context.Context, total *int64) error) (float64, float64, error) {
 	phaseCtx, cancelPhase := context.WithCancel(ctx)
 	defer cancelPhase()
 
@@ -306,9 +324,20 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, pin
 		}()
 	}
 
-	select {
-	case <-time.After(lsWarmup):
-	case <-phaseCtx.Done():
+	// Warm-up: discarded from the measurement, but reported live so the number
+	// visibly ramps like any speed test.
+	tStart := time.Now()
+	warmDeadline := tStart.Add(lsWarmup)
+	for time.Now().Before(warmDeadline) && phaseCtx.Err() == nil {
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-phaseCtx.Done():
+		}
+		if live != nil {
+			if el := time.Since(tStart).Seconds(); el > 0 {
+				live(float64(atomic.LoadInt64(&total)) * 8 / 1e6 / el)
+			}
+		}
 	}
 	b0 := atomic.LoadInt64(&total)
 	t0 := time.Now()
@@ -317,6 +346,11 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, pin
 	for time.Now().Before(deadline) && phaseCtx.Err() == nil {
 		if m := latencyMs(client, pingURL); m > 0 {
 			lat = append(lat, m)
+		}
+		if live != nil {
+			if el := time.Since(t0).Seconds(); el > 0.2 {
+				live(float64(atomic.LoadInt64(&total)-b0) * 8 / 1e6 / el)
+			}
 		}
 		select {
 		case <-time.After(200 * time.Millisecond):
@@ -343,9 +377,9 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, pin
 	return float64(b1-b0) * 8 / 1e6 / dt, median(lat), nil
 }
 
-func lsDownload(ctx context.Context, client *http.Client, srv speedServer) (float64, float64, error) {
+func lsDownload(ctx context.Context, client *http.Client, srv speedServer, live func(float64)) (float64, float64, error) {
 	url := fmt.Sprintf("%s?ckSize=%d", srv.DLURL, lsDownCkMB)
-	return streamThroughput(ctx, client, lsDownStreams, srv.Ping, func(ctx context.Context, total *int64) error {
+	return streamThroughput(ctx, client, lsDownStreams, srv.Ping, live, func(ctx context.Context, total *int64) error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		resp, err := client.Do(req)
 		if err != nil {
@@ -361,8 +395,8 @@ func lsDownload(ctx context.Context, client *http.Client, srv speedServer) (floa
 	})
 }
 
-func lsUpload(ctx context.Context, client *http.Client, srv speedServer) (float64, float64, error) {
-	return streamThroughput(ctx, client, lsUpStreams, srv.Ping, func(ctx context.Context, total *int64) error {
+func lsUpload(ctx context.Context, client *http.Client, srv speedServer, live func(float64)) (float64, float64, error) {
+	return streamThroughput(ctx, client, lsUpStreams, srv.Ping, live, func(ctx context.Context, total *int64) error {
 		body := countReader{r: &zeroReader{n: lsUpBytes}, n: total}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.ULURL, body)
 		req.Header.Set("Content-Type", "application/octet-stream")
@@ -381,15 +415,27 @@ func lsUpload(ctx context.Context, client *http.Client, srv speedServer) (float6
 }
 
 // defaultInternetDeps auto-selects the nearest LibreSpeed server and wires the
-// real measurements against it.
-func defaultInternetDeps(_ string) internetDeps {
+// real measurements against it. prog (optional) receives phase + live-rate updates.
+func defaultInternetDeps(_ string, prog func(InternetProgress)) internetDeps {
 	client := testClient()
+	if prog != nil {
+		prog(InternetProgress{Phase: 0}) // selecting server
+	}
 	srv := pickServer(client)
+	ep := "LibreSpeed · " + srv.Name
+	liveFor := func(phase int) func(float64) {
+		if prog == nil {
+			return nil
+		}
+		return func(mbit float64) {
+			prog(InternetProgress{Phase: phase, LiveMbit: mbit, Endpoint: ep})
+		}
+	}
 	return internetDeps{
-		endpoint: "LibreSpeed · " + srv.Name,
+		endpoint: ep,
 		idle:     func() float64 { return idleLatency(client, srv.Ping) },
-		download: func(ctx context.Context) (float64, float64, error) { return lsDownload(ctx, client, srv) },
-		upload:   func(ctx context.Context) (float64, float64, error) { return lsUpload(ctx, client, srv) },
+		download: func(ctx context.Context) (float64, float64, error) { return lsDownload(ctx, client, srv, liveFor(2)) },
+		upload:   func(ctx context.Context) (float64, float64, error) { return lsUpload(ctx, client, srv, liveFor(3)) },
 	}
 }
 
@@ -430,19 +476,21 @@ func postInternet(client *http.Client, baseURL, endpoint string) (InternetResult
 
 // runLocalInternet logs the test, opens a heatmap window, runs the local
 // measurement, and closes the window. Used by InternetTest and the endpoint.
-func (a *App) runLocalInternet(endpoint string) InternetResult {
+func (a *App) runLocalInternet(endpoint string, prog func(InternetProgress)) InternetResult {
 	a.recordTestEvent("internet test (" + endpoint + ")")
 	done := a.markTestSpan("internet test", 0)
-	res := a.localInternet(endpoint)
+	res := a.localInternet(endpoint, prog)
 	done()
 	return res
 }
 
 // InternetTest runs the internet test on `node` (locally if it is this device,
-// else over the peer's control plane) and returns the graded result.
-func (a *App) InternetTest(node PeerInfo, endpoint string) InternetResult {
+// else over the peer's control plane) and returns the graded result. prog
+// receives live phase/rate updates for local runs (remote runs report no
+// intermediate progress — the control plane returns only the final result).
+func (a *App) InternetTest(node PeerInfo, endpoint string, prog func(InternetProgress)) InternetResult {
 	if node.ID == a.nodeID || node.ID == "" {
-		return a.runLocalInternet(endpoint)
+		return a.runLocalInternet(endpoint, prog)
 	}
 	out, err := a.FetchInternet("http://"+node.Addr, endpoint)
 	if err != nil {

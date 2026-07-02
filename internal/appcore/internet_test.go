@@ -38,7 +38,7 @@ func TestRunInternetAssembles(t *testing.T) {
 		download: func(ctx context.Context) (float64, float64, error) { return 487, 89, nil },
 		upload:   func(ctx context.Context) (float64, float64, error) { return 21, 60, nil },
 	}
-	res := runInternet(d)
+	res := runInternet(d, nil)
 	if res.DownMbit != 487 || res.UpMbit != 21 {
 		t.Fatalf("throughput = %v/%v, want 487/21", res.DownMbit, res.UpMbit)
 	}
@@ -55,17 +55,19 @@ func TestRunInternetAssembles(t *testing.T) {
 
 func TestInternetTestLocalVsRemote(t *testing.T) {
 	a := &App{nodeID: "self"}
-	a.localInternet = func(endpoint string) InternetResult { return InternetResult{DownMbit: 100, Endpoint: endpoint} }
+	a.localInternet = func(endpoint string, prog func(InternetProgress)) InternetResult {
+		return InternetResult{DownMbit: 100, Endpoint: endpoint}
+	}
 	var gotURL string
 	a.FetchInternet = func(baseURL, endpoint string) (InternetResult, error) {
 		gotURL = baseURL
 		return InternetResult{DownMbit: 200}, nil
 	}
-	local := a.InternetTest(PeerInfo{ID: "self"}, "Cloudflare")
+	local := a.InternetTest(PeerInfo{ID: "self"}, "Cloudflare", nil)
 	if local.DownMbit != 100 {
 		t.Fatalf("self should run locally, got %v", local.DownMbit)
 	}
-	remote := a.InternetTest(PeerInfo{ID: "p", Addr: "10.0.0.2:8088"}, "Cloudflare")
+	remote := a.InternetTest(PeerInfo{ID: "p", Addr: "10.0.0.2:8088"}, "Cloudflare", nil)
 	if remote.DownMbit != 200 || gotURL != "http://10.0.0.2:8088" {
 		t.Fatalf("peer should run remotely, got %v url=%q", remote.DownMbit, gotURL)
 	}

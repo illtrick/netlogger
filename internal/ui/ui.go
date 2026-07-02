@@ -27,6 +27,7 @@ import (
 func Run(a *appcore.App) error {
 	w := new(app.Window)
 	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)))
+	applyDarkTitleBar("NetLogger") // match the native chrome to the dark app surface
 
 	base := material.NewTheme()
 	base.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
@@ -138,13 +139,21 @@ func Run(a *appcore.App) error {
 					self, peers := snap.SelfPeer, snap.Peers
 					go func() {
 						done := a.BeginSpeedTestNote()
-						m := a.SpeedSweep(self, peers, appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2})
+						m := a.SpeedSweep(self, peers,
+							appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2},
+							func(p appcore.SweepProgress) { // live matrix fill
+								tst.mu.Lock()
+								tst.sweep = p
+								tst.mu.Unlock()
+								w.Invalidate()
+							})
 						done()
 						tst.mu.Lock()
 						tst.matrix = m
 						tst.haveMatrix = true
 						tst.running = false
 						tst.status = "done"
+						tst.sweep = appcore.SweepProgress{}
 						tst.mu.Unlock()
 						w.Invalidate()
 					}()
@@ -168,8 +177,16 @@ func Run(a *appcore.App) error {
 				tst.internetMu.Unlock()
 				if !running {
 					self := snap.SelfPeer
+					tst.internetMu.Lock()
+					tst.internetProg = appcore.InternetProgress{}
+					tst.internetMu.Unlock()
 					go func() {
-						res := a.InternetTest(self, "auto")
+						res := a.InternetTest(self, "auto", func(p appcore.InternetProgress) {
+							tst.internetMu.Lock()
+							tst.internetProg = p
+							tst.internetMu.Unlock()
+							w.Invalidate()
+						})
 						tst.internetMu.Lock()
 						tst.internetRes = res
 						tst.internetHave = true

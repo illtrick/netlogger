@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +71,7 @@ type testsState struct {
 	haveMatrix bool
 	running    bool
 	status     string
+	sweep      appcore.SweepProgress // live fill while a sweep runs (guarded by mu)
 
 	sub         int // 0 Speed, 1 Stress, 2 Internet (placeholder until Build #3)
 	speedSeg    widget.Clickable
@@ -95,6 +98,7 @@ type testsState struct {
 	internetOn   bool
 	internetHave bool
 	internetRes  appcore.InternetResult
+	internetProg appcore.InternetProgress // live phase/rate while a test runs
 }
 
 // cap returns the configured per-link cap, clamped to [stressCapMin, stressCapMax].
@@ -112,10 +116,10 @@ func (st *testsState) cap() int {
 	return c
 }
 
-func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string) {
+func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string, appcore.SweepProgress) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	return st.matrix, st.haveMatrix, st.running, st.status
+	return st.matrix, st.haveMatrix, st.running, st.status, st.sweep
 }
 
 // stressSnapshot reads the stress run state safely (the poll goroutine writes
@@ -158,10 +162,41 @@ func layoutSubSeg(gtx layout.Context, th *material.Theme, st *testsState) layout
 	)
 }
 
+// sweepStatusLine describes a live sweep for the header caption. Pure.
+func sweepStatusLine(p appcore.SweepProgress) string {
+	if p.Total == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%d/%d pairs", p.Done, p.Total)
+	names := make([]string, 0, len(p.Active))
+	for _, pr := range p.Active {
+		names = append(names, pr.From.Host+" → "+pr.To.Host)
+	}
+	sort.Strings(names) // stable across frames
+	if len(names) > 0 {
+		s += " · testing " + strings.Join(names, ", ")
+	}
+	return s
+}
+
 // layoutSpeed renders the Speed (LAN) sub-view: a header (title · subtitle · the
-// Run-all primary action) above the test matrix.
+// Run-all primary action) above the test matrix. While a sweep runs the matrix
+// fills in live: completed cells land as they finish, active pairs pulse.
 func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
-	matrix, have, running, status := st.snapshot()
+	matrix, have, running, status, sweep := st.snapshot()
+	live := running && sweep.Total > 0
+	if live {
+		matrix = appcore.SpeedMatrix{Nodes: sweep.Nodes, Cells: sweep.Cells}
+		have = true
+		status = sweepStatusLine(sweep)
+	}
+	var active map[string]bool
+	if live {
+		active = make(map[string]bool, len(sweep.Active))
+		for _, pr := range sweep.Active {
+			active[speedKeyUI(pr.From.ID, pr.To.ID)] = true
+		}
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
@@ -177,6 +212,9 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 							}
 							lbl := material.Caption(th, sub)
 							lbl.Color = colTextMut
+							if live {
+								lbl.Color = colTextSec
+							}
 							return lbl.Layout(gtx)
 						}),
 					)
@@ -191,6 +229,14 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				}),
 			)
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !live {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return loadBar(gtx, float64(sweep.Done)/float64(sweep.Total), colAccent)
+			})
+		}),
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if !have {
@@ -198,7 +244,7 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutSpeedMatrix(gtx, th, matrix)
+			return layoutSpeedMatrix(gtx, th, matrix, active)
 		}),
 	)
 }
@@ -514,8 +560,9 @@ func speedKeyUI(from, to string) string { return from + "\x00" + to }
 
 // layoutSpeedMatrix draws the directed speed grid with uniform column widths
 // and a fixed row height. Every column (including the row-label column) uses an
-// equal flex weight so cells never bleed; a small inset is the gutter.
-func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMatrix) layout.Dimensions {
+// equal flex weight so cells never bleed; a small inset is the gutter. Cells in
+// `active` are currently under test and render as a pulsing accent state.
+func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMatrix, active map[string]bool) layout.Dimensions {
 	if len(m.Nodes) == 0 {
 		return material.Body2(th, "no live devices").Layout(gtx)
 	}
@@ -605,11 +652,14 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, m appcore.SpeedMa
 			cells := make([]layout.FlexChild, 0, len(m.Nodes)+1)
 			cells = append(cells, labelCell(from.Host))
 			for _, to := range m.Nodes {
+				key := speedKeyUI(from.ID, to.ID)
 				switch {
 				case from.ID == to.ID:
 					cells = append(cells, dataCell(colCardAlt, colTextMut, "—", ""))
+				case active[key]:
+					cells = append(cells, dataCell(colTestingBG, colAccent, "testing", "•••"))
 				default:
-					res, ok := m.Cells[speedKeyUI(from.ID, to.ID)]
+					res, ok := m.Cells[key]
 					if ok && res.Err == "" {
 						cells = append(cells, dataCell(matrixCellColor(res.DownMbit), colBg, matrixCellText(res.DownMbit), matrixCellSub(res)))
 					} else {

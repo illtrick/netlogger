@@ -294,15 +294,28 @@ func speedColorBucket(mbit float64) string {
 	}
 }
 
+// SweepProgress is a live update from a running SpeedSweep: the completed cells
+// so far, the pairs currently under test, and the done/total counts. Everything
+// is a copy — the receiver may hold it across frames.
+type SweepProgress struct {
+	Nodes       []SpeedNode
+	Cells       map[string]SpeedResult
+	Active      []SpeedPair
+	Done, Total int
+}
+
 // SpeedSweep runs every directed pair and assembles a SpeedMatrix. iperf3
 // servers accept ONE test at a time, so no node may be an endpoint of two
 // concurrent tests: pairs whose endpoints are both free launch in parallel;
 // the rest wait for a completion. This keeps parallelism on larger meshes
 // without the "server is busy" failures a plain semaphore produces.
-func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMatrix {
+// onProgress (optional) is invoked from the scheduling goroutine after every
+// launch and completion, so a UI can fill the matrix in live.
+func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq, onProgress func(SweepProgress)) SpeedMatrix {
 	nodes := speedNodes(self, peers)
 	pairs := speedPairs(nodes)
-	cells := make(map[string]SpeedResult, len(pairs))
+	total := len(pairs)
+	cells := make(map[string]SpeedResult, total)
 	byID := map[string]PeerInfo{self.ID: self}
 	for _, p := range peers {
 		byID[p.ID] = p
@@ -313,10 +326,25 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMat
 		from, to string
 		res      SpeedResult
 	}
-	ch := make(chan result, len(pairs))
+	ch := make(chan result, total)
 	busy := map[string]bool{}
+	active := map[string]SpeedPair{} // key → pair currently under test
 	pending := pairs
 	inFlight := 0
+	report := func() {
+		if onProgress == nil {
+			return
+		}
+		p := SweepProgress{Nodes: nodes, Done: len(cells), Total: total,
+			Cells: make(map[string]SpeedResult, len(cells))}
+		for k, v := range cells {
+			p.Cells[k] = v
+		}
+		for _, pr := range active {
+			p.Active = append(p.Active, pr)
+		}
+		onProgress(p)
+	}
 	launch := func() {
 		for i := 0; i < len(pending); {
 			pr := pending[i]
@@ -326,6 +354,7 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMat
 			}
 			busy[pr.From.ID], busy[pr.To.ID] = true, true
 			pending = append(pending[:i], pending[i+1:]...)
+			active[speedKey(pr.From.ID, pr.To.ID)] = pr
 			inFlight++
 			from := byID[pr.From.ID]
 			go func(pr SpeedPair, from PeerInfo) {
@@ -337,12 +366,15 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMat
 		}
 	}
 	launch()
+	report()
 	for inFlight > 0 {
 		r := <-ch
 		cells[r.key] = r.res
+		delete(active, r.key)
 		busy[r.from], busy[r.to] = false, false
 		inFlight--
 		launch()
+		report()
 	}
 	return SpeedMatrix{Nodes: nodes, Cells: cells}
 }

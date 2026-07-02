@@ -189,7 +189,7 @@ func TestSpeedTestHandlerClampsDuration(t *testing.T) {
 func TestSpeedSweepZeroPeers(t *testing.T) {
 	a := &App{nodeID: "self"}
 	a.localSpeed = func(req SpeedReq) SpeedResult { return SpeedResult{} }
-	m := a.SpeedSweep(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"})
+	m := a.SpeedSweep(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"}, nil)
 	if len(m.Nodes) != 1 || len(m.Cells) != 0 {
 		t.Fatalf("zero-peer sweep: nodes=%d cells=%d, want 1/0", len(m.Nodes), len(m.Cells))
 	}
@@ -263,7 +263,7 @@ func TestSpeedSweepEndpointExclusive(t *testing.T) {
 		{ID: "p1", Host: "b", Addr: "10.0.0.2:8088"},
 		{ID: "p2", Host: "c", Addr: "10.0.0.3:8088"},
 	}
-	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 1})
+	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 1}, nil)
 	if len(m.Cells) != 6 { // 3 nodes → 6 directed pairs
 		t.Fatalf("cells = %d, want 6", len(m.Cells))
 	}
@@ -276,7 +276,7 @@ func TestSpeedSweepRunsEveryPair(t *testing.T) {
 
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}
 	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
-	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 3})
+	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 3}, nil)
 
 	if len(m.Nodes) != 2 {
 		t.Fatalf("nodes = %d, want 2", len(m.Nodes))

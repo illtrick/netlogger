@@ -21,10 +21,10 @@ import (
 // tint returns c with its alpha replaced (for low-alpha fills behind badges).
 func tint(c color.NRGBA, a uint8) color.NRGBA { c.A = a; return c }
 
-func (st *testsState) internetSnapshot() (bool, bool, appcore.InternetResult) {
+func (st *testsState) internetSnapshot() (bool, bool, appcore.InternetResult, appcore.InternetProgress) {
 	st.internetMu.Lock()
 	defer st.internetMu.Unlock()
-	return st.internetOn, st.internetHave, st.internetRes
+	return st.internetOn, st.internetHave, st.internetRes, st.internetProg
 }
 
 // gradeColor maps an A–F bufferbloat grade to the severity palette.
@@ -43,7 +43,7 @@ var upGreen = color.NRGBA{R: 0x7e, G: 0xe0, B: 0xa0, A: 0xff}
 
 // layoutInternet renders the Internet sub-view.
 func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
-	on, have, res := st.internetSnapshot()
+	on, have, res, prog := st.internetSnapshot()
 	host := snap.SelfPeer.Host
 	if host == "" {
 		host = "this device"
@@ -59,7 +59,10 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				layout.Rigid(gapX(8)),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ep := "LibreSpeed · auto"
-					if res.Endpoint != "" {
+					switch {
+					case on && prog.Endpoint != "":
+						ep = prog.Endpoint
+					case res.Endpoint != "":
 						ep = res.Endpoint
 					}
 					return chipLabel(gtx, th, ep, colTextPri, colCardAlt)
@@ -89,9 +92,7 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 			case on:
 				// A run in progress always wins — showing a previous run's error
 				// here would read as "the retry already failed".
-				lbl := material.Caption(th, "measuring download, upload, and latency under load…")
-				lbl.Color = colTextMut
-				return lbl.Layout(gtx)
+				return internetLive(gtx, th, prog)
 			case res.Err != "":
 				lbl := material.Body2(th, "error: "+res.Err)
 				lbl.Color = colBad
@@ -128,7 +129,7 @@ func internetResults(gtx layout.Context, th *material.Theme, res appcore.Interne
 		layout.Rigid(gap(12)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return gradeBadge(gtx, th, res) }),
 		layout.Rigid(gap(14)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th) }),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th, phaseAllDone) }),
 	)
 }
 
@@ -218,22 +219,78 @@ func gradeBadge(gtx layout.Context, th *material.Theme, res appcore.InternetResu
 	})
 }
 
-// phaseStrip shows the four measurement phases (all complete once a result lands).
-func phaseStrip(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	names := []string{"Idle ping", "Download", "Upload", "Loaded ping"}
+// internetLive is the in-flight view: the live phase strip and, during a
+// throughput phase, the climbing rate.
+func internetLive(gtx layout.Context, th *material.Theme, prog appcore.InternetProgress) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if prog.Phase != 2 && prog.Phase != 3 {
+				lbl := material.Caption(th, [4]string{
+					"finding the closest server…",
+					"sampling idle latency…",
+					"", "",
+				}[prog.Phase])
+				lbl.Color = colTextSec
+				return lbl.Layout(gtx)
+			}
+			// Live throughput number, styled like the result metric cards.
+			label, valCol := "↓ Download", colAccent
+			if prog.Phase == 3 {
+				label, valCol = "↑ Upload", upGreen
+			}
+			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Caption(th, label)
+					l.Color = colTextMut
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(gapX(10)),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(th, unit.Sp(34), fmt.Sprintf("%.0f", prog.LiveMbit))
+					l.Color = valCol
+					l.Font.Weight = 500
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(gapX(6)),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Caption(th, "Mbit/s")
+					l.Color = colTextMut
+					return l.Layout(gtx)
+				}),
+			)
+		}),
+		layout.Rigid(gap(16)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th, prog.Phase) }),
+	)
+}
+
+// phaseStrip shows the four measurement phases. activeIdx marks the phase in
+// flight (accent); earlier phases are done (green ✓), later ones pending
+// (muted). Pass phaseAllDone once a result has landed.
+const phaseAllDone = 4
+
+func phaseStrip(gtx layout.Context, th *material.Theme, activeIdx int) layout.Dimensions {
+	names := []string{"Select server", "Idle latency", "Download", "Upload"}
 	ch := make([]layout.FlexChild, 0, len(names)*2)
 	for i, n := range names {
 		if i > 0 {
 			ch = append(ch, layout.Rigid(gapX(8)))
 		}
-		n := n
+		i, n := i, n
 		ch = append(ch, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return widget.Border{Color: tint(colGood, 0x40), Width: unit.Dp(1), CornerRadius: unit.Dp(7)}.Layout(gtx,
+			border, txt, fg := tint(colGood, 0x40), "✓ "+n, colTextSec
+			switch {
+			case i == activeIdx:
+				border, txt, fg = tint(colAccent, 0x70), "● "+n, colTextPri
+			case i > activeIdx:
+				border, txt, fg = colOutline, n, colTextMut
+			}
+			return widget.Border{Color: border, Width: unit.Dp(1), CornerRadius: unit.Dp(7)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						l := material.Caption(th, "✓ "+n)
-						l.Color = colTextSec
+						l := material.Caption(th, txt)
+						l.Color = fg
 						return l.Layout(gtx)
 					})
 				})
