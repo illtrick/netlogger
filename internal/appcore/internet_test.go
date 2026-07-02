@@ -35,8 +35,8 @@ func TestRunInternetAssembles(t *testing.T) {
 	d := internetDeps{
 		endpoint: "FakeNet",
 		idle:     func() float64 { return 12 },
-		download: func(ctx context.Context) (float64, float64, error) { return 487, 89, nil },
-		upload:   func(ctx context.Context) (float64, float64, error) { return 21, 60, nil },
+		download: func(ctx context.Context, live func(float64)) (float64, float64, error) { return 487, 89, nil },
+		upload:   func(ctx context.Context, live func(float64)) (float64, float64, error) { return 21, 60, nil },
 	}
 	res := runInternet(d, nil)
 	if res.DownMbit != 487 || res.UpMbit != 21 {

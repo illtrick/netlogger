@@ -67,38 +67,61 @@ func internetResult(endpoint string, down, up, idle, loaded, jitter, loss float6
 }
 
 // InternetProgress is a live update from a running internet test: which phase is
-// active (0 select server · 1 idle latency · 2 download · 3 upload) and, during a
-// throughput phase, the instantaneous rate so the UI can show a climbing number.
+// active (0 select server · 1 idle latency · 2 download · 3 upload), the
+// instantaneous rate during a throughput phase, and every value measured so far
+// (zero = not yet) so the UI can fill results in as the test proceeds.
 type InternetProgress struct {
 	Phase    int
 	LiveMbit float64
 	Endpoint string
+	IdleMs   float64
+	DownMbit float64
+	UpMbit   float64
 }
 
 // internetDeps are the injectable network measurements (real impls hit LibreSpeed).
+// download/upload receive an optional live-rate sink for progress display.
 type internetDeps struct {
 	endpoint string
 	idle     func() float64 // a quiet-line latency sample (ms)
-	download func(ctx context.Context) (mbit, loadedMs float64, err error)
-	upload   func(ctx context.Context) (mbit, loadedMs float64, err error)
+	download func(ctx context.Context, live func(float64)) (mbit, loadedMs float64, err error)
+	upload   func(ctx context.Context, live func(float64)) (mbit, loadedMs float64, err error)
 }
 
 // runInternet runs the three phases (idle → download → upload) and grades the
-// result. Pure orchestration over the injected measurements. prog is optional.
+// result. Pure orchestration over the injected measurements. prog is optional
+// and receives the accumulating state after every phase and live-rate tick.
 func runInternet(d internetDeps, prog func(InternetProgress)) InternetResult {
-	report := func(phase int, mbit float64) {
+	state := InternetProgress{Endpoint: d.endpoint}
+	report := func() {
 		if prog != nil {
-			prog(InternetProgress{Phase: phase, LiveMbit: mbit, Endpoint: d.endpoint})
+			prog(state)
+		}
+	}
+	liveFor := func(phase int) func(float64) {
+		if prog == nil {
+			return nil
+		}
+		return func(mbit float64) {
+			state.Phase, state.LiveMbit = phase, round1(mbit)
+			report()
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
-	report(1, 0)
+	state.Phase = 1
+	report()
 	idle := d.idle()
-	report(2, 0)
-	down, ld, derr := d.download(ctx)
-	report(3, 0)
-	up, lu, uerr := d.upload(ctx)
+	state.IdleMs = round1(idle)
+	state.Phase, state.LiveMbit = 2, 0
+	report()
+	down, ld, derr := d.download(ctx, liveFor(2))
+	state.DownMbit = round1(down)
+	state.Phase, state.LiveMbit = 3, 0
+	report()
+	up, lu, uerr := d.upload(ctx, liveFor(3))
+	state.UpMbit = round1(up)
+	report()
 	loaded := ld
 	if lu > loaded {
 		loaded = lu
@@ -415,27 +438,23 @@ func lsUpload(ctx context.Context, client *http.Client, srv speedServer, live fu
 }
 
 // defaultInternetDeps auto-selects the nearest LibreSpeed server and wires the
-// real measurements against it. prog (optional) receives phase + live-rate updates.
+// real measurements against it. prog (optional) is notified while the server is
+// being selected (runInternet reports every later phase itself).
 func defaultInternetDeps(_ string, prog func(InternetProgress)) internetDeps {
 	client := testClient()
 	if prog != nil {
 		prog(InternetProgress{Phase: 0}) // selecting server
 	}
 	srv := pickServer(client)
-	ep := "LibreSpeed · " + srv.Name
-	liveFor := func(phase int) func(float64) {
-		if prog == nil {
-			return nil
-		}
-		return func(mbit float64) {
-			prog(InternetProgress{Phase: phase, LiveMbit: mbit, Endpoint: ep})
-		}
-	}
 	return internetDeps{
-		endpoint: ep,
+		endpoint: "LibreSpeed · " + srv.Name,
 		idle:     func() float64 { return idleLatency(client, srv.Ping) },
-		download: func(ctx context.Context) (float64, float64, error) { return lsDownload(ctx, client, srv, liveFor(2)) },
-		upload:   func(ctx context.Context) (float64, float64, error) { return lsUpload(ctx, client, srv, liveFor(3)) },
+		download: func(ctx context.Context, live func(float64)) (float64, float64, error) {
+			return lsDownload(ctx, client, srv, live)
+		},
+		upload: func(ctx context.Context, live func(float64)) (float64, float64, error) {
+			return lsUpload(ctx, client, srv, live)
+		},
 	}
 }
 

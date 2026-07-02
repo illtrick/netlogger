@@ -219,47 +219,48 @@ func gradeBadge(gtx layout.Context, th *material.Theme, res appcore.InternetResu
 	})
 }
 
-// internetLive is the in-flight view: the live phase strip and, during a
-// throughput phase, the climbing rate.
+// internetLive is the in-flight view: the same metric cards as the results, born
+// as "–" placeholders that fill in as each phase completes — the active
+// throughput card carries the live climbing rate.
 func internetLive(gtx layout.Context, th *material.Theme, prog appcore.InternetProgress) layout.Dimensions {
+	dash := func(v float64) string {
+		if v <= 0 {
+			return "–"
+		}
+		return fmt.Sprintf("%.0f", v)
+	}
+	// Download card: live rate while measuring, locked value after, dash before.
+	downVal, downCol := dash(prog.DownMbit), colAccent
+	if prog.Phase == 2 && prog.LiveMbit > 0 {
+		downVal = fmt.Sprintf("%.0f", prog.LiveMbit)
+	}
+	upVal, upCol := dash(prog.UpMbit), upGreen
+	if prog.Phase == 3 && prog.LiveMbit > 0 {
+		upVal = fmt.Sprintf("%.0f", prog.LiveMbit)
+	}
+	if downVal == "–" {
+		downCol = colTextMut
+	}
+	if upVal == "–" {
+		upCol = colTextMut
+	}
+	idleVal, idleCol := dash(prog.IdleMs), colTextPri
+	if idleVal == "–" {
+		idleCol = colTextMut
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if prog.Phase != 2 && prog.Phase != 3 {
-				lbl := material.Caption(th, [4]string{
-					"finding the closest server…",
-					"sampling idle latency…",
-					"", "",
-				}[prog.Phase])
-				lbl.Color = colTextSec
-				return lbl.Layout(gtx)
-			}
-			// Live throughput number, styled like the result metric cards.
-			label, valCol := "↓ Download", colAccent
-			if prog.Phase == 3 {
-				label, valCol = "↑ Upload", upGreen
-			}
-			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					l := material.Caption(th, label)
-					l.Color = colTextMut
-					return l.Layout(gtx)
-				}),
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				metricCardChild(th, "↓ Download", downVal, "Mbit/s", downCol),
 				layout.Rigid(gapX(10)),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					l := material.Label(th, unit.Sp(34), fmt.Sprintf("%.0f", prog.LiveMbit))
-					l.Color = valCol
-					l.Font.Weight = 500
-					return l.Layout(gtx)
-				}),
-				layout.Rigid(gapX(6)),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					l := material.Caption(th, "Mbit/s")
-					l.Color = colTextMut
-					return l.Layout(gtx)
-				}),
+				metricCardChild(th, "↑ Upload", upVal, "Mbit/s", upCol),
+				layout.Rigid(gapX(10)),
+				metricCardChild(th, "Idle latency", idleVal, "ms", idleCol),
+				layout.Rigid(gapX(10)),
+				metricCardChild(th, "Loaded latency", "–", "ms", colTextMut),
 			)
 		}),
-		layout.Rigid(gap(16)),
+		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th, prog.Phase) }),
 	)
 }
