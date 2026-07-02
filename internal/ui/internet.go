@@ -77,12 +77,12 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if v.on {
+						return busyBtn(gtx, th, &st.internetRun, "Running…")
+					}
 					label := "Run test"
 					if v.have {
 						label = "Run again"
-					}
-					if v.on {
-						label = "Running…"
 					}
 					return primaryBtn(gtx, th, &st.internetRun, label)
 				}),

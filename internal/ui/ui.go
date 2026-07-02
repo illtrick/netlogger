@@ -26,8 +26,11 @@ import (
 // Run opens the window and renders until it is closed.
 func Run(a *appcore.App) error {
 	w := new(app.Window)
-	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)))
+	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)),
+		app.MinSize(unit.Dp(760), unit.Dp(520))) // keep the layout from squishing into overlap
 	applyDarkTitleBar("NetLogger") // match the native chrome to the dark app surface
+	stopTray := startTray("NetLogger")
+	defer stopTray()
 
 	base := material.NewTheme()
 	base.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
@@ -40,10 +43,13 @@ func Run(a *appcore.App) error {
 		}
 	}()
 
-	var resetBtn, exportBtn, sleepBtn widget.Clickable
+	var resetBtn, exportBtn, sleepBtn, trayBtn widget.Clickable
 	var statusMsg string
-	var mainList widget.List
-	mainList.Axis = layout.Vertical
+	// One scroll list per tab so switching tabs never inherits a stale offset.
+	var tabLists [3]widget.List
+	for i := range tabLists {
+		tabLists[i].Axis = layout.Vertical
+	}
 	var heatList widget.List
 	heatList.Axis = layout.Horizontal
 	heatBucket := 120
@@ -117,6 +123,9 @@ func Run(a *appcore.App) error {
 			if hNow.Clicked(gtx) && heatView.Buckets > 0 { // just scroll to now, no zoom change
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
+			}
+			if trayBtn.Clicked(gtx) {
+				hideMainWindow("NetLogger") // monitoring continues; tray icon reopens
 			}
 			if navDash.Clicked(gtx) {
 				nav = nextTab(nav, navDashboard)
@@ -338,15 +347,23 @@ func Run(a *appcore.App) error {
 			}
 			// Fixed title bar on top; the scrolling content list fills the rest. The
 			// list spans full width so its scrollbar hugs the window's right edge;
-			// horizontal margin is applied per item instead.
+			// horizontal margin is applied per item instead — and grows on wide
+			// windows so the content column stays readable instead of stretching
+			// edge to edge.
 			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt)
+					return titleBar(gtx, th, snap, nav, &navDash, &navTst, &navEvt, &trayBtn)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return material.List(th, &mainList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(18)}.Layout(gtx, items[i])
+						const maxContent = unit.Dp(1080)
+						left, right := unit.Dp(20), unit.Dp(18)
+						if w := gtx.Metric.PxToDp(gtx.Constraints.Max.X); w > maxContent+left+right {
+							left = (w - maxContent) / 2
+							right = left - 2
+						}
+						return material.List(th, &tabLists[nav]).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+							return layout.Inset{Left: left, Right: right}.Layout(gtx, items[i])
 						})
 					})
 				}),

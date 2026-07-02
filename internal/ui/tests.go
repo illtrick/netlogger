@@ -299,11 +299,10 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					label := "Run all pairs"
 					if running {
-						label = "Running…"
+						return busyBtn(gtx, th, &st.runBtn, "Running…")
 					}
-					return primaryBtn(gtx, th, &st.runBtn, label)
+					return primaryBtn(gtx, th, &st.runBtn, "Run all pairs")
 				}),
 			)
 		}),
@@ -769,7 +768,9 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 	clickableCell := func(c *widget.Clickable, bg, fg color.NRGBA, txt, sub string) layout.FlexChild {
 		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Right: gut, Bottom: gut}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.Clickable(gtx, c, cellBody(bg, fg, txt, sub))
+				return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
+					return material.Clickable(gtx, c, cellBody(bg, fg, txt, sub))
+				})
 			})
 		})
 	}

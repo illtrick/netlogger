@@ -121,6 +121,24 @@ is the precise address. Lead with the name, demote the IP.
 This applies everywhere a device appears: the test matrix, the stress per-link
 list, the peers table, and event rows.
 
+## Interaction feedback (HIG basics)
+
+- **Every clickable element shows a pointing-hand cursor** on hover — wrap custom
+  controls in `hoverCursor`. The built-in button helpers already do this.
+- **A busy action must look inert**: render in-flight primaries with `busyBtn`
+  (muted surface + text, no pointer cursor) — "Running…" must never look clickable.
+- **Scroll position is per-tab** (`tabLists`); switching tabs never inherits a
+  stale offset.
+
+## Window & layout
+
+- **Content column caps at 1080dp** and centers on wider windows — cards and grids
+  must not stretch edge-to-edge on a maximized window.
+- **Minimum window size 760×520** so the layout can't squish into overlap.
+- **Tray mode**: the title bar's Tray control hides the window while monitoring
+  continues; the notification-area icon (the exe's own icon) reopens on click and
+  offers Open / Quit on right-click.
+
 ## When adding a control
 
 Pick the helper whose role matches the *consequence* of the click, not its
