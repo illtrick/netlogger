@@ -86,13 +86,15 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 		layout.Rigid(gap(16)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			switch {
+			case on:
+				// A run in progress always wins — showing a previous run's error
+				// here would read as "the retry already failed".
+				lbl := material.Caption(th, "measuring download, upload, and latency under load…")
+				lbl.Color = colTextMut
+				return lbl.Layout(gtx)
 			case res.Err != "":
 				lbl := material.Body2(th, "error: "+res.Err)
 				lbl.Color = colBad
-				return lbl.Layout(gtx)
-			case on && !have:
-				lbl := material.Caption(th, "measuring download, upload, and latency under load…")
-				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			case !have:
 				lbl := material.Caption(th, "no result yet — run a test")

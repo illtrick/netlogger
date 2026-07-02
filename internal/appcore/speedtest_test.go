@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"netlogger/internal/iperf"
 )
@@ -190,6 +192,80 @@ func TestSpeedSweepZeroPeers(t *testing.T) {
 	m := a.SpeedSweep(PeerInfo{ID: "self", Host: "ryzen", Addr: "127.0.0.1:8088"}, nil, SpeedReq{Direction: "down"})
 	if len(m.Nodes) != 1 || len(m.Cells) != 0 {
 		t.Fatalf("zero-peer sweep: nodes=%d cells=%d, want 1/0", len(m.Nodes), len(m.Cells))
+	}
+}
+
+func TestRunSpeedTestBidirUsesReverseField(t *testing.T) {
+	run := func(target string, o iperf.Opts) (iperf.Result, error) {
+		if !o.Bidir {
+			t.Fatalf("bidir direction must set Opts.Bidir")
+		}
+		// sum_received (101) mirrors the upload; the true download (940) is in
+		// the bidir_reverse block — DownMbit must come from the latter.
+		return iperf.Result{SumBitsPerSec: 100e6, SumRecvBitsPerSec: 101e6, SumRecvBidirBitsPerSec: 940e6}, nil
+	}
+	got := runSpeedTest(run, "h", SpeedReq{Direction: "bidir"})
+	if round1(got.DownMbit) != 940 {
+		t.Fatalf("bidir down = %v, want 940 (from bidir_reverse)", got.DownMbit)
+	}
+	if round1(got.UpMbit) != 100 {
+		t.Fatalf("bidir up = %v, want 100", got.UpMbit)
+	}
+}
+
+func TestSpeedSweepEndpointExclusive(t *testing.T) {
+	// iperf3 servers run one test at a time: no node may be an endpoint of two
+	// concurrent tests. Fakes track live endpoint usage and fail on overlap.
+	var mu sync.Mutex
+	active := map[string]int{}
+	enter := func(from, to string) {
+		mu.Lock()
+		active[from]++
+		active[to]++
+		if active[from] > 1 || active[to] > 1 {
+			mu.Unlock()
+			t.Errorf("endpoint used by two concurrent tests: %v", active)
+			return
+		}
+		mu.Unlock()
+	}
+	leave := func(from, to string) {
+		mu.Lock()
+		active[from]--
+		active[to]--
+		mu.Unlock()
+	}
+
+	// Normalize every endpoint reference to its bare IP so a node colliding as
+	// client in one test and server in another is still detected.
+	norm := func(s string) string {
+		s = strings.TrimPrefix(s, "http://")
+		return iperfHost(s)
+	}
+
+	a := &App{nodeID: "self"}
+	a.localSpeed = func(req SpeedReq) SpeedResult {
+		enter("10.0.0.1", req.Target)
+		time.Sleep(5 * time.Millisecond)
+		leave("10.0.0.1", req.Target)
+		return SpeedResult{DownMbit: 900}
+	}
+	a.FetchSpeed = func(baseURL string, req SpeedReq) (SpeedResult, error) {
+		from := norm(baseURL)
+		enter(from, req.Target)
+		time.Sleep(5 * time.Millisecond)
+		leave(from, req.Target)
+		return SpeedResult{DownMbit: 500}, nil
+	}
+
+	self := PeerInfo{ID: "self", Host: "a", Addr: "10.0.0.1:8088"}
+	peers := []PeerInfo{
+		{ID: "p1", Host: "b", Addr: "10.0.0.2:8088"},
+		{ID: "p2", Host: "c", Addr: "10.0.0.3:8088"},
+	}
+	m := a.SpeedSweep(self, peers, SpeedReq{Direction: "down", DurationS: 1})
+	if len(m.Cells) != 6 { // 3 nodes → 6 directed pairs
+		t.Fatalf("cells = %d, want 6", len(m.Cells))
 	}
 }
 

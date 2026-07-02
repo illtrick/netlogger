@@ -117,7 +117,14 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 			res.Err = err.Error()
 		} else {
 			res.UpMbit = mbit(r.SumBitsPerSec)
-			res.DownMbit = mbit(r.SumRecvBitsPerSec)
+			// In bidir JSON, sum_received mirrors the upload direction; the true
+			// download rate lives in sum_received_bidir_reverse. Fall back for
+			// older iperf3 builds that omit the bidir_reverse block.
+			down := r.SumRecvBidirBitsPerSec
+			if down == 0 {
+				down = r.SumRecvBitsPerSec
+			}
+			res.DownMbit = mbit(down)
 			res.Retransmits = r.SumRetransmits
 			res.RTTms = meanRTTms(r.Intervals)
 			res.JitterMs = r.UDPJitterMs
@@ -143,8 +150,19 @@ func speedTestHandler(do func(SpeedReq) SpeedResult) http.HandlerFunc {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if req.DurationS <= 0 || req.DurationS > 60 {
-			req.DurationS = 10 // clamp
+		// Clamp everything a peer could inflate. Duration ≤30 keeps a "both" run
+		// (two sequential legs) inside the orchestrator's 90s client timeout.
+		if req.DurationS <= 0 || req.DurationS > 30 {
+			req.DurationS = 10
+		}
+		if req.Streams < 0 || req.Streams > 16 {
+			req.Streams = 4
+		}
+		if req.OmitS < 0 || req.OmitS >= req.DurationS {
+			req.OmitS = 0
+		}
+		if req.CapMbit < 0 || req.CapMbit > 10000 {
+			req.CapMbit = 0
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(do(req))
@@ -276,9 +294,11 @@ func speedColorBucket(mbit float64) string {
 	}
 }
 
-// SpeedSweep runs every directed pair and assembles a SpeedMatrix. Pairs run
-// with bounded concurrency (4 at a time) so a large mesh doesn't open dozens of
-// simultaneous iperf3 streams (which would distort the measurements).
+// SpeedSweep runs every directed pair and assembles a SpeedMatrix. iperf3
+// servers accept ONE test at a time, so no node may be an endpoint of two
+// concurrent tests: pairs whose endpoints are both free launch in parallel;
+// the rest wait for a completion. This keeps parallelism on larger meshes
+// without the "server is busy" failures a plain semaphore produces.
 func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMatrix {
 	nodes := speedNodes(self, peers)
 	pairs := speedPairs(nodes)
@@ -289,23 +309,40 @@ func (a *App) SpeedSweep(self PeerInfo, peers []PeerInfo, req SpeedReq) SpeedMat
 	}
 
 	type result struct {
-		key string
-		res SpeedResult
+		key      string
+		from, to string
+		res      SpeedResult
 	}
-	sem := make(chan struct{}, 4)
 	ch := make(chan result, len(pairs))
-	for _, pr := range pairs {
-		pr := pr
-		sem <- struct{}{}
-		go func() {
-			defer func() { <-sem }()
+	busy := map[string]bool{}
+	pending := pairs
+	inFlight := 0
+	launch := func() {
+		for i := 0; i < len(pending); {
+			pr := pending[i]
+			if busy[pr.From.ID] || busy[pr.To.ID] {
+				i++
+				continue
+			}
+			busy[pr.From.ID], busy[pr.To.ID] = true, true
+			pending = append(pending[:i], pending[i+1:]...)
+			inFlight++
 			from := byID[pr.From.ID]
-			ch <- result{key: speedKey(pr.From.ID, pr.To.ID), res: a.SpeedTest(from, pr.To.Addr, req)}
-		}()
+			go func(pr SpeedPair, from PeerInfo) {
+				ch <- result{
+					key: speedKey(pr.From.ID, pr.To.ID), from: pr.From.ID, to: pr.To.ID,
+					res: a.SpeedTest(from, pr.To.Addr, req),
+				}
+			}(pr, from)
+		}
 	}
-	for range pairs {
+	launch()
+	for inFlight > 0 {
 		r := <-ch
 		cells[r.key] = r.res
+		busy[r.from], busy[r.to] = false, false
+		inFlight--
+		launch()
 	}
 	return SpeedMatrix{Nodes: nodes, Cells: cells}
 }

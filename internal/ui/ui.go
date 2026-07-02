@@ -146,6 +146,7 @@ func Run(a *appcore.App) error {
 						tst.running = false
 						tst.status = "done"
 						tst.mu.Unlock()
+						w.Invalidate()
 					}()
 				}
 			}
@@ -168,12 +169,13 @@ func Run(a *appcore.App) error {
 				if !running {
 					self := snap.SelfPeer
 					go func() {
-						res := a.InternetTest(self, "Cloudflare")
+						res := a.InternetTest(self, "auto")
 						tst.internetMu.Lock()
 						tst.internetRes = res
 						tst.internetHave = true
 						tst.internetOn = false
 						tst.internetMu.Unlock()
+						w.Invalidate()
 					}()
 				}
 			}
@@ -186,17 +188,38 @@ func Run(a *appcore.App) error {
 			if tst.startStress.Clicked(gtx) {
 				tst.stressMu.Lock()
 				already := tst.stressOn
+				var gen int
 				if !already {
 					tst.stressOn = true
+					tst.stressGen++
+					gen = tst.stressGen
+					// Pin the node set for this run so Stop reaches every loaded
+					// node even if discovery drops one mid-run.
+					tst.stressSelf, tst.stressPeers = snap.SelfPeer, snap.Peers
+					tst.stressMsg = ""
+					tst.stressNodes = nil
 				}
 				tst.stressMu.Unlock()
 				if !already {
 					self, peers := snap.SelfPeer, snap.Peers
-					a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: tst.cap(), Proto: "tcp", DurationS: 120})
+					capMbit := tst.cap() // read on the UI thread; goroutine gets the value
+					// Fan-out + polling stay off the UI thread: StartStress POSTs to
+					// every peer (10s timeout each) and would freeze the frame loop.
 					go func() {
+						_, started := a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: capMbit, Proto: "tcp", DurationS: 120})
+						if started == 0 {
+							tst.stressMu.Lock()
+							if tst.stressGen == gen {
+								tst.stressOn = false
+								tst.stressMsg = "start failed — no node accepted the run (previous run still winding down?)"
+							}
+							tst.stressMu.Unlock()
+							w.Invalidate()
+							return
+						}
 						for {
 							tst.stressMu.Lock()
-							on := tst.stressOn
+							on := tst.stressOn && tst.stressGen == gen
 							tst.stressMu.Unlock()
 							if !on {
 								return
@@ -209,11 +232,16 @@ func Run(a *appcore.App) error {
 								}
 							}
 							tst.stressMu.Lock()
+							if tst.stressGen != gen { // a newer run owns the state now
+								tst.stressMu.Unlock()
+								return
+							}
 							tst.stressNodes = ns
 							if !anyRunning {
 								tst.stressOn = false
 							}
 							tst.stressMu.Unlock()
+							w.Invalidate()
 							if !anyRunning {
 								return
 							}
@@ -223,11 +251,12 @@ func Run(a *appcore.App) error {
 				}
 			}
 			if tst.stopStress.Clicked(gtx) {
-				self, peers := snap.SelfPeer, snap.Peers
-				a.StopStress(self, peers, "")
 				tst.stressMu.Lock()
+				self, peers := tst.stressSelf, tst.stressPeers // the run's node set, not this frame's
 				tst.stressOn = false
+				tst.stressGen++ // invalidate the run's poll goroutine immediately
 				tst.stressMu.Unlock()
+				go a.StopStress(self, peers, "") // peer POSTs off the UI thread
 			}
 
 			cardSection := func(w layout.Widget) layout.Widget {

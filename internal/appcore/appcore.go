@@ -161,6 +161,9 @@ type App struct {
 	stressRunner func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error)
 	stressMu     sync.Mutex
 	stress       *stressRun
+	// stressWG tracks stress lifecycle goroutines so Stop() can wait for them
+	// before closing the store (they record an "ended" event on completion).
+	stressWG sync.WaitGroup
 
 	// testWindows records spans during which a test ran, for the heatmap hover.
 	testWinMu   sync.Mutex
@@ -298,7 +301,9 @@ func New(dataDir string) *App {
 			return runInternet(defaultInternetDeps(endpoint))
 		},
 		FetchInternet: func(baseURL, endpoint string) (InternetResult, error) {
-			return postInternet(&http.Client{Timeout: 60 * time.Second}, baseURL, endpoint)
+			// Must exceed the remote's full test: server pick + idle baseline +
+			// two (warm-up + 10s steady-state) phases ≈ 40-50s on a healthy link.
+			return postInternet(&http.Client{Timeout: 120 * time.Second}, baseURL, endpoint)
 		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
@@ -1044,6 +1049,7 @@ func (a *App) Stop() error {
 	var err error
 	a.stopOnce.Do(func() {
 		a.stopStressLocal("") // kill any in-flight stress load on app shutdown
+		a.stressWG.Wait()     // lifecycle goroutines write the store; wait before Close
 		if a.cancel != nil {
 			a.cancel()
 		}

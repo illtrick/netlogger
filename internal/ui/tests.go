@@ -82,6 +82,13 @@ type testsState struct {
 	stressMu    sync.Mutex
 	stressOn    bool
 	stressNodes []appcore.StressStatus
+	// stressGen invalidates stale poll goroutines across stop→start cycles;
+	// stressSelf/stressPeers pin the node set the ACTIVE run was started with so
+	// Stop reaches every loaded node even if discovery has since dropped one.
+	stressGen   int
+	stressSelf  appcore.PeerInfo
+	stressPeers []appcore.PeerInfo
+	stressMsg   string // start-failure notice (empty when fine)
 
 	internetRun  widget.Clickable
 	internetMu   sync.Mutex
@@ -113,10 +120,10 @@ func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string) {
 
 // stressSnapshot reads the stress run state safely (the poll goroutine writes
 // these while the UI reads them every frame).
-func (st *testsState) stressSnapshot() (bool, []appcore.StressStatus) {
+func (st *testsState) stressSnapshot() (bool, []appcore.StressStatus, string) {
 	st.stressMu.Lock()
 	defer st.stressMu.Unlock()
-	return st.stressOn, st.stressNodes
+	return st.stressOn, st.stressNodes, st.stressMsg
 }
 
 // layoutTests renders the Tests tab: a segmented control (Speed / Stress) on
@@ -206,7 +213,7 @@ const (
 )
 
 func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
-	on, nodes := st.stressSnapshot()
+	on, nodes, msg := st.stressSnapshot()
 	n := len(snap.Peers) + 1
 	pairs := n * (n - 1) / 2
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -214,6 +221,11 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if on {
 				return stressBanner(gtx, th, st, nodes, pairs)
+			}
+			if len(snap.Peers) == 0 {
+				lbl := material.Caption(th, "no peers online — a stress test needs at least two nodes")
+				lbl.Color = colTextMut
+				return lbl.Layout(gtx)
 			}
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -224,6 +236,16 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 					return capStepper(gtx, th, st)
 				}),
 			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if msg == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, msg)
+				lbl.Color = colBad
+				return lbl.Layout(gtx)
+			})
 		}),
 		layout.Rigid(gap(12)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {

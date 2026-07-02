@@ -54,3 +54,28 @@ func TestBuildArgsTCPRateCap(t *testing.T) {
 		t.Fatalf("tcp cap must not imply -u: %v", got)
 	}
 }
+
+func TestParseBidirReverse(t *testing.T) {
+	// In --bidir JSON, sum_received mirrors the upload direction; the download
+	// rate lives in sum_received_bidir_reverse.
+	js := []byte(`{"intervals":[],"end":{
+		"sum_sent":{"bits_per_second":100000000,"retransmits":2},
+		"sum_received":{"bits_per_second":101000000},
+		"sum_received_bidir_reverse":{"bits_per_second":940000000},
+		"sum":{"jitter_ms":0,"lost_percent":0}}}`)
+	res, err := Parse(js)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.SumRecvBidirBitsPerSec != 940000000 {
+		t.Fatalf("bidir reverse = %v, want 9.4e8", res.SumRecvBidirBitsPerSec)
+	}
+}
+
+func TestBuildArgsBidirWinsOverReverse(t *testing.T) {
+	// -R and --bidir are mutually exclusive in iperf3; bidir must win.
+	got := buildArgs("h", Opts{DurationS: 5, Reverse: true, Bidir: true})
+	if contains(got, "-R") || !contains(got, "--bidir") {
+		t.Fatalf("bidir+reverse should emit only --bidir: %v", got)
+	}
+}

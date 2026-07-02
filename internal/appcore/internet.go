@@ -91,6 +91,10 @@ func runInternet(d internetDeps) InternetResult {
 		res.Err = derr.Error()
 	} else if uerr != nil {
 		res.Err = uerr.Error()
+	} else if loaded == 0 && (down > 0 || up > 0) {
+		// Every loaded-latency probe failed (plausible under exactly the
+		// congestion being graded) — a defaulted "A" would be a lie.
+		res.Err = "no latency samples under load — bufferbloat grade unreliable"
 	}
 	return res
 }
@@ -154,10 +158,21 @@ func testClient() *http.Client {
 	return &http.Client{Transport: tr, Timeout: 60 * time.Second}
 }
 
-// latencyMs times a GET to url — an HTTP round-trip over a (kept-alive) conn.
+// pingTimeout bounds every latency probe so a blackholed server can't stall
+// server selection, the idle baseline, or the loaded-latency sampling loop.
+const pingTimeout = 3 * time.Second
+
+// latencyMs times a GET to url — an HTTP round-trip over a (kept-alive) conn,
+// bounded by pingTimeout.
 func latencyMs(client *http.Client, url string) float64 {
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0
+	}
 	t0 := time.Now()
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -166,24 +181,34 @@ func latencyMs(client *http.Client, url string) float64 {
 	return float64(time.Since(t0).Microseconds()) / 1000
 }
 
-// pickServer measures latency to each pre-loaded server and returns the closest
-// reachable one (west-coast entries naturally win for a west-coast user).
+// pickServer measures latency to every pre-loaded server IN PARALLEL and returns
+// the closest reachable one (west-coast entries naturally win for a west-coast
+// user; index 0 is the fallback when nothing answers).
 func pickServer(client *http.Client) speedServer {
-	best := libreServers[0]
-	bestPing := math.Inf(1)
-	for _, s := range libreServers {
-		m := math.Inf(1)
-		for i := 0; i < 2; i++ {
-			if v := latencyMs(client, s.Ping); v > 0 && v < m {
-				m = v
+	pings := make([]float64, len(libreServers))
+	var wg sync.WaitGroup
+	for i, s := range libreServers {
+		i, s := i, s
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m := math.Inf(1)
+			for j := 0; j < 2; j++ {
+				if v := latencyMs(client, s.Ping); v > 0 && v < m {
+					m = v
+				}
 			}
-		}
-		if m < bestPing {
-			bestPing = m
-			best = s
+			pings[i] = m
+		}()
+	}
+	wg.Wait()
+	best := 0
+	for i := 1; i < len(pings); i++ {
+		if pings[i] < pings[best] {
+			best = i
 		}
 	}
-	return best
+	return libreServers[best]
 }
 
 // idleLatency warms the connection, then takes the median of many quiet samples
@@ -240,35 +265,42 @@ func (z *zeroReader) Read(p []byte) (int, error) {
 // streamThroughput runs `streams` parallel transfers (each calling do, which adds
 // the bytes it moves to the shared counter) for lsWarmup+lsMeasure, sampling
 // latency at pingURL during the measurement window. Returns steady-state Mbit/s
-// and the median loaded latency.
+// and the median loaded latency. In-flight transfers are cancelled the moment the
+// window ends (a stream mid-100MB-chunk on a slow link would otherwise block the
+// phase for minutes and burn the shared ctx budget).
 func streamThroughput(ctx context.Context, client *http.Client, streams int, pingURL string, do func(ctx context.Context, total *int64) error) (float64, float64, error) {
-	var total int64
-	var firstErr atomic.Value
-	done := make(chan struct{})
+	phaseCtx, cancelPhase := context.WithCancel(ctx)
+	defer cancelPhase()
+
+	var total, completions int64
+	var errMu sync.Mutex
+	var firstErr error
 	var wg sync.WaitGroup
 	for i := 0; i < streams; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
-				select {
-				case <-done:
+				if phaseCtx.Err() != nil {
 					return
-				case <-ctx.Done():
-					return
-				default:
 				}
-				if err := do(ctx, &total); err != nil {
-					if firstErr.Load() == nil {
-						firstErr.Store(err)
+				err := do(phaseCtx, &total)
+				switch {
+				case phaseCtx.Err() != nil:
+					return // cancelled mid-transfer at window end — not a real failure
+				case err != nil:
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = err
 					}
+					errMu.Unlock()
 					select {
-					case <-done:
-						return
-					case <-ctx.Done():
+					case <-phaseCtx.Done():
 						return
 					case <-time.After(150 * time.Millisecond):
 					}
+				default:
+					atomic.AddInt64(&completions, 1)
 				}
 			}
 		}()
@@ -276,32 +308,37 @@ func streamThroughput(ctx context.Context, client *http.Client, streams int, pin
 
 	select {
 	case <-time.After(lsWarmup):
-	case <-ctx.Done():
+	case <-phaseCtx.Done():
 	}
 	b0 := atomic.LoadInt64(&total)
 	t0 := time.Now()
 	var lat []float64
 	deadline := time.Now().Add(lsMeasure)
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) && phaseCtx.Err() == nil {
 		if m := latencyMs(client, pingURL); m > 0 {
 			lat = append(lat, m)
 		}
 		select {
 		case <-time.After(200 * time.Millisecond):
-		case <-ctx.Done():
+		case <-phaseCtx.Done():
 			deadline = time.Now()
 		}
 	}
 	b1 := atomic.LoadInt64(&total)
 	dt := time.Since(t0).Seconds()
-	close(done)
+	cancelPhase() // abort in-flight chunks immediately; measured bytes are already counted
 	wg.Wait()
 
-	if b1-b0 == 0 {
-		if e, ok := firstErr.Load().(error); ok {
-			return 0, 0, e
-		}
-		return 0, median(lat), nil
+	errMu.Lock()
+	err := firstErr
+	errMu.Unlock()
+	// No request ever completed cleanly → surface the failure even if some bytes
+	// dribbled in mid-flight (a near-zero reading with no error would mislead).
+	if atomic.LoadInt64(&completions) == 0 && err != nil {
+		return 0, median(lat), err
+	}
+	if b1-b0 == 0 || dt <= 0 {
+		return 0, median(lat), err
 	}
 	return float64(b1-b0) * 8 / 1e6 / dt, median(lat), nil
 }

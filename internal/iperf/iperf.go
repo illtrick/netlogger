@@ -29,10 +29,15 @@ type Interval struct {
 type Result struct {
 	Intervals         []Interval `json:"intervals"`
 	SumBitsPerSec     float64    `json:"sum_bits_per_second"`
-	SumRecvBitsPerSec float64    `json:"sum_recv_bits_per_second"` // client-received rate; the meaningful number for -R/--bidir download
-	SumRetransmits    int        `json:"sum_retransmits"`
-	UDPLostPercent    float64    `json:"udp_lost_percent"`
-	UDPJitterMs       float64    `json:"udp_jitter_ms"`
+	SumRecvBitsPerSec float64    `json:"sum_recv_bits_per_second"` // client-received rate; the meaningful number for -R download
+	// SumRecvBidirBitsPerSec is the client-received rate of the REVERSE direction
+	// in a --bidir run (end.sum_received_bidir_reverse). In bidir JSON, sum_sent/
+	// sum_received describe only the client→server direction, so the download
+	// number must come from the *_bidir_reverse block.
+	SumRecvBidirBitsPerSec float64 `json:"sum_recv_bidir_bits_per_second"`
+	SumRetransmits         int     `json:"sum_retransmits"`
+	UDPLostPercent         float64 `json:"udp_lost_percent"`
+	UDPJitterMs            float64 `json:"udp_jitter_ms"`
 }
 
 type rawResult struct {
@@ -55,6 +60,9 @@ type rawResult struct {
 		SumReceived struct {
 			BitsPerSecond float64 `json:"bits_per_second"`
 		} `json:"sum_received"`
+		SumReceivedBidirReverse struct {
+			BitsPerSecond float64 `json:"bits_per_second"`
+		} `json:"sum_received_bidir_reverse"`
 		Sum struct {
 			JitterMs    float64 `json:"jitter_ms"`
 			LostPercent float64 `json:"lost_percent"`
@@ -79,6 +87,7 @@ func Parse(data []byte) (Result, error) {
 		UDPJitterMs:    raw.End.Sum.JitterMs,
 	}
 	res.SumRecvBitsPerSec = raw.End.SumReceived.BitsPerSecond
+	res.SumRecvBidirBitsPerSec = raw.End.SumReceivedBidirReverse.BitsPerSecond
 	for _, iv := range raw.Intervals {
 		res.Intervals = append(res.Intervals, Interval{
 			StartS:        iv.Sum.Start,
@@ -156,10 +165,10 @@ func Version() string {
 type Opts struct {
 	DurationS   int
 	UDP         bool
-	BitrateMbit int  // UDP target bitrate in Mbit/s; 0 = iperf3 default
+	BitrateMbit int  // -b target bitrate in Mbit/s (TCP pacing or UDP rate); 0 = iperf3 default
 	Port        int  // 0 = iperf3 default (5201)
 	Streams     int  // -P parallel streams; 0 = single stream (one-thread-per-stream needs iperf3 >= 3.16)
-	Reverse     bool // -R: server sends, client receives (download from the client's seat)
+	Reverse     bool // -R: server sends, client receives (download from the client's seat); ignored when Bidir is set
 	Bidir       bool // --bidir: simultaneous both directions (needs iperf3 >= 3.7)
 	OmitS       int  // -O: omit the first N seconds (skip TCP slow-start)
 }
@@ -178,11 +187,12 @@ func buildArgs(target string, o Opts) []string {
 	if o.OmitS > 0 {
 		args = append(args, "-O", strconv.Itoa(o.OmitS))
 	}
-	if o.Reverse {
-		args = append(args, "-R")
-	}
-	if o.Bidir {
+	// -R and --bidir are mutually exclusive in iperf3; bidir wins if both are set.
+	switch {
+	case o.Bidir:
 		args = append(args, "--bidir")
+	case o.Reverse:
+		args = append(args, "-R")
 	}
 	if o.UDP {
 		args = append(args, "-u")

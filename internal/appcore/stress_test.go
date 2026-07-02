@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -114,6 +115,33 @@ func TestStressAutoAbortsFailingLink(t *testing.T) {
 	a.stopStressLocal("r2")
 }
 
+func TestStartStressReportsFailures(t *testing.T) {
+	a := &App{nodeID: "self"}
+	a.startLocalStress = func(o StressOpts) error { return errStressBusy }
+	a.FetchStressStart = func(baseURL string, o StressOpts) error { return errors.New("unreachable") }
+	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "10.0.0.1:8088"}
+	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
+	_, count := a.StartStress(self, peers, StressParams{DurationS: 30, NowUnixUS: 1})
+	if count != 0 {
+		t.Fatalf("nothing accepted the run, count = %d, want 0", count)
+	}
+}
+
+func TestSanitizeTargets(t *testing.T) {
+	in := []string{"a", "b", "a", "", "c"}
+	got := sanitizeTargets(in)
+	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("dedupe wrong: %v", got)
+	}
+	big := make([]string, 200)
+	for i := range big {
+		big[i] = "t" + strconv.Itoa(i)
+	}
+	if got := sanitizeTargets(big); len(got) != stressMaxTargets {
+		t.Fatalf("cap = %d, want %d", len(got), stressMaxTargets)
+	}
+}
+
 func TestStartStressFansOutPerNodeTargets(t *testing.T) {
 	a := &App{nodeID: "self"}
 	started := map[string]StressOpts{}
@@ -126,8 +154,11 @@ func TestStartStressFansOutPerNodeTargets(t *testing.T) {
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "10.0.0.1:8088"}
 	peers := []PeerInfo{{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"}}
 
-	a.StartStress(self, peers, StressParams{PerLinkCapMbit: 100, Proto: "tcp", DurationS: 30, NowUnixUS: 1_000_000})
+	_, count := a.StartStress(self, peers, StressParams{PerLinkCapMbit: 100, Proto: "tcp", DurationS: 30, NowUnixUS: 1_000_000})
 
+	if count != 2 {
+		t.Fatalf("started count = %d, want 2", count)
+	}
 	if len(localOpts.Targets) != 1 || localOpts.Targets[0] != "10.0.0.2" {
 		t.Fatalf("self targets wrong: %+v", localOpts.Targets)
 	}

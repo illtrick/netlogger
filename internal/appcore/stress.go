@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -78,6 +79,28 @@ func startDelay(nowUS, startAtUS int64) int64 {
 
 var errStressBusy = errors.New("a stress run is already active")
 
+const (
+	stressMaxTargets = 64               // cap a peer-supplied target list (goroutines + iperf3 processes each)
+	stressMaxDelay   = 10 * time.Second // the protocol schedules 2s ahead; clock skew must not wedge the node
+)
+
+// sanitizeTargets dedupes and caps a peer-supplied target list.
+func sanitizeTargets(ts []string) []string {
+	seen := make(map[string]bool, len(ts))
+	out := make([]string, 0, len(ts))
+	for _, t := range ts {
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+		if len(out) >= stressMaxTargets {
+			break
+		}
+	}
+	return out
+}
+
 // stressRun is one active stress run on this node.
 type stressRun struct {
 	runID    string
@@ -94,36 +117,47 @@ type stressRun struct {
 // startStressLocal schedules and launches the load goroutines. Rejects a start
 // while a run is already active.
 func (a *App) startStressLocal(o StressOpts) error {
-	a.stressMu.Lock()
-	defer a.stressMu.Unlock()
-	if a.stress != nil && a.stress.running {
-		return errStressBusy
-	}
+	// Sanitize peer-supplied inputs before anything else.
+	targets := sanitizeTargets(o.Targets)
 	dur := o.DurationS
 	if dur <= 0 || dur > 600 {
 		dur = 60
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	now := time.Now().UnixMicro()
 	run := &stressRun{
 		runID:  o.RunID,
 		cancel: cancel,
-		links:  make(map[string]*LinkLoad, len(o.Targets)),
+		links:  make(map[string]*LinkLoad, len(targets)),
 	}
-	for _, tg := range o.Targets {
+	for _, tg := range targets {
 		run.links[tg] = &LinkLoad{Target: tg}
 	}
-	a.stress = run
+	run.running = true
 
+	a.stressMu.Lock()
+	if a.stress != nil && a.stress.running {
+		a.stressMu.Unlock()
+		cancel()
+		return errStressBusy
+	}
+	a.stress = run
+	a.stressMu.Unlock()
+
+	// Event + heatmap span OUTSIDE stressMu: recordEvent does a synchronous
+	// SQLite insert that must not stall /api/stress/status or stop requests.
 	a.recordTestEvent("stress test started (full mesh, " + strconv.Itoa(o.PerLinkCapMbit) + " Mbit/s)")
 	run.finalize = a.markTestSpan("stress test", int64(dur)*1000)
 
 	capMbit := o.PerLinkCapMbit
 	proto := o.Proto
 	delay := time.Duration(startDelay(now, o.StartAtUnixUS)) * time.Microsecond
+	if delay > stressMaxDelay {
+		delay = stressMaxDelay // a skewed orchestrator clock must not wedge the node in a silent "running" state
+	}
 
-	run.running = true
-	for _, tg := range o.Targets {
+	for _, tg := range targets {
 		tg := tg
 		run.wg.Add(1)
 		go func() {
@@ -145,22 +179,27 @@ func (a *App) startStressLocal(o StressOpts) error {
 		}()
 	}
 
+	a.stressWG.Add(1)
 	go func() {
+		defer a.stressWG.Done()
 		select {
 		case <-ctx.Done():
 		case <-time.After(delay + time.Duration(dur)*time.Second):
 			cancel()
 		}
 		run.wg.Wait()
-		if run.finalize != nil {
-			run.finalize()
-		}
-		a.recordTestEvent("stress test ended")
+		// Free the busy slot BEFORE the bookkeeping below: finalize/recordEvent
+		// write to SQLite, and an immediate restart must not be spuriously
+		// rejected while that happens.
 		a.stressMu.Lock()
 		run.mu.Lock()
 		run.running = false
 		run.mu.Unlock()
 		a.stressMu.Unlock()
+		if run.finalize != nil {
+			run.finalize()
+		}
+		a.recordTestEvent("stress test ended")
 	}()
 	return nil
 }
@@ -340,8 +379,11 @@ type StressParams struct {
 }
 
 // StartStress fans a full-mesh stress run out to every node with a shared run id
-// and a start time 2 seconds ahead so all nodes begin together.
-func (a *App) StartStress(self PeerInfo, peers []PeerInfo, p StressParams) string {
+// and a start time 2 seconds ahead so all nodes begin together. It returns the
+// run id and how many nodes accepted the start — 0 means nothing is running
+// (e.g. the local node was still busy and every peer was unreachable), which the
+// caller must surface instead of pretending a run began.
+func (a *App) StartStress(self PeerInfo, peers []PeerInfo, p StressParams) (string, int) {
 	now := p.NowUnixUS
 	if now == 0 {
 		now = timeNow().UnixMicro()
@@ -363,15 +405,22 @@ func (a *App) StartStress(self PeerInfo, peers []PeerInfo, p StressParams) strin
 	if local == nil {
 		local = a.startStressLocal
 	}
+	started := 0
 	for id, node := range byID {
 		o := mk(id)
+		var err error
 		if id == a.nodeID {
-			_ = local(o)
+			err = local(o)
 		} else {
-			_ = a.FetchStressStart("http://"+node.Addr, o)
+			err = a.FetchStressStart("http://"+node.Addr, o)
+		}
+		if err == nil {
+			started++
+		} else {
+			log.Printf("stress start on %s: %v", node.Host, err)
 		}
 	}
-	return runID
+	return runID, started
 }
 
 // StopStress fans a stop to self + every peer.
