@@ -3,6 +3,7 @@
 package iperf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,11 +27,17 @@ type Interval struct {
 
 // Result is the parsed iperf3 run.
 type Result struct {
-	Intervals      []Interval `json:"intervals"`
-	SumBitsPerSec  float64    `json:"sum_bits_per_second"`
-	SumRetransmits int        `json:"sum_retransmits"`
-	UDPLostPercent float64    `json:"udp_lost_percent"`
-	UDPJitterMs    float64    `json:"udp_jitter_ms"`
+	Intervals         []Interval `json:"intervals"`
+	SumBitsPerSec     float64    `json:"sum_bits_per_second"`
+	SumRecvBitsPerSec float64    `json:"sum_recv_bits_per_second"` // client-received rate; the meaningful number for -R download
+	// SumRecvBidirBitsPerSec is the client-received rate of the REVERSE direction
+	// in a --bidir run (end.sum_received_bidir_reverse). In bidir JSON, sum_sent/
+	// sum_received describe only the client→server direction, so the download
+	// number must come from the *_bidir_reverse block.
+	SumRecvBidirBitsPerSec float64 `json:"sum_recv_bidir_bits_per_second"`
+	SumRetransmits         int     `json:"sum_retransmits"`
+	UDPLostPercent         float64 `json:"udp_lost_percent"`
+	UDPJitterMs            float64 `json:"udp_jitter_ms"`
 }
 
 type rawResult struct {
@@ -50,6 +57,12 @@ type rawResult struct {
 			BitsPerSecond float64 `json:"bits_per_second"`
 			Retransmits   int     `json:"retransmits"`
 		} `json:"sum_sent"`
+		SumReceived struct {
+			BitsPerSecond float64 `json:"bits_per_second"`
+		} `json:"sum_received"`
+		SumReceivedBidirReverse struct {
+			BitsPerSecond float64 `json:"bits_per_second"`
+		} `json:"sum_received_bidir_reverse"`
 		Sum struct {
 			JitterMs    float64 `json:"jitter_ms"`
 			LostPercent float64 `json:"lost_percent"`
@@ -73,6 +86,8 @@ func Parse(data []byte) (Result, error) {
 		UDPLostPercent: raw.End.Sum.LostPercent,
 		UDPJitterMs:    raw.End.Sum.JitterMs,
 	}
+	res.SumRecvBitsPerSec = raw.End.SumReceived.BitsPerSecond
+	res.SumRecvBidirBitsPerSec = raw.End.SumReceivedBidirReverse.BitsPerSecond
 	for _, iv := range raw.Intervals {
 		res.Intervals = append(res.Intervals, Interval{
 			StartS:        iv.Sum.Start,
@@ -150,8 +165,12 @@ func Version() string {
 type Opts struct {
 	DurationS   int
 	UDP         bool
-	BitrateMbit int // UDP target bitrate in Mbit/s; 0 = iperf3 default
-	Port        int // 0 = iperf3 default (5201)
+	BitrateMbit int  // -b target bitrate in Mbit/s (TCP pacing or UDP rate); 0 = iperf3 default
+	Port        int  // 0 = iperf3 default (5201)
+	Streams     int  // -P parallel streams; 0 = single stream (one-thread-per-stream needs iperf3 >= 3.16)
+	Reverse     bool // -R: server sends, client receives (download from the client's seat); ignored when Bidir is set
+	Bidir       bool // --bidir: simultaneous both directions (needs iperf3 >= 3.7)
+	OmitS       int  // -O: omit the first N seconds (skip TCP slow-start)
 }
 
 func buildArgs(target string, o Opts) []string {
@@ -162,27 +181,46 @@ func buildArgs(target string, o Opts) []string {
 	if o.Port > 0 {
 		args = append(args, "-p", strconv.Itoa(o.Port))
 	}
+	if o.Streams > 0 {
+		args = append(args, "-P", strconv.Itoa(o.Streams))
+	}
+	if o.OmitS > 0 {
+		args = append(args, "-O", strconv.Itoa(o.OmitS))
+	}
+	// -R and --bidir are mutually exclusive in iperf3; bidir wins if both are set.
+	switch {
+	case o.Bidir:
+		args = append(args, "--bidir")
+	case o.Reverse:
+		args = append(args, "-R")
+	}
 	if o.UDP {
 		args = append(args, "-u")
-		if o.BitrateMbit > 0 {
-			args = append(args, "-b", strconv.Itoa(o.BitrateMbit)+"M")
-		}
+	}
+	if o.BitrateMbit > 0 {
+		args = append(args, "-b", strconv.Itoa(o.BitrateMbit)+"M")
 	}
 	return args
 }
 
-// RunClient runs iperf3 (bundled or on PATH) and parses the result. It returns
-// a clear error if no iperf3 binary is found.
-func RunClient(target string, o Opts) (Result, error) {
+// RunClientCtx is RunClient with a context: cancelling ctx kills the iperf3
+// process (used by the stress test's kill-switch and duration cap).
+func RunClientCtx(ctx context.Context, target string, o Opts) (Result, error) {
 	bin := binary()
 	if bin == "" {
 		return Result{}, fmt.Errorf("iperf3 not found (bundle it next to NetLogger or install it) — cannot run load test")
 	}
-	cc := exec.Command(bin, buildArgs(target, o)...)
+	cc := exec.CommandContext(ctx, bin, buildArgs(target, o)...)
 	hideConsole(cc)
 	out, err := cc.Output()
 	if err != nil && len(out) == 0 {
 		return Result{}, fmt.Errorf("iperf3 run: %w", err)
 	}
 	return Parse(out)
+}
+
+// RunClient runs iperf3 (bundled or on PATH) and parses the result. It returns
+// a clear error if no iperf3 binary is found.
+func RunClient(target string, o Opts) (Result, error) {
+	return RunClientCtx(context.Background(), target, o)
 }

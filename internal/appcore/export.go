@@ -30,6 +30,9 @@ type ExportBundle struct {
 	Events           []store.ConnEvent `json:"events"`
 	NICs             []NICInfo         `json:"nics"`
 	SampleCount      int               `json:"sample_count"`
+	// Recent test history (newest first) so an analyst sees throughput trends.
+	InternetTests []store.TestResult `json:"internet_tests,omitempty"`
+	SweepTests    []store.TestResult `json:"sweep_tests,omitempty"`
 }
 
 // Export builds a bundle from the current snapshot + store. unixNow is injected
@@ -67,6 +70,8 @@ func (a *App) Export(unixNow int64) ExportBundle {
 		Events:           events,
 		NICs:             snap.NICs,
 		SampleCount:      count,
+		InternetTests:    a.TestHistory("internet", 50),
+		SweepTests:       a.TestHistory("sweep", 50),
 	}
 }
 

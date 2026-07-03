@@ -16,18 +16,22 @@ import (
 // Dark "ops dashboard" palette. Single source of truth — never hardcode a hex
 // twice. Mental dark-mode check: primary text light, background near-black.
 var (
-	colBg       = color.NRGBA{R: 0x0E, G: 0x16, B: 0x20, A: 0xFF}
-	colTitleBar = color.NRGBA{R: 0x11, G: 0x1A, B: 0x26, A: 0xFF}
-	colCard     = color.NRGBA{R: 0x16, G: 0x1E, B: 0x29, A: 0xFF}
-	colCardAlt  = color.NRGBA{R: 0x13, G: 0x1C, B: 0x27, A: 0xFF}
-	colBorder   = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x12}
-	colTextPri  = color.NRGBA{R: 0xEA, G: 0xF1, B: 0xF8, A: 0xFF}
-	colTextSec  = color.NRGBA{R: 0x93, G: 0xA1, B: 0xB0, A: 0xFF}
-	colTextMut  = color.NRGBA{R: 0x6E, G: 0x7B, B: 0x8A, A: 0xFF}
-	colAccent   = color.NRGBA{R: 0x58, G: 0xA6, B: 0xFF, A: 0xFF}
-	colGood     = color.NRGBA{R: 0x3F, G: 0xB9, B: 0x50, A: 0xFF}
-	colWatch    = color.NRGBA{R: 0xD2, G: 0x99, B: 0x22, A: 0xFF}
-	colBad      = color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0xFF}
+	colBg        = color.NRGBA{R: 0x0E, G: 0x16, B: 0x20, A: 0xFF}
+	colTitleBar  = color.NRGBA{R: 0x11, G: 0x1A, B: 0x26, A: 0xFF}
+	colCard      = color.NRGBA{R: 0x16, G: 0x1E, B: 0x29, A: 0xFF}
+	colCardAlt   = color.NRGBA{R: 0x13, G: 0x1C, B: 0x27, A: 0xFF}
+	colBorder    = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x12}
+	colOutline   = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x28} // visible hairline for outlined (ghost) controls
+	colTextPri   = color.NRGBA{R: 0xEA, G: 0xF1, B: 0xF8, A: 0xFF}
+	colTextSec   = color.NRGBA{R: 0x93, G: 0xA1, B: 0xB0, A: 0xFF}
+	colTextMut   = color.NRGBA{R: 0x6E, G: 0x7B, B: 0x8A, A: 0xFF}
+	colAccent    = color.NRGBA{R: 0x58, G: 0xA6, B: 0xFF, A: 0xFF}
+	colGood      = color.NRGBA{R: 0x3F, G: 0xB9, B: 0x50, A: 0xFF}
+	colWatch     = color.NRGBA{R: 0xD2, G: 0x99, B: 0x22, A: 0xFF}
+	colBad       = color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0xFF}
+	colBadTint   = color.NRGBA{R: 0xF8, G: 0x51, B: 0x49, A: 0x18} // low-alpha red wash for the running-stress banner
+	colTrack     = color.NRGBA{R: 0x0A, G: 0x11, B: 0x19, A: 0xFF} // recessed track behind load bars
+	colTestingBG = color.NRGBA{R: 0x14, G: 0x2A, B: 0x45, A: 0xFF} // accent-washed surface for a cell under test
 )
 
 // Semantic aliases kept so existing call sites read naturally on the new palette.
@@ -101,6 +105,33 @@ func chipLabel(gtx layout.Context, th *material.Theme, txt string, fg, bg color.
 	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(image.Rectangle{Max: dims.Size}, gtx.Dp(unit.Dp(5))).Op(gtx.Ops))
 	call.Add(gtx.Ops)
 	return dims
+}
+
+// deviceLabel renders a device identity per the naming convention in
+// docs/design-guide.md: the common device name large and primary, with the IP
+// smaller and muted beneath it when the IP adds information (i.e. differs from the
+// name). When only an address is known, the address stands alone as the primary.
+func deviceLabel(gtx layout.Context, th *material.Theme, name, ip string) layout.Dimensions {
+	primary := name
+	if primary == "" {
+		primary = ip
+	}
+	showIP := ip != "" && ip != primary
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, primary)
+			lbl.Color = colTextPri
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !showIP {
+				return layout.Dimensions{}
+			}
+			lbl := material.Label(th, unit.Sp(11), ip)
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
+		}),
+	)
 }
 
 // darkTheme returns a copy of base with the dark palette applied.

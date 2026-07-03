@@ -69,6 +69,15 @@ CREATE TABLE IF NOT EXISTS connectivity_events (
   detail     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conn_agent_ts ON connectivity_events(agent_id, ts_unix_us);
+CREATE TABLE IF NOT EXISTS test_results (
+  ts_unix_us INTEGER NOT NULL,
+  kind       TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  down_mbit  REAL NOT NULL,
+  up_mbit    REAL NOT NULL,
+  detail     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_test_results ON test_results(kind, ts_unix_us);
 `
 
 var pragmas = []string{
@@ -344,6 +353,47 @@ func (s *Store) ConnectivityEvents(agentID string) ([]ConnEvent, error) {
 		}
 		e.Online = on == 1
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// TestResult is one persisted speed/sweep test outcome for history views.
+type TestResult struct {
+	TSUnixUS int64   `json:"ts_unix_us"`
+	Kind     string  `json:"kind"`  // "internet" | "sweep"
+	Label    string  `json:"label"` // endpoint / run description
+	DownMbit float64 `json:"down_mbit"`
+	UpMbit   float64 `json:"up_mbit"`
+	Detail   string  `json:"detail"` // grade, slowest pair, …
+}
+
+// InsertTestResult records a completed test for the history views.
+func (s *Store) InsertTestResult(r TestResult) error {
+	_, err := s.db.Exec(
+		`INSERT INTO test_results (ts_unix_us,kind,label,down_mbit,up_mbit,detail) VALUES (?,?,?,?,?,?)`,
+		r.TSUnixUS, r.Kind, r.Label, r.DownMbit, r.UpMbit, r.Detail)
+	if err != nil {
+		return fmt.Errorf("insert test result: %w", err)
+	}
+	return nil
+}
+
+// TestResults returns the most recent `limit` results of kind, newest first.
+func (s *Store) TestResults(kind string, limit int) ([]TestResult, error) {
+	rows, err := s.db.Query(
+		`SELECT ts_unix_us,kind,label,down_mbit,up_mbit,COALESCE(detail,'') FROM test_results
+		 WHERE kind=? ORDER BY ts_unix_us DESC LIMIT ?`, kind, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query test results: %w", err)
+	}
+	defer rows.Close()
+	var out []TestResult
+	for rows.Next() {
+		var r TestResult
+		if err := rows.Scan(&r.TSUnixUS, &r.Kind, &r.Label, &r.DownMbit, &r.UpMbit, &r.Detail); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

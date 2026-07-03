@@ -42,6 +42,7 @@ type Snapshot struct {
 	LastRTTms        float64
 	LossPct          float64
 	Peers            []PeerInfo
+	SelfPeer         PeerInfo
 	GatewayIP        string
 	GatewayRTTms     float64
 	GatewayLossPct   float64
@@ -111,6 +112,11 @@ type App struct {
 	FetchLinks func(baseURL string) (LinkReport, error)
 	// FetchEvents fetches a peer's recent-event ring; defaults to an HTTP call.
 	FetchEvents func(baseURL string) ([]EventInfo, error)
+	// FetchSpeed asks a peer to run a speed test (defaults to postSpeedTest).
+	FetchSpeed func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error)
+	// localSpeed runs a speed test on this node (defaults to runSpeedTest over
+	// a ctx-bound iperf.RunClientCtx so a stopped sweep kills the client).
+	localSpeed  func(ctx context.Context, req SpeedReq) SpeedResult
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
@@ -150,6 +156,29 @@ type App struct {
 	nicTick     time.Duration
 	nicMu       sync.Mutex
 	nics        []NICInfo
+
+	// stressRunner runs one capped iperf3 client (defaults to iperf.RunClientCtx);
+	// injectable for tests.
+	stressRunner func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error)
+	stressMu     sync.Mutex
+	stress       *stressRun
+	// stressWG tracks stress lifecycle goroutines so Stop() can wait for them
+	// before closing the store (they record an "ended" event on completion).
+	stressWG sync.WaitGroup
+
+	// testWindows records spans during which a test ran, for the heatmap hover.
+	testWinMu   sync.Mutex
+	testWindows []*testWindow
+
+	// Stress orchestration seams (default to the HTTP clients / local manager).
+	FetchStressStart  func(baseURL string, o StressOpts) error
+	FetchStressStop   func(baseURL, runID string) error
+	FetchStressStatus func(baseURL string) (StressStatus, error)
+	startLocalStress  func(StressOpts) error
+
+	// Internet test seams.
+	localInternet func(endpoint string, prog func(InternetProgress)) InternetResult
+	FetchInternet func(baseURL, endpoint string) (InternetResult, error)
 
 	// eventMu (leaf) guards an in-memory ring of the most recent connectivity
 	// events so the UI can show a live log without re-reading the store.
@@ -253,6 +282,32 @@ func New(dataDir string) *App {
 		FetchEvents: func(baseURL string) ([]EventInfo, error) {
 			return fetchEvents(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
+		FetchSpeed: func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
+			return postSpeedTest(ctx, &http.Client{Timeout: 90 * time.Second}, baseURL, req)
+		},
+		localSpeed: func(ctx context.Context, req SpeedReq) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
+				return iperf.RunClientCtx(ctx, t, o)
+			}, req.Target, req)
+		},
+		stressRunner: iperf.RunClientCtx,
+		FetchStressStart: func(baseURL string, o StressOpts) error {
+			return postStressStart(&http.Client{Timeout: 10 * time.Second}, baseURL, o)
+		},
+		FetchStressStop: func(baseURL, runID string) error {
+			return postStressStop(&http.Client{Timeout: 5 * time.Second}, baseURL, runID)
+		},
+		FetchStressStatus: func(baseURL string) (StressStatus, error) {
+			return fetchStressStatus(&http.Client{Timeout: 3 * time.Second}, baseURL)
+		},
+		localInternet: func(endpoint string, prog func(InternetProgress)) InternetResult {
+			return runInternet(defaultInternetDeps(endpoint, prog), prog)
+		},
+		FetchInternet: func(baseURL, endpoint string) (InternetResult, error) {
+			// Must exceed the remote's full test: server pick + idle baseline +
+			// two (warm-up + 10s steady-state) phases ≈ 40-50s on a healthy link.
+			return postInternet(&http.Client{Timeout: 120 * time.Second}, baseURL, endpoint)
+		},
 		InternetIP:   internetTarget,
 		firstSeen:    make(map[string]time.Time),
 		rttHist:      make(map[string]*histRing),
@@ -313,6 +368,9 @@ func defaultStartIperf(dir string) (func(), string) {
 		log.Printf("iperf3 bootstrap: %v", err)
 	}
 	ver := iperf.Version()
+	if ver != "" {
+		log.Printf("iperf3 ready: %s (parallel/-P and --bidir require >= 3.16/3.7)", ver)
+	}
 	srv := iperf.StartServer(0)
 	if srv == nil {
 		// No iperf3 binary available: report no server (nil stop).
@@ -381,6 +439,17 @@ func (a *App) Start() error {
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		mux.Handle("/api/events", eventsHandler(a.recentEvents))
 		mux.Handle("/api/lossbuckets", lossBucketsHandler(a.LossHeat))
+		mux.Handle("/api/speedtest", speedTestHandler(func(ctx context.Context, req SpeedReq) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
+				return iperf.RunClientCtx(ctx, t, o) // orchestrator hangs up → iperf3 dies
+			}, req.Target, req)
+		}))
+		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
+		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))
+		mux.Handle("/api/stress/status", stressStatusHandler(a.stressStatusLocal))
+		mux.Handle("/api/internet", internetHandler(func(ep string) InternetResult {
+			return a.runLocalInternet(ep, nil) // remote callers get only the final result
+		}))
 		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
@@ -745,6 +814,7 @@ func (a *App) Snapshot() Snapshot {
 		LastRTTms:      a.lastRTTms,
 		LossPct:        loss,
 		Peers:          peers,
+		SelfPeer:       PeerInfo{ID: a.nodeID, Host: a.host, Addr: "127.0.0.1:" + strconv.Itoa(controlPort)},
 		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
 		SessionUptimeSec: int64(time.Since(a.startedAt).Seconds()),
 		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
@@ -985,6 +1055,8 @@ func (a *App) SetPreventSleep(on bool) {
 func (a *App) Stop() error {
 	var err error
 	a.stopOnce.Do(func() {
+		a.stopStressLocal("") // kill any in-flight stress load on app shutdown
+		a.stressWG.Wait()     // lifecycle goroutines write the store; wait before Close
 		if a.cancel != nil {
 			a.cancel()
 		}

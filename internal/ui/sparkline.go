@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"math"
 
 	"gioui.org/f32"
 	"gioui.org/layout"
@@ -37,6 +38,47 @@ func normalize(v []float64) []float64 {
 		out[i] = (x - min) / (max - min)
 	}
 	return out
+}
+
+// multiSparkline draws several series on ONE shared min/max scale in a w×h dp box,
+// so the lines are directly comparable (used for per-link latency-under-load).
+func multiSparkline(gtx layout.Context, serieses [][]float64, cols []color.NRGBA, w, h int) layout.Dimensions {
+	sz := image.Pt(gtx.Dp(unit.Dp(w)), gtx.Dp(unit.Dp(h)))
+	min, max := math.Inf(1), math.Inf(-1)
+	for _, s := range serieses {
+		for _, x := range s {
+			if x < min {
+				min = x
+			}
+			if x > max {
+				max = x
+			}
+		}
+	}
+	if math.IsInf(min, 1) {
+		return layout.Dimensions{Size: sz}
+	}
+	span := max - min
+	yf := func(v float64) float32 {
+		if span == 0 {
+			return float32(sz.Y) / 2
+		}
+		return float32(sz.Y) - float32((v-min)/span)*float32(sz.Y)
+	}
+	for si, s := range serieses {
+		if len(s) < 2 {
+			continue
+		}
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		xf := func(i int) float32 { return float32(i) / float32(len(s)-1) * float32(sz.X) }
+		p.MoveTo(f32.Pt(xf(0), yf(s[0])))
+		for i := 1; i < len(s); i++ {
+			p.LineTo(f32.Pt(xf(i), yf(s[i])))
+		}
+		paint.FillShape(gtx.Ops, cols[si%len(cols)], clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(unit.Dp(1.5)))}.Op())
+	}
+	return layout.Dimensions{Size: sz}
 }
 
 // sparkline draws series as a line chart filling a w×h dp box.
