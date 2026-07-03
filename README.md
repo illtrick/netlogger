@@ -1,78 +1,118 @@
 # NetLogger
 
-A cross-platform LAN diagnostic tool for isolating intermittent, load-triggered network drops. You **deploy** an agent to each machine, **verify** it's configured correctly, **run** probe + load tests, and read **per-component health and test coverage** — letting you isolate a fault (a switch, a cable, a NIC) from endpoint behavior alone. No wizards, no per-vendor opinions: it measures and reports; you conclude.
+**A portable, zero-config LAN diagnostic tool for catching intermittent, load-triggered network faults.**
 
-> Status: **M1 (Windows core vertical slice) complete.** See the [roadmap](#roadmap).
+Drop the same single `NetLogger.exe` on every Windows machine on your network. The copies find each other automatically, probe every link continuously, and line their timelines up side by side — so when your stream stutters or your remote desktop drops at 2 AM, you can see **which machine's link** misbehaved, **when**, and **whether it happened under load**.
+
+NetLogger exists because of a real fault: a PC whose wired link silently reset only under streaming load, on a network where every one-shot speed test said "all healthy." One-shot tools can't catch intermittent faults. NetLogger watches all links, all the time, and makes concurrency visible.
+
+![status](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![go](https://img.shields.io/badge/Go-cgo--free-00ADD8)
+
+---
 
 ## What it does
 
-- **Peer-to-peer probe mesh** — ICMP baseline + isochronous UDP (loss/jitter) between host pairs, not just to the gateway. (UDP is the backbone because the real symptom is UDP.)
-- **Local-first storage** — each agent writes to its own WAL SQLite store and survives the very drops it diagnoses.
-- **Per-component health + coverage** — health from measurements; coverage from how robustly each part has been tested. A cable/segment is covered *by inference* once both its endpoints are well tested.
-- **Self-installing background service** — one Go binary per host (Windows Service / QNAP Docker / macOS LaunchDaemon).
-- **Topology as data** — the network map and device list come from a config file (`config.Load`), not hardcoded.
+### Continuous mesh monitoring (Dashboard)
 
-## Run it as an app (no terminal)
+- Every node probes every other node with **ICMP** and **high-rate isochronous UDP** (loss + jitter — the traffic class that actually breaks streams), plus the gateway and an internet anchor.
+- The **activity heatmap** lines every machine's health up on one shared time axis. Simultaneous red cells across machines point at a shared cause (switch, uplink); red on one machine points at a local cause (NIC, cable, port). Hovering a cell shows exactly what happened in that window — including whether a test was running at the time.
+- **NIC diagnostics** — link speed, power-saving states, error/discard counters, and hard **link-flap detection** (the physical Disconnected→Up events one-shot tools never see).
+- **Mesh-wide event log** — link flaps, loss episodes, node up/down, and test runs from every machine, merged onto one timeline.
 
-**Double-click `netlogger.exe`.** On first run it creates a starter config for
-this machine and opens the dashboard in your browser. From the GUI you can:
+### On-demand tests (orchestrated from any node)
 
-- **Configuration → Edit network** — add machines, set roles/addresses, draw
-  links, and Save (no YAML editing). "Save & restart" applies changes.
-- **Configuration → Run as a background service** — Install / Start / Stop /
-  Uninstall the Windows Service via a UAC prompt.
-- **Tests** — run an iperf3 load test between any two nodes.
-- **⏻ Quit** (top bar) — stop the app.
+- **LAN speed matrix** — every device pair measured in both directions (iperf3 under the hood), rendered as an N×N grid that makes the one slow leg jump out. Cells fill in live; click any cell for retransmits, RTT, and per-direction detail; Stop genuinely cancels in-flight runs, including on remote machines.
+- **Full-mesh stress test** — every node loads every other node simultaneously with rate-capped traffic *while the continuous probes keep measuring*. This is the RRUL-style method for reproducing load-triggered faults: the heatmap going red under load **is** the diagnosis. Guardrails: adjustable per-link cap, duration limit, per-link auto-abort on repeated failure, and a kill-switch.
+- **Internet speed test** — parallel-stream throughput against public LibreSpeed servers (auto-picked by ping, or pinned via dropdown), with idle vs. loaded latency measured throughout and a **bufferbloat grade (A–F)** plus RPM. Runs on any node in the mesh, so you can compare each machine's WAN path.
+- **Test history** — runs persist locally, show as trend rows in the UI, and ship in the diagnostic export.
 
-Everything auto-refreshes live. Data + the SQLite store live under
-`%ProgramData%\NetLogger\`.
+### Built like a tool you leave running
 
-## Build
+- One dark, dense dashboard — a native Gio app in a single binary. No browser, no Electron, no installer.
+- **Closes to the system tray** and keeps monitoring; left-click the tray icon to reopen, right-click for Open/Quit.
+- **One-click JSON export** bundles events, link matrix, NIC state, loss timeline, and test history for off-box analysis.
+- Everything is stored locally in a per-machine SQLite database, beside the exe. Nothing leaves your network except the internet test's own traffic.
 
-Requires Go 1.22+.
+---
+
+## Quick start
+
+1. Get `NetLogger.exe` (build it below) and copy the **same exe** to two or more Windows machines on the same LAN.
+2. Run it on each machine. It asks for elevation (needed for ICMP probing and to add its own firewall rules on first run).
+3. That's it — no config. Nodes discover each other via UDP multicast within seconds and the dashboard starts filling in. Leave it running; the value compounds with time on the clock.
+4. When something misbehaves, open the **Dashboard** heatmap and look for concurrency across machines. To provoke a suspected load-triggered fault on purpose, run the **Stress** test from the Tests tab and watch the heatmap.
+
+**Requirements:** Windows 10/11, machines on the same L2 network (multicast reachable).
+
+**Ports used** (firewall rules are added automatically when elevated):
+
+| Port | Protocol | Purpose |
+|---|---|---|
+| 8088 | TCP | Control plane (LAN-only, host-allowlisted) |
+| 8089 | UDP | Probe echo responder |
+| 5201 | TCP | Bundled iperf3 server (speed/stress tests) |
+| 48076 | UDP | Multicast discovery (`239.255.74.76`) |
+
+---
+
+## Building from source
+
+Requires **Go 1.26+**. No cgo, no C toolchain — `go build` is all it takes. For the Windows resource (app icon + elevation manifest), install [goversioninfo](https://github.com/josephspurrier/goversioninfo) once:
 
 ```powershell
-# dev build (console)
-go build -o bin/netlogger.exe ./cmd/netlogger
-go test ./...
+go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
 
-# release build: Windows GUI app (no console) + Linux (incl. QNAP arm64) + macOS
-./scripts/build.ps1
+# One-shot release build (icon, manifest, build id) → bin/NetLogger.exe
+./scripts/build-app.ps1
 ```
 
-To bundle iperf3, drop `iperf3.exe` next to `netlogger.exe` — NetLogger prefers
-a co-located iperf3 over PATH. Set the same `NETLOGGER_TOKEN` env var on every
-node to require auth on the LAN control plane (see Security below).
+Or manually:
 
-CLI still works for scripting: `netlogger install|start|stop|uninstall|run`.
+```powershell
+go generate ./cmd/netlogger-app
+$env:CGO_ENABLED = "0"
+go build -ldflags "-H windowsgui -s -w -X netlogger/internal/version.Build=$(git rev-parse --short HEAD)" -o NetLogger.exe ./cmd/netlogger-app
+```
 
-**Security:** set the same `NETLOGGER_TOKEN` env var on every node to require a bearer token on the control plane (coordinator↔agent calls carry it automatically). Loopback and the local dashboard are exempt; a Host-header allowlist blocks DNS-rebinding. With the token unset the control plane is open (safe only on the loopback default bind). The load-test endpoint is POST-only and only accepts a configured node id as its target.
+Run the tests with `go test ./...`. The app icon is generated by `go run ./tools/genicon` (committed as `cmd/netlogger-app/icon.ico`).
 
-## Architecture
+---
 
-One Go module. `internal/` packages each own one responsibility:
+## How it's put together
 
-| Package | Responsibility |
+| Package | Role |
 |---|---|
-| `config` | load/validate the network config file (topology + inventory) |
-| `clock` | UTC microsecond timestamps (+ test fake) |
-| `store` | local WAL SQLite sample store (`Insert`, cursor-based `Since`) |
-| `probe` | ICMP probe, isochronous UDP probe, and the probe→store runner |
-| `web` | embedded status SPA + `/api/status` |
-| `agentsvc` | wires the probe loop + web server into a `kardianos/service` |
+| `internal/appcore` | The engine: probe loops, peer sync, heatmap assembly, test orchestration, events, export |
+| `internal/ui` | The Gio dashboard: heatmap, tests, events, custom window chrome, tray |
+| `internal/probe` | ICMP + isochronous UDP probing and the UDP echo responder |
+| `internal/discovery` | UDP-multicast peer discovery |
+| `internal/iperf` | Bundled iperf3 wrapper: JSON parsing, parallel/reverse/bidir modes, context cancellation |
+| `internal/store` | WAL-mode SQLite persistence (samples, events, test history) |
 
-Stack: pure-Go SQLite (`modernc.org/sqlite`, no cgo), `prometheus-community/pro-bing` (ICMP via `IcmpSendEcho`, unprivileged on Windows), `kardianos/service`, `gopkg.in/yaml.v3`.
+Every node runs a small LAN-only HTTP control plane (`/api/links`, `/api/events`, `/api/lossbuckets`, `/api/speedtest`, `/api/stress/*`, `/api/internet`, …) guarded by a host allowlist. That's what lets any node orchestrate tests on any other node and assemble the mesh-wide views — the UI you're looking at is a window onto the whole mesh, not just the local machine.
 
-## Roadmap
+UI conventions live in [docs/design-guide.md](docs/design-guide.md); design specs and implementation plans are under [docs/superpowers/](docs/superpowers/).
 
-- **M1 — Windows core vertical slice** ✅ probe → store → service → status page
-- **M2a — config-driven mesh + resilient sync** ✅ cursor-based idempotent agent→coordinator aggregation
-- **M2b — readiness checks + Agents/Config views** ✅ device-agnostic per-node checks + `/api/agents` & `/api/readiness`
-- **M3 — clock-offset correlation + per-component scoring** ✅ NTP-style offset, interval-overlap correlation, `/api/correlation` & `/api/components`
-- **M4 — iperf3 load tests + classifiers** ✅ iperf3 wrap/parse, bufferbloat-vs-fault & LAN-vs-WAN, NIC counters, `/api/loadtest` & `/api/classify`
-- **M5** — QNAP agent (Docker) + analysis-bundle export
-- **M6** — macOS agent + optional packet capture
+## Honest limitations
 
-> **M1–M4 complete.** Next step is a live deploy to the real machines + a real `network.yaml` (install iperf3 where load tests are wanted), then a full diagnosis run.
+- **Windows-first.** The core is portable Go, but tray, window chrome, NIC introspection, and the bundled iperf3 are Windows implementations today.
+- Cross-machine heatmap alignment assumes roughly synced clocks (bucket-level tolerance).
+- The internet test measures latency over HTTP round-trips (slightly above ICMP ping); the bufferbloat *delta* and grade are the meaningful numbers. Internet jitter/loss aren't measured yet.
+- It reports; you conclude. NetLogger localizes a fault to a machine/link/time window — it won't tell you to replace a cable (though it has, in fact, found a bad one).
 
-Design spec: [`docs/superpowers/specs/2026-06-04-netlogger-design.md`](docs/superpowers/specs/2026-06-04-netlogger-design.md) · M1 plan: [`docs/superpowers/plans/2026-06-04-netlogger-m1-windows-core.md`](docs/superpowers/plans/2026-06-04-netlogger-m1-windows-core.md)
+---
+
+## Credits & acknowledgements
+
+NetLogger stands on excellent prior work:
+
+- **[Gio UI](https://gioui.org)** — Elias Naur and contributors. The immediate-mode, pure-Go GUI toolkit that makes a cgo-free single-binary native dashboard possible.
+- **[iperf3](https://software.es.net/iperf/)** — ESnet / Lawrence Berkeley National Laboratory (BSD-3-Clause). The canonical network load generator, bundled for the LAN speed and stress tests. The Windows build ships with **cygwin1.dll** from the [Cygwin](https://www.cygwin.com/) project (LGPL).
+- **[LibreSpeed](https://librespeed.org)** and its public server sponsors — notably **Clouvider** and **Sharktech** — whose open endpoints power the internet speed test. Please be considerate of their donated bandwidth.
+- **[Bufferbloat.net](https://www.bufferbloat.net)** — Dave Täht, Toke Høiland-Jørgensen, and the bufferbloat community. Their **[RRUL](https://www.bufferbloat.net/projects/bloat/wiki/RRUL_Spec/)** methodology (saturate while measuring latency) is the intellectual basis of the stress test, demonstrated by **[Flent](https://flent.org)**. Apple's network-responsiveness work inspired the **RPM** metric shown alongside the bufferbloat grade. Cloudflare's speed test methodology informed the measurement design.
+- **Go dependencies:** [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) (Jan Mercl's pure-Go SQLite — the reason there's no cgo), [pro-bing](https://github.com/prometheus-community/pro-bing) (Prometheus community, descended from Cameron Sparr's go-ping), [jackpal/gateway](https://github.com/jackpal/gateway), [google/uuid](https://github.com/google/uuid), [gopkg.in/yaml.v3](https://github.com/go-yaml/yaml), the golang.org/x packages, and [goversioninfo](https://github.com/josephspurrier/goversioninfo) (Joseph Spurrier) for the Windows resource embedding.
+- Built with **[Claude Code](https://claude.com/claude-code)** (Anthropic).
+
+## License
+
+No license has been chosen for this repository yet, so default copyright applies. Note for future licensing/redistribution: the bundled `iperf3.exe` is BSD-3-Clause and `cygwin1.dll` is LGPL.
