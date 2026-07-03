@@ -138,38 +138,30 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 func navTabItem(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool, barH int) layout.Dimensions {
 	return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
 		return material.Clickable(gtx, c, func(gtx layout.Context) layout.Dimensions {
-			// Measure the label first so the tab hugs it.
-			lbl := material.Label(th, unit.Sp(14), label)
-			lbl.Color = colTextSec
-			if active {
-				lbl.Color = colTextPri
-				lbl.Font.Weight = 500
-			}
-			macro := op.Record(gtx.Ops)
-			lblDims := lbl.Layout(gtx)
-			lblCall := macro.Stop()
-
-			padX := gtx.Dp(unit.Dp(16))
-			w := lblDims.Size.X + 2*padX
-			size := image.Pt(w, barH)
-
-			if active {
-				// Raised pill, centered in the bar, grey line all the way around.
-				padY := gtx.Dp(unit.Dp(7))
-				pillH := lblDims.Size.Y + 2*padY
-				top := (barH - pillH) / 2
-				r := gtx.Dp(unit.Dp(8))
-				outer := clip.RRect{Rect: image.Rect(0, top, w, top+pillH), NE: r, NW: r, SE: r, SW: r}
-				inner := clip.RRect{Rect: image.Rect(1, top+1, w-1, top+pillH-1), NE: r - 1, NW: r - 1, SE: r - 1, SW: r - 1}
-				paint.FillShape(gtx.Ops, colOutline, outer.Op(gtx.Ops)) // the grey line around the tab
-				paint.FillShape(gtx.Ops, colCard, inner.Op(gtx.Ops))    // raised surface
-			}
-			// Label dead-centered in the bar (and therefore in the pill).
-			off := image.Pt((size.X-lblDims.Size.X)/2, (size.Y-lblDims.Size.Y)/2)
-			t := op.Offset(off).Push(gtx.Ops)
-			lblCall.Add(gtx.Ops)
-			t.Pop()
-			return layout.Dimensions{Size: size}
+			// A full-bar-height box; layout.Center puts the pill on the bar's
+			// true midline — same proven primitives as every other control here,
+			// no hand-rolled offset math.
+			gtx.Constraints.Min.Y = barH
+			gtx.Constraints.Max.Y = barH
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Label(th, unit.Sp(14), label)
+				lbl.Color = colTextSec
+				if active {
+					lbl.Color = colTextPri
+					lbl.Font.Weight = 500
+				}
+				pad := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(16), Right: unit.Dp(16)}
+				if !active {
+					return pad.Layout(gtx, lbl.Layout)
+				}
+				// Raised pill with the grey line running all the way around.
+				return widget.Border{Color: colOutline, Width: unit.Dp(1), CornerRadius: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						return roundedBG(gtx, colCard, unit.Dp(8), unit.Dp(0), func(gtx layout.Context) layout.Dimensions {
+							return pad.Layout(gtx, lbl.Layout)
+						})
+					})
+			})
 		})
 	})
 }
