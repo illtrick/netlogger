@@ -130,10 +130,11 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 	return dims
 }
 
-// navTabItem renders one top-level tab. The ACTIVE tab is drawn as a connected
-// tab: a top-rounded shape in the content background whose outline joins the
-// bar's bottom hairline — the grey line visibly wraps around the current tab.
-// Inactive tabs are plain muted labels, vertically centered in the bar.
+// navTabItem renders one top-level tab, vertically centered in the bar. The
+// ACTIVE tab is a raised pill with the grey outline running all the way around
+// it — unmistakable without cross-surface tricks (a "connected tab" can't work
+// here: the content below the bar is a floating card, not a flush panel).
+// Inactive tabs are plain muted labels.
 func navTabItem(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool, barH int) layout.Dimensions {
 	return hoverCursor(gtx, func(gtx layout.Context) layout.Dimensions {
 		return material.Clickable(gtx, c, func(gtx layout.Context) layout.Dimensions {
@@ -153,21 +154,18 @@ func navTabItem(gtx layout.Context, th *material.Theme, c *widget.Clickable, lab
 			size := image.Pt(w, barH)
 
 			if active {
-				// Tab shape: starts a little below the bar top, runs flush to the
-				// bar bottom, in the CONTENT background so it merges with the page.
-				top := gtx.Dp(unit.Dp(7))
-				r := gtx.Dp(unit.Dp(9))
-				outer := clip.RRect{Rect: image.Rect(0, top, w, barH), NE: r, NW: r}
-				inner := clip.RRect{Rect: image.Rect(1, top+1, w-1, barH), NE: r - 1, NW: r - 1}
-				paint.FillShape(gtx.Ops, colOutline, outer.Op(gtx.Ops)) // 1px outline (bottom left open)
-				paint.FillShape(gtx.Ops, colBg, inner.Op(gtx.Ops))      // page bg → visually connected
+				// Raised pill, centered in the bar, grey line all the way around.
+				padY := gtx.Dp(unit.Dp(7))
+				pillH := lblDims.Size.Y + 2*padY
+				top := (barH - pillH) / 2
+				r := gtx.Dp(unit.Dp(8))
+				outer := clip.RRect{Rect: image.Rect(0, top, w, top+pillH), NE: r, NW: r, SE: r, SW: r}
+				inner := clip.RRect{Rect: image.Rect(1, top+1, w-1, top+pillH-1), NE: r - 1, NW: r - 1, SE: r - 1, SW: r - 1}
+				paint.FillShape(gtx.Ops, colOutline, outer.Op(gtx.Ops)) // the grey line around the tab
+				paint.FillShape(gtx.Ops, colCard, inner.Op(gtx.Ops))    // raised surface
 			}
-			// Center the label in the full bar height (optically a touch lower
-			// inside the active tab, which starts below the bar top).
+			// Label dead-centered in the bar (and therefore in the pill).
 			off := image.Pt((size.X-lblDims.Size.X)/2, (size.Y-lblDims.Size.Y)/2)
-			if active {
-				off.Y += gtx.Dp(unit.Dp(3))
-			}
 			t := op.Offset(off).Push(gtx.Ops)
 			lblCall.Add(gtx.Ops)
 			t.Pop()
