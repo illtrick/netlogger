@@ -115,4 +115,4 @@ NetLogger stands on excellent prior work:
 
 ## License
 
-No license has been chosen for this repository yet, so default copyright applies. Note for future licensing/redistribution: the bundled `iperf3.exe` is BSD-3-Clause and `cygwin1.dll` is LGPL.
+[MIT](LICENSE). The bundled third-party binaries carry their own licenses: `iperf3.exe` is BSD-3-Clause (ESnet/LBNL) and `cygwin1.dll` is LGPL (Cygwin project).
