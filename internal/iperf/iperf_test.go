@@ -35,6 +35,27 @@ func TestVersionConsistentWithAvailable(t *testing.T) {
 	}
 }
 
+// TestFirstExecutable verifies firstExecutable walks the candidate list in
+// order and returns the first regular file that exists, or "" if none do.
+func TestFirstExecutable(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "iperf3")
+	if err := os.WriteFile(real, []byte("#!"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "nope", "iperf3")
+
+	if got := firstExecutable([]string{missing, real}); got != real {
+		t.Errorf("firstExecutable = %q, want %q", got, real)
+	}
+	if got := firstExecutable([]string{missing}); got != "" {
+		t.Errorf("firstExecutable(miss) = %q, want empty", got)
+	}
+	if got := firstExecutable(nil); got != "" {
+		t.Errorf("firstExecutable(nil) = %q, want empty", got)
+	}
+}
+
 func TestParseTCP(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "tcp.json"))
 	if err != nil {

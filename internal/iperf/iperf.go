@@ -115,6 +115,17 @@ func pick(exeDir, name string, exists func(string) bool, look func(string) (stri
 	return ""
 }
 
+// firstExecutable returns the first path in paths that exists as a regular
+// file, or "".
+func firstExecutable(paths []string) string {
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			return p
+		}
+	}
+	return ""
+}
+
 // bundledPath is the extracted bundled iperf3 (set by Bootstrap on Windows).
 var bundledPath string
 
@@ -122,7 +133,7 @@ func setBundled(p string) { bundledPath = p }
 
 // binary returns the path to the iperf3 executable, or "" if none is found.
 // Resolution order: extracted bundled binary > co-located (next to netlogger) >
-// PATH.
+// PATH > well-known extra install paths (extraLookPaths).
 func binary() string {
 	name := "iperf3"
 	if runtime.GOOS == "windows" {
@@ -137,7 +148,13 @@ func binary() string {
 		exeDir = filepath.Dir(exe)
 	}
 	look := func(n string) (string, bool) { p, err := exec.LookPath(n); return p, err == nil }
-	return pick(exeDir, name, exists, look)
+	if p := pick(exeDir, name, exists, look); p != "" {
+		return p
+	}
+	if p := firstExecutable(extraLookPaths); p != "" {
+		return p
+	}
+	return ""
 }
 
 // Available reports whether an iperf3 binary is bundled or on PATH.
