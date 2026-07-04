@@ -73,7 +73,7 @@ func TestLinkStateBuckets(t *testing.T) {
 	// a permanent disconnect (Wi-Fi off) with no recovery → must NOT mark
 	ev(2, false, "Wi-Fi link Disconnected (was Up)")
 	// an unrelated peer-degrade event must be ignored
-	ev(5, false, "link to sarah-pc degraded (loss 100.0%)")
+	ev(5, false, "link to laptop-pc degraded (loss 100.0%)")
 
 	b, err := s.LinkStateBuckets(us(0), us(30), 10, "ryzen") // three 10s buckets
 	if err != nil {

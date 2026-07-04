@@ -14,31 +14,31 @@ Fiber Modem ── Wall Jack ── Wall Jack ── Router (192.168.0.1)
                                           Switch 1 ──── NAS (QNAP)
                                               │
                               ┌───────────────┼───────────────┐
-                          ProjectorPC      Switch 2
+                          HTPC      Switch 2
                           (via inline       │
-                           10G coupler)     ├──── Ryzen (Windows 11)
-                                            └──── NCASE (Windows 11)
+                           10G coupler)     ├──── Desktop-A (Windows 11)
+                                            └──── Desktop-B (Windows 11)
 ```
 
 Key paths:
-- **Ryzen → ProjectorPC** traverses: Ryzen → Switch 2 → Switch 1 → ProjectorPC (pure LAN, peer-to-peer).
+- **Desktop-A → HTPC** traverses: Desktop-A → Switch 2 → Switch 1 → HTPC (pure LAN, peer-to-peer).
 - **Anything → NAS** traverses Switch 1.
 - **Switch 1 is the most-shared element** for all cross-device (peer-to-peer) traffic.
 - Both switches are **unmanaged** — no logs, no per-port error counters. This is the core diagnostic handicap.
-- ProjectorPC's run includes an **inline 10G coupler**.
+- HTPC's run includes an **inline 10G coupler**.
 
 ### Devices
 | Name | OS | Connection | Notes |
 |------|----|-----------|-------|
 | Router | — | gateway | LAN IP `192.168.0.1` |
 | Switch 1 | unmanaged | core | prime suspect |
-| Switch 2 | unmanaged | downstream of Switch 1 | feeds Ryzen + NCASE |
-| Ryzen | Windows 11 | Switch 2 | OneDrive-redirected Desktop (see gotcha below) |
-| NCASE | Windows 11 | Switch 2 | |
-| ProjectorPC | (Windows, assumed) | Switch 1 via 10G coupler | Moonlight stream target |
+| Switch 2 | unmanaged | downstream of Switch 1 | feeds Desktop-A + Desktop-B |
+| Desktop-A | Windows 11 | Switch 2 | OneDrive-redirected Desktop (see gotcha below) |
+| Desktop-B | Windows 11 | Switch 2 | |
+| HTPC | (Windows, assumed) | Switch 1 via 10G coupler | Moonlight stream target |
 | NAS | QNAP (QTS, Linux/BusyBox base) | Switch 1 | SSH-accessible; `screen` available |
 
-> **IPs still needed:** ProjectorPC and NAS LAN IPs were not captured. The app should auto-discover or prompt for these.
+> **IPs still needed:** HTPC and NAS LAN IPs were not captured. The app should auto-discover or prompt for these.
 
 ---
 
@@ -46,16 +46,16 @@ Key paths:
 
 **Symptom:** Sporadic connection drops lasting a few seconds, "every little while." Sustained throughput and general uptime are excellent — only brief, intermittent dropouts.
 
-**Affected:** Originally noted on Ryzen, NAS, and NCASE. Later confirmed drops have been observed on **all machines**.
+**Affected:** Originally noted on Desktop-A, NAS, and Desktop-B. Later confirmed drops have been observed on **all machines**.
 
-**Critical clue:** The most concrete reproduction is a **Moonlight game stream from Ryzen → ProjectorPC** stuttering. This is **pure LAN peer-to-peer traffic with zero internet involvement.** Moonlight uses UDP for video, so a "drop" manifests as dropped frames, not a reconnect.
+**Critical clue:** The most concrete reproduction is a **Moonlight game stream from Desktop-A → HTPC** stuttering. This is **pure LAN peer-to-peer traffic with zero internet involvement.** Moonlight uses UDP for video, so a "drop" manifests as dropped frames, not a reconnect.
 
 ---
 
 ## 3. What Was Tested & What We Learned
 
 ### Test performed
-A ~12-hour ping-logging run on Ryzen and the QNAP NAS. Each machine pinged **two targets once per second** with timestamps:
+A ~12-hour ping-logging run on Desktop-A and the QNAP NAS. Each machine pinged **two targets once per second** with timestamps:
 - Gateway `192.168.0.1` (LAN-side health)
 - External `1.1.1.1` (WAN-side health)
 
@@ -67,18 +67,18 @@ Logs were collected to CSV and run through an overlap parser that flags failures
 From ~8:50 PM to ~10:30 PM, nearly every failure targeted `1.1.1.1` (external); the gateway `192.168.0.1` almost never failed. When a LAN element drops, the gateway ping fails too — it didn't. **The LAN held during normal operation, as measured by gateway pings.** These external blips were short, isolated, single-ping events — consistent with brief ISP/fiber/Cloudflare-path hiccups, not the switches.
 
 **Finding 2 — A sustained ~90-second LAN outage occurred at 3:00–3:01 AM.**
-Both machines failed repeatedly against **both** targets (including the gateway) for ~90 seconds. Gateway unreachable = genuine LAN-side outage. 3 AM timing strongly suggests a **scheduled task**: QNAP firmware/AV/RAID-scrub/reboot, or a nightly router/ISP-gear re-sync. The QNAP showed more failures than Ryzen here, pointing at the NAS being busy or restarting. **This is a separate, once-nightly event — probably unrelated to the daytime/streaming complaint.**
+Both machines failed repeatedly against **both** targets (including the gateway) for ~90 seconds. Gateway unreachable = genuine LAN-side outage. 3 AM timing strongly suggests a **scheduled task**: QNAP firmware/AV/RAID-scrub/reboot, or a nightly router/ISP-gear re-sync. The QNAP showed more failures than Desktop-A here, pointing at the NAS being busy or restarting. **This is a separate, once-nightly event — probably unrelated to the daytime/streaming complaint.**
 
 **Finding 3 (the key realization) — The test measured the wrong path.**
-The Moonlight clue proved the real symptom is **LAN peer-to-peer** (Ryzen↔ProjectorPC), but the ping test only measured the path **toward the gateway/internet**. A gateway ping from Ryzen never exercises the Switch1↔ProjectorPC or Switch1↔NAS segments the way peer traffic does. **A device can ping the gateway perfectly while peer-to-peer traffic between two other ports stutters — especially under load.** This is why the LAN looked clean while the stream stuttered.
+The Moonlight clue proved the real symptom is **LAN peer-to-peer** (Desktop-A↔HTPC), but the ping test only measured the path **toward the gateway/internet**. A gateway ping from Desktop-A never exercises the Switch1↔HTPC or Switch1↔NAS segments the way peer traffic does. **A device can ping the gateway perfectly while peer-to-peer traffic between two other ports stutters — especially under load.** This is why the LAN looked clean while the stream stuttered.
 
 ### Current leading hypothesis
-**Switch 1**, because it is the most-shared element on every peer-to-peer path, and because drops are now reported on all machines (which rules the ProjectorPC-only coupler back *out* as the common cause). The test simply never stressed the right traffic to catch it.
+**Switch 1**, because it is the most-shared element on every peer-to-peer path, and because drops are now reported on all machines (which rules the HTPC-only coupler back *out* as the common cause). The test simply never stressed the right traffic to catch it.
 
 ### Open questions to resolve
 1. When drops happen, are they **simultaneous** across machines (→ shared device / Switch 1) or **independent** (→ per-port/per-cable)?
 2. Do drops occur only under **load** (active stream / large transfer) or also at idle?
-3. ProjectorPC and NAS LAN IPs.
+3. HTPC and NAS LAN IPs.
 
 ---
 
@@ -103,7 +103,7 @@ The hand-rolled ping loops worked but measured the wrong path and don't reproduc
 
 ### Recommended diagnostic sequence (the app should guide the user through this)
 1. Enable Moonlight overlay, reproduce stutter, confirm it's network loss not decode.
-2. Run iperf3 Ryzen↔ProjectorPC across Switch 1; watch for retransmits/throughput dips coinciding with stutters.
+2. Run iperf3 Desktop-A↔HTPC across Switch 1; watch for retransmits/throughput dips coinciding with stutters.
 3. Bypass Switch 1 (both devices into Switch 2 or Router); re-run iperf3. If clean → Switch 1 confirmed.
 
 ---
@@ -114,7 +114,7 @@ The hand-rolled ping loops worked but measured the wrong path and don't reproduc
 A **cross-platform GUI app** (Windows, QNAP, macOS) that drives the full diagnostic workflow above — replacing the manual SSH/PowerShell/CSV/parser dance with a guided, visual tool.
 
 ### Must run on
-- **Windows 11** (Ryzen, NCASE, ProjectorPC)
+- **Windows 11** (Desktop-A, Desktop-B, HTPC)
 - **macOS**
 - **QNAP** (QTS — Linux/BusyBox base; may run in a container, as a QPKG, or headless agent)
 
@@ -161,4 +161,4 @@ These can be discarded once the app exists, but document the approach:
 ---
 
 ## TL;DR for the builder
-The user has intermittent multi-second LAN drops, reproduced as Moonlight stutter (Ryzen→ProjectorPC). Manual ping testing proved the drops are LAN peer-to-peer (not WAN) but accidentally measured the gateway path instead of the peer path. Leading suspect is the unmanaged **Switch 1** (shared by all peer traffic); decisive test is bypassing it. Build a cross-platform (Win/Mac/QNAP) GUI app with per-host agents that runs a **peer-to-peer ICMP+TCP probe mesh under iperf3 load**, **correlates drops across hosts** (simultaneous=shared-device, independent=cable/port), classifies LAN-vs-WAN, visualizes a timeline, and guides the user through the bypass-Switch-1 isolation test. Mind the documented Windows (OneDrive/exec-policy/w32time) and QNAP (BusyBox/screen/nohup) gotchas.
+The user has intermittent multi-second LAN drops, reproduced as Moonlight stutter (Desktop-A→HTPC). Manual ping testing proved the drops are LAN peer-to-peer (not WAN) but accidentally measured the gateway path instead of the peer path. Leading suspect is the unmanaged **Switch 1** (shared by all peer traffic); decisive test is bypassing it. Build a cross-platform (Win/Mac/QNAP) GUI app with per-host agents that runs a **peer-to-peer ICMP+TCP probe mesh under iperf3 load**, **correlates drops across hosts** (simultaneous=shared-device, independent=cable/port), classifies LAN-vs-WAN, visualizes a timeline, and guides the user through the bypass-Switch-1 isolation test. Mind the documented Windows (OneDrive/exec-policy/w32time) and QNAP (BusyBox/screen/nohup) gotchas.

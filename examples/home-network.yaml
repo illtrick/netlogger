@@ -1,13 +1,13 @@
 # NetLogger config for the real home network.
 #
 # Fill in the real LAN IPs for the addressed (agent) nodes, then deploy the
-# agent to each Windows box. The coordinator (ryzen) pulls from every node that
+# agent to each Windows box. The coordinator (desktop-a) pulls from every node that
 # has an `address`. Non-agent elements (modem, wall jacks, router, switches,
 # connector) carry no address — they're scored by inference from the paths that
 # cross them.
 #
 # NOTE: NAS (QNAP) and any WiFi clients become agents in M5/M6. For the first
-# live run, the three Windows boxes (ryzen + ncase + projectorpc) are the mesh
+# live run, the three Windows boxes (desktop-a + desktop-b + htpc) are the mesh
 # that reproduces the Moonlight stutter.
 
 nodes:
@@ -48,27 +48,27 @@ nodes:
     label: "Connector"
     model: "UGREEN 10G coupler"
 
-  - id: ryzen
+  - id: desktop-a
     type: endpoint
-    label: "Ryzen"
+    label: "Desktop-A"
     nic: "Killer E3100G"
     link_speed: "2.5G"
     role: coordinator
-    address: "192.168.0.11:8088"   # <-- set Ryzen's real LAN IP
+    address: "192.168.0.11:8088"   # <-- set Desktop-A's real LAN IP
 
-  - id: ncase
+  - id: desktop-b
     type: endpoint
-    label: "NCASE"
+    label: "Desktop-B"
     nic: "Intel I226-V"
     link_speed: "2.5G"
-    address: "192.168.0.12:8088"   # <-- set NCASE's real LAN IP
+    address: "192.168.0.12:8088"   # <-- set Desktop-B's real LAN IP
 
-  - id: projectorpc
+  - id: htpc
     type: endpoint
-    label: "ProjectorPC"
+    label: "HTPC"
     nic: "Intel I219-V"
     link_speed: "1G"
-    address: "192.168.0.31:8088"   # <-- set ProjectorPC's real LAN IP
+    address: "192.168.0.31:8088"   # <-- set HTPC's real LAN IP
 
   - id: nas
     type: endpoint
@@ -85,7 +85,7 @@ links:
   - [router, switch1]
   - [switch1, nas]
   - [switch1, connector]
-  - [connector, projectorpc]
+  - [connector, htpc]
   - [switch1, switch2]
-  - [switch2, ryzen]
-  - [switch2, ncase]
+  - [switch2, desktop-a]
+  - [switch2, desktop-b]

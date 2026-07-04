@@ -66,7 +66,7 @@ func TestIsSelfAnnounce(t *testing.T) {
 		{"second local identity (our host + our ip)", announce{ID: "other", Host: "ryzen", IP: "192.168.0.154"}, "192.168.0.154", "me", "ryzen", true},
 		{"same host but different machine ip", announce{ID: "other", Host: "ryzen", IP: "192.168.0.9"}, "192.168.0.9", "me", "ryzen", false},
 		{"distinct-host same-machine (loopback test)", announce{ID: "node-b", Host: "hostB", IP: "192.168.0.154"}, "192.168.0.154", "node-a", "hostA", false},
-		{"real peer", announce{ID: "p", Host: "sarah", IP: "192.168.0.181"}, "192.168.0.181", "me", "ryzen", false},
+		{"real peer", announce{ID: "p", Host: "laptop", IP: "192.168.0.181"}, "192.168.0.181", "me", "ryzen", false},
 	}
 	for _, c := range cases {
 		if got := isSelfAnnounce(c.a, c.src, c.id, c.host, selfIPs); got != c.wantSelf {

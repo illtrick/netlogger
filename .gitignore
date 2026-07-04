@@ -13,8 +13,6 @@ data/
 # generated Windows resource (manifest/version) — produced by go generate
 cmd/netlogger-app/resource.syso
 /NetLogger-data/
-/ProjectorPC/
-/Sarah-PC/
 netlogger.log
 netlogger-export-*.json
 network.json

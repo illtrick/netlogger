@@ -19,7 +19,7 @@ func TestMeshTargets(t *testing.T) {
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "10.0.0.1:8088"}
 	peers := []PeerInfo{
 		{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"},
-		{ID: "s", Host: "sarah", Addr: "10.0.0.3:8088"},
+		{ID: "s", Host: "laptop", Addr: "10.0.0.3:8088"},
 	}
 	m := meshTargets(self, peers)
 	if len(m["self"]) != 2 || len(m["p"]) != 2 || len(m["s"]) != 2 {
