@@ -22,7 +22,7 @@ func PingICMP(addr string, timeout time.Duration) (Result, error) {
 	}
 	pinger.Count = 1
 	pinger.Timeout = timeout
-	pinger.SetPrivileged(true)
+	pinger.SetPrivileged(privilegedICMP)
 	if err := pinger.Run(); err != nil {
 		return Result{}, err
 	}
