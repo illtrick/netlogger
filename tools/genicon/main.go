@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -125,9 +126,94 @@ func writeICO(path string, imgs []image.Image) error {
 	return os.WriteFile(path, out.Bytes(), 0o644)
 }
 
+// icnsChunk is one icon element: a 4-char OSType and a raw PNG payload.
+type icnsChunk struct {
+	Type string
+	PNG  []byte
+}
+
+// writeICNS frames chunks into the ICNS container: "icns" + total length,
+// then (type + length + payload) per chunk. Lengths include the 8-byte header.
+func writeICNS(w io.Writer, chunks []icnsChunk) error {
+	total := 8
+	for _, c := range chunks {
+		total += 8 + len(c.PNG)
+	}
+	hdr := make([]byte, 8)
+	copy(hdr, "icns")
+	binary.BigEndian.PutUint32(hdr[4:], uint32(total))
+	if _, err := w.Write(hdr); err != nil {
+		return err
+	}
+	for _, c := range chunks {
+		ch := make([]byte, 8)
+		copy(ch, c.Type)
+		binary.BigEndian.PutUint32(ch[4:], uint32(8+len(c.PNG)))
+		if _, err := w.Write(ch); err != nil {
+			return err
+		}
+		if _, err := w.Write(c.PNG); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// icnsSizes maps each ICNS OSType to its pixel dimension.
+var icnsSizes = []struct {
+	typ  string
+	size int
+}{
+	{"ic11", 32},   // 16pt@2x
+	{"ic12", 64},   // 32pt@2x
+	{"ic07", 128},  // 128pt
+	{"ic13", 256},  // 128pt@2x
+	{"ic08", 256},  // 256pt
+	{"ic14", 512},  // 256pt@2x
+	{"ic09", 512},  // 512pt
+	{"ic10", 1024}, // 512pt@2x
+}
+
+func renderPNG(size int) ([]byte, error) {
+	var b bytes.Buffer
+	if err := png.Encode(&b, drawIcon(size)); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
 func main() {
 	out := flag.String("o", "icon.ico", "output .ico path")
+	icns := flag.Bool("icns", false, "write an ICNS container instead of .ico")
 	flag.Parse()
+
+	if *icns {
+		pngBySize := make(map[int][]byte)
+		var chunks []icnsChunk
+		for _, e := range icnsSizes {
+			blob, ok := pngBySize[e.size]
+			if !ok {
+				var err error
+				blob, err = renderPNG(e.size)
+				if err != nil {
+					log.Fatal(err)
+				}
+				pngBySize[e.size] = blob
+			}
+			chunks = append(chunks, icnsChunk{Type: e.typ, PNG: blob})
+		}
+		f, err := os.Create(*out)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		if err := writeICNS(f, chunks); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("wrote %s", *out)
+		return
+	}
+
 	var imgs []image.Image
 	for _, size := range []int{16, 24, 32, 48, 64, 128, 256} {
 		imgs = append(imgs, drawIcon(size))
