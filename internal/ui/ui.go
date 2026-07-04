@@ -30,7 +30,7 @@ func Run(a *appcore.App) error {
 	w := new(app.Window)
 	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)),
 		app.MinSize(unit.Dp(760), unit.Dp(520)), // keep the layout from squishing into overlap
-		app.Decorated(false))                    // the app bar IS the title bar (brand·nav·status·caption)
+		app.Decorated(!customChrome))            // Windows: the app bar IS the title bar; macOS: native chrome
 	applyDarkTitleBar("NetLogger") // window icon, rounded corners, close-to-tray hook
 	stopTray := startTray("NetLogger")
 	defer stopTray()

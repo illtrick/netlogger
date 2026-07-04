@@ -49,6 +49,9 @@ func brand(gtx layout.Context, th *material.Theme) layout.Dimensions {
 // dragArea layouts w and marks its bounds as a native caption region: the OS
 // handles dragging (and double-click maximize) for these stretches of the bar.
 func dragArea(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	if !customChrome {
+		return w(gtx) // native title bar handles dragging
+	}
 	macro := op.Record(gtx.Ops)
 	dims := w(gtx)
 	call := macro.Stop()
@@ -79,7 +82,7 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 	row := func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = barH
 		gtx.Constraints.Max.Y = barH
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		children := []layout.FlexChild{
 			// Brand block: draggable (clicking the wordmark does nothing else).
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return dragArea(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -111,11 +114,18 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 					})
 				})
 			}),
-			layout.Rigid(gapX(10)),
-			captionBtn(th, &cs.minBtn, glyphMin, false, barH),
-			captionBtn(th, &cs.maxBtn, glyphForMax(cs.maximized), false, barH),
-			captionBtn(th, &cs.closeBtn, glyphClose, true, barH),
-		)
+		}
+		if customChrome {
+			children = append(children,
+				layout.Rigid(gapX(10)),
+				captionBtn(th, &cs.minBtn, glyphMin, false, barH),
+				captionBtn(th, &cs.maxBtn, glyphForMax(cs.maximized), false, barH),
+				captionBtn(th, &cs.closeBtn, glyphClose, true, barH),
+			)
+		} else {
+			children = append(children, layout.Rigid(gapX(16))) // right margin where captions would be
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 	}
 
 	// Record the content, paint the full-width bar surface + hairline behind it, replay.
