@@ -130,20 +130,27 @@ func Run(a *appcore.App) error {
 				heatList.Position.First = heatView.Buckets
 				heatList.Position.Offset = 0
 			}
-			if chrome.minBtn.Clicked(gtx) {
-				w.Perform(system.ActionMinimize)
-			}
-			if chrome.maxBtn.Clicked(gtx) {
-				if chrome.maximized {
-					w.Perform(system.ActionUnmaximize)
-				} else {
-					w.Perform(system.ActionMaximize)
+			if customChrome {
+				// Caption buttons exist only under the hand-drawn title bar;
+				// native chrome (macOS) supplies its own. Gated on the same
+				// constant that controls their layout in chrome.go so the
+				// Windows-only semantics (close-to-tray, ActionMaximize) can
+				// never re-arm on a decorated platform.
+				if chrome.minBtn.Clicked(gtx) {
+					w.Perform(system.ActionMinimize)
 				}
-			}
-			if chrome.closeBtn.Clicked(gtx) {
-				// Close-to-tray. Asynchronous on purpose: ShowWindow from the frame
-				// handler would deadlock the window's message thread.
-				go hideMainWindow("NetLogger")
+				if chrome.maxBtn.Clicked(gtx) {
+					if chrome.maximized {
+						w.Perform(system.ActionUnmaximize)
+					} else {
+						w.Perform(system.ActionMaximize)
+					}
+				}
+				if chrome.closeBtn.Clicked(gtx) {
+					// Close-to-tray. Asynchronous on purpose: ShowWindow from the frame
+					// handler would deadlock the window's message thread.
+					go hideMainWindow("NetLogger")
+				}
 			}
 			if navDash.Clicked(gtx) {
 				nav = nextTab(nav, navDashboard)

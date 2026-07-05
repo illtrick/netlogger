@@ -139,7 +139,7 @@ func binary() string {
 	if runtime.GOOS == "windows" {
 		name = "iperf3.exe"
 	}
-	exists := func(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
+	exists := func(p string) bool { return firstExecutable([]string{p}) != "" }
 	if bundledPath != "" && exists(bundledPath) {
 		return bundledPath
 	}
@@ -225,7 +225,7 @@ func buildArgs(target string, o Opts) []string {
 func RunClientCtx(ctx context.Context, target string, o Opts) (Result, error) {
 	bin := binary()
 	if bin == "" {
-		return Result{}, fmt.Errorf("iperf3 not found (bundle it next to NetLogger or install it) — cannot run load test")
+		return Result{}, fmt.Errorf("iperf3 not found (%s) — cannot run load test", installHint)
 	}
 	cc := exec.CommandContext(ctx, bin, buildArgs(target, o)...)
 	hideConsole(cc)

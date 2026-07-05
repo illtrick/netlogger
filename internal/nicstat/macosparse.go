@@ -52,7 +52,10 @@ func parseIfconfig(out string) (speed, status string) {
 			case "inactive":
 				status = "Disconnected"
 			default:
-				status = v
+				// Keep the vocabulary closed: the change-event detector compares
+				// Status strings between polls, so a raw driver token would fire
+				// spurious link-flap events.
+				status = "Unknown"
 			}
 		}
 	}
@@ -60,11 +63,21 @@ func parseIfconfig(out string) (speed, status string) {
 }
 
 // mediaToSpeed converts an ifconfig media token to the "<n> Gbps"/"<n> Mbps"
-// vocabulary the Windows collector reports; unknown tokens pass through raw.
+// vocabulary the Windows collector reports. Tokens that name no rate at all —
+// bare "autoselect" (Wi-Fi with no resolved wired rate) and "<unknown type>" —
+// map to "" so the Adapters speed column never shows a non-speed; other
+// unknown tokens pass through (duplex suffix stripped) for diagnostic value.
 func mediaToSpeed(media string) string {
+	// Strip a trailing "<full-duplex>"-style option group first so tokens
+	// like "autoselect <full-duplex>" (idle Thunderbolt ports) classify the
+	// same as their bare forms. "<unknown type>" starts with '<', so only a
+	// suffix at i > 0 is an option group.
+	if i := strings.IndexByte(media, '<'); i > 0 {
+		media = strings.TrimSpace(media[:i])
+	}
 	m := strings.ToLower(media)
 	switch {
-	case m == "none":
+	case m == "none", m == "autoselect", m == "<unknown type>":
 		return ""
 	case strings.HasPrefix(m, "10gbase"):
 		return "10 Gbps"
@@ -79,23 +92,25 @@ func mediaToSpeed(media string) string {
 	case strings.HasPrefix(m, "10base"):
 		return "10 Mbps"
 	}
-	// Strip the duplex suffix for readability on unknown tokens.
-	if i := strings.IndexByte(media, '<'); i > 0 {
-		media = strings.TrimSpace(media[:i])
-	}
+	// Unknown wired token: pass through (duplex already stripped) for
+	// diagnostic value.
 	return media
 }
 
 // linkCounters is one interface's cumulative counters from `netstat -ibnd`.
+// TxDiscards carries the Drop column; netstat exposes no rx-side drop counter,
+// so RxDiscards has no darwin source (Windows populates it from
+// ReceivedDiscardedPackets).
 type linkCounters struct {
-	RxErrors, TxErrors, RxDiscards int64
+	RxErrors, TxErrors, TxDiscards int64
 	RxBytes, TxBytes               int64
 }
 
 // parseNetstatIB reads the `<Link#N>` row per interface from `netstat -ibnd`.
 // Field layout after the <Link#N> token: [mac?] Ipkts Ierrs Ibytes Opkts
 // Oerrs Obytes Coll Drop — the MAC column is absent for interfaces without
-// one (lo0), so it is skipped by shape (contains ':').
+// one (lo0), so it is skipped by shape (contains ':'). Drop is BSD's
+// output-queue drop counter (if_snd drops), i.e. TX-side.
 func parseNetstatIB(out string) map[string]linkCounters {
 	res := map[string]linkCounters{}
 	for _, line := range strings.Split(out, "\n") {
@@ -126,8 +141,36 @@ func parseNetstatIB(out string) map[string]linkCounters {
 			RxBytes:    n(2),
 			TxErrors:   n(4),
 			TxBytes:    n(5),
-			RxDiscards: n(7),
+			TxDiscards: n(7),
 		}
 	}
+	return res
+}
+
+// splitIfconfigSections splits `ifconfig -a -v` output into one text block per
+// interface, keyed by device name. Section headers are unindented
+// "name: flags=..." lines; continuation lines are indented. Lets Collect run
+// one ifconfig for all interfaces instead of one per device.
+func splitIfconfigSections(out string) map[string]string {
+	res := map[string]string{}
+	var name string
+	var buf strings.Builder
+	flush := func() {
+		if name != "" {
+			res[name] = buf.String()
+		}
+		buf.Reset()
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			if i := strings.IndexByte(line, ':'); i > 0 {
+				flush()
+				name = line[:i]
+			}
+		}
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+	flush()
 	return res
 }

@@ -22,8 +22,9 @@ func Resolve() (string, error) {
 // resolve is the injectable core: prefer <exeDir>/NetLogger-data when allowed
 // and writable, else <fallbackBase>/NetLogger.
 func resolve(exeDir, fallbackBase string, beside bool, writable func(string) bool) (string, error) {
+	cand := ""
 	if beside {
-		cand := filepath.Join(exeDir, "NetLogger-data")
+		cand = filepath.Join(exeDir, "NetLogger-data")
 		if err := os.MkdirAll(cand, 0o755); err == nil && writable(cand) {
 			return cand, nil
 		}
@@ -33,7 +34,10 @@ func resolve(exeDir, fallbackBase string, beside bool, writable func(string) boo
 		return "", fmt.Errorf("create fallback data dir %q: %w", fb, err)
 	}
 	if !writable(fb) {
-		return "", fmt.Errorf("no writable data dir (tried beside-exe and %q)", fb)
+		if cand != "" {
+			return "", fmt.Errorf("no writable data dir (tried %q and %q)", cand, fb)
+		}
+		return "", fmt.Errorf("no writable data dir (beside-exe disabled; tried %q)", fb)
 	}
 	return fb, nil
 }
@@ -50,8 +54,18 @@ func probeWritable(dir string) bool {
 	return true
 }
 
-// insideAppBundle reports whether dir is inside a macOS .app bundle, where
-// data must never be written (breaks codesigning; lost on update).
+// insideAppBundle reports whether dir is a macOS .app bundle's executable
+// directory (<Name>.app/Contents/MacOS), where data must never be written
+// (breaks codesigning; lost on update). It checks that exact trailing
+// structure — a bundled app's exe always lives there — rather than a
+// substring, so a path that merely contains ".app/Contents/" (e.g. a dev
+// tree under ~/Projects/MyApp.app/Contents/tools) keeps its beside-exe dir.
 func insideAppBundle(dir string) bool {
-	return strings.Contains(filepath.ToSlash(dir), ".app/Contents/")
+	p := strings.TrimRight(filepath.ToSlash(dir), "/")
+	parts := strings.Split(p, "/")
+	n := len(parts)
+	return n >= 3 &&
+		parts[n-1] == "MacOS" &&
+		parts[n-2] == "Contents" &&
+		strings.HasSuffix(parts[n-3], ".app")
 }

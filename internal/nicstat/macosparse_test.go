@@ -40,6 +40,19 @@ const ifconfigDownFixture = `en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,
 	status: inactive
 `
 
+// Real associated Wi-Fi: bare "media: autoselect", no parenthesized rate.
+const ifconfigWifiFixture = `en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	media: autoselect
+	status: active
+`
+
+// Unknown status token: the vocabulary must stay closed (Up/Disconnected/
+// Unknown) or the change detector fires spurious link-flap events.
+const ifconfigOddStatusFixture = `en2: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	media: <unknown type>
+	status: attaching
+`
+
 func TestParseIfconfig(t *testing.T) {
 	speed, status := parseIfconfig(ifconfigFixture)
 	if speed != "1 Gbps" {
@@ -56,6 +69,22 @@ func TestParseIfconfig(t *testing.T) {
 	if speed != "" {
 		t.Errorf("down speed = %q, want empty", speed)
 	}
+
+	speed, status = parseIfconfig(ifconfigWifiFixture)
+	if status != "Up" {
+		t.Errorf("wifi status = %q, want Up", status)
+	}
+	if speed != "" {
+		t.Errorf("wifi speed = %q, want empty (bare autoselect names no rate)", speed)
+	}
+
+	speed, status = parseIfconfig(ifconfigOddStatusFixture)
+	if status != "Unknown" {
+		t.Errorf("odd status = %q, want Unknown (closed vocabulary)", status)
+	}
+	if speed != "" {
+		t.Errorf("odd speed = %q, want empty", speed)
+	}
 }
 
 func TestMediaToSpeed(t *testing.T) {
@@ -65,8 +94,12 @@ func TestMediaToSpeed(t *testing.T) {
 		{"2500Base-T <full-duplex>", "2.5 Gbps"},
 		{"1000baseT <full-duplex>", "1 Gbps"},
 		{"100baseTX <full-duplex>", "100 Mbps"},
-		{"autoselect", "autoselect"}, // unknown → raw passthrough
+		{"autoselect", ""},               // bare autoselect names no rate (Wi-Fi)
+		{"autoselect <full-duplex>", ""}, // idle Thunderbolt/USB ports
+		{"<unknown type>", ""},           // driver reports no usable media type
 		{"none", ""},
+		{"10GbaseCR <full-duplex>", "10 Gbps"},         // prefix table still wins
+		{"exotic-token <half-duplex>", "exotic-token"}, // unknown wired token passes through, duplex stripped
 	}
 	for _, c := range cases {
 		if got := mediaToSpeed(c.media); got != c.want {
@@ -89,7 +122,8 @@ func TestParseNetstatIB(t *testing.T) {
 	if !ok {
 		t.Fatalf("en0 missing: %#v", got)
 	}
-	if en0.RxErrors != 2 || en0.TxErrors != 1 || en0.RxDiscards != 5 {
+	// Drop is BSD's output-queue drop counter → TxDiscards, never RxDiscards.
+	if en0.RxErrors != 2 || en0.TxErrors != 1 || en0.TxDiscards != 5 {
 		t.Errorf("en0 counters = %+v", en0)
 	}
 	if en0.RxBytes != 9876543210 || en0.TxBytes != 8765432109 {
@@ -97,5 +131,40 @@ func TestParseNetstatIB(t *testing.T) {
 	}
 	if _, ok := got["lo0"]; !ok {
 		t.Error("lo0 should parse (filtering happens later, by hardware-ports map)")
+	}
+}
+
+const ifconfigAllFixture = `lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	ether f0:18:98:aa:bb:cc
+	media: autoselect (1000baseT <full-duplex>)
+	status: active
+en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	media: autoselect
+	status: inactive
+`
+
+func TestSplitIfconfigSections(t *testing.T) {
+	got := splitIfconfigSections(ifconfigAllFixture)
+	if len(got) != 3 {
+		t.Fatalf("sections = %d, want 3 (%#v)", len(got), got)
+	}
+	for _, dev := range []string{"lo0", "en0", "en1"} {
+		if _, ok := got[dev]; !ok {
+			t.Fatalf("missing section %q", dev)
+		}
+	}
+	// Each section must parse identically to a per-device ifconfig call.
+	speed, status := parseIfconfig(got["en0"])
+	if speed != "1 Gbps" || status != "Up" {
+		t.Errorf("en0 section parsed to (%q, %q), want (1 Gbps, Up)", speed, status)
+	}
+	if speed, status = parseIfconfig(got["en1"]); speed != "" || status != "Disconnected" {
+		t.Errorf("en1 section parsed to (%q, %q), want (, Disconnected)", speed, status)
+	}
+	// Sections must not bleed into each other: en0's media line stays out of lo0.
+	if s := got["lo0"]; s == "" || len(s) > 120 {
+		t.Errorf("lo0 section looks wrong (len %d): %q", len(s), s)
 	}
 }

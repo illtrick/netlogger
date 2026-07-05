@@ -87,15 +87,25 @@ func stampDisc(img *image.NRGBA, cx, cy, r float64, c color.NRGBA) {
 	}
 }
 
+// encodePNG is the single PNG-encoding path for both the .ico and .icns
+// outputs, so an encoder change (compression, color profile) applies to both.
+func encodePNG(im image.Image) ([]byte, error) {
+	var b bytes.Buffer
+	if err := png.Encode(&b, im); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
 // writeICO packs PNG-encoded images into a .ico (PNG entries are valid Vista+).
 func writeICO(path string, imgs []image.Image) error {
 	var blobs [][]byte
 	for _, im := range imgs {
-		var b bytes.Buffer
-		if err := png.Encode(&b, im); err != nil {
+		blob, err := encodePNG(im)
+		if err != nil {
 			return err
 		}
-		blobs = append(blobs, b.Bytes())
+		blobs = append(blobs, blob)
 	}
 	var out bytes.Buffer
 	le := binary.LittleEndian
@@ -175,11 +185,7 @@ var icnsSizes = []struct {
 }
 
 func renderPNG(size int) ([]byte, error) {
-	var b bytes.Buffer
-	if err := png.Encode(&b, drawIcon(size)); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+	return encodePNG(drawIcon(size))
 }
 
 func main() {

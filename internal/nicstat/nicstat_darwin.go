@@ -8,14 +8,18 @@ import (
 )
 
 // Collect gathers per-adapter state on macOS from networksetup (names +
-// physical-port filter), ifconfig (speed/status), and netstat (counters).
-// EEE/power-saving properties are not exposed by macOS; Power stays empty.
+// physical-port filter), one `ifconfig -a -v` pass (speed/status for every
+// interface — this runs on an 8s poll ticker, so it stays at three execs per
+// call regardless of port count), and netstat (counters). EEE/power-saving
+// properties are not exposed by macOS; Power stays empty. netstat has no
+// rx-side drop column, so RxDiscards stays zero (a Windows-only signal).
 func Collect() []NIC {
 	ports := runParse("networksetup", []string{"-listallhardwareports"}, parseHardwarePorts)
 	if len(ports) == 0 {
 		return nil
 	}
 	counters := runParse("netstat", []string{"-ibnd"}, parseNetstatIB)
+	sections := runParse("ifconfig", []string{"-a", "-v"}, splitIfconfigSections)
 
 	devs := make([]string, 0, len(ports))
 	for dev := range ports {
@@ -25,11 +29,11 @@ func Collect() []NIC {
 
 	var nics []NIC
 	for _, dev := range devs {
-		out, err := exec.Command("ifconfig", "-v", dev).Output()
-		if err != nil {
+		sec, ok := sections[dev]
+		if !ok {
 			continue // port exists but interface is gone (e.g. unplugged adapter)
 		}
-		speed, status := parseIfconfig(string(out))
+		speed, status := parseIfconfig(sec)
 		n := NIC{
 			Name:        dev,
 			Description: ports[dev],
@@ -38,7 +42,7 @@ func Collect() []NIC {
 		}
 		if c, ok := counters[dev]; ok {
 			n.RxErrors, n.TxErrors = c.RxErrors, c.TxErrors
-			n.RxDiscards = c.RxDiscards
+			n.TxDiscards = c.TxDiscards
 			n.RxBytes, n.TxBytes = c.RxBytes, c.TxBytes
 		}
 		nics = append(nics, n)
