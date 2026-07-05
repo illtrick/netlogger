@@ -1,5 +1,10 @@
 # macOS Build — Kickoff Runbook
 
+> **This runbook served its purpose: the port is done** (branch
+> `feat/macos-port`, all Phase A tasks + on-Mac build/GUI verification).
+> For day-to-day macOS work use **[docs/MACOS.md](MACOS.md)** — build/test
+> commands, the port's architecture map, and known issues. Kept for history.
+
 This is the single entry point for building the macOS version of NetLogger **on a Mac**.
 Everything needed is already in this repo; nothing else has to be transferred.
 
