@@ -73,6 +73,8 @@ func Run(a *appcore.App) error {
 		switch e := w.Event().(type) {
 		case app.DestroyEvent:
 			return e.Err
+		case app.ViewEvent:
+			nativeViewChanged(e) // darwin: integrate title bar with the app bar
 		case app.ConfigEvent:
 			chrome.maximized = e.Config.Mode == app.Maximized
 		case app.FrameEvent:

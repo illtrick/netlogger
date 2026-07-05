@@ -84,9 +84,11 @@ func titleBar(gtx layout.Context, th *material.Theme, s appcore.Snapshot, nav na
 		gtx.Constraints.Max.Y = barH
 		children := []layout.FlexChild{
 			// Brand block: draggable (clicking the wordmark does nothing else).
+			// On macOS the native traffic lights float over the bar's left
+			// edge (integrated title bar), so lead with room for them.
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return dragArea(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(18), Right: unit.Dp(18)}.Layout(gtx,
+					return layout.Inset{Left: unit.Dp(18 + trafficLightInset), Right: unit.Dp(18)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
 							return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.Y = barH
