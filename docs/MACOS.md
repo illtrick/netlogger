@@ -115,6 +115,26 @@ untagged files so it is unit-tested on every OS.
 - `genicon -icns` renders the icon; layer 6 of the test suite round-trips it
   through `iconutil` to prove macOS accepts it.
 
+## Discovery on Wi-Fi (multicast-hostile networks)
+
+Real-world finding from the first Mac↔Windows mesh session: the Wi-Fi AP
+delivered the Mac's multicast announces upstream (Windows saw the Mac) but
+filtered group traffic toward wireless clients (the Mac never heard
+Windows) — classic IGMP-snooping behavior; verified with a raw listener
+that received zero group packets in 15s while the Windows node announced
+every 3s. Discovery therefore uses three transports (since 1.1.0):
+
+1. multicast to the group (unchanged),
+2. subnet broadcast per interface (APs pass broadcast where they filter
+   multicast),
+3. **unicast reply**: a node that hears an announce answers straight back
+   to the source's discovery port (rate-limited, reply-flagged so replies
+   are never re-answered) — completes discovery even when multicast is
+   one-way.
+
+**Both ends need ≥ 1.1.0** — an old 1.0.0 Windows node never replies, so a
+Mac behind a filtering AP won't see it until Windows is rebuilt.
+
 ## Known issues / limitations
 
 - **Upstream Gio flake**: `gio@v0.10.0 os_macos.go window.init` — if

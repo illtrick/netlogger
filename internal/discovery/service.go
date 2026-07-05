@@ -25,15 +25,19 @@ type Config struct {
 
 // Service announces this instance and tracks discovered peers.
 type Service struct {
-	cfg    Config
-	group  net.IP
-	tbl    *table
-	conn   *net.UDPConn
-	pc     *ipv4.PacketConn
-	stop   chan struct{}
-	wg     sync.WaitGroup
-	sendMu sync.Mutex // serializes SetMulticastInterface+WriteTo across goroutines
-	closed sync.Once
+	cfg      Config
+	group    net.IP
+	tbl      *table
+	conn     *net.UDPConn
+	pc       *ipv4.PacketConn
+	stop     chan struct{}
+	wg       sync.WaitGroup
+	sendMu   sync.Mutex // serializes SetMulticastInterface+WriteTo across goroutines
+	closed   sync.Once
+	selfMsg  []byte // our announce, prebuilt in Start
+	replyMsg []byte // same announce with the reply flag set
+	replyMu  sync.Mutex
+	replied  map[string]time.Time // peer ID → last unicast reply, rate limit
 }
 
 // New creates a Service. Call Start to begin.
@@ -44,12 +48,21 @@ func New(cfg Config) *Service {
 	if cfg.TTL <= 0 {
 		cfg.TTL = 12 * time.Second
 	}
-	return &Service{
-		cfg:   cfg,
-		group: net.ParseIP(cfg.Group),
-		tbl:   newTable(cfg.TTL, time.Now),
-		stop:  make(chan struct{}),
+	s := &Service{
+		cfg:     cfg,
+		group:   net.ParseIP(cfg.Group),
+		tbl:     newTable(cfg.TTL, time.Now),
+		stop:    make(chan struct{}),
+		replied: make(map[string]time.Time),
 	}
+	self := announce{
+		ID: cfg.SelfID, Host: cfg.Host, IP: primaryIP(),
+		Port: cfg.ControlPort, Version: cfg.Version,
+	}
+	s.selfMsg = encode(self)
+	self.Reply = true
+	s.replyMsg = encode(self)
+	return s
 }
 
 // Start binds the socket, joins the group on all real interfaces, and launches
@@ -90,12 +103,8 @@ func (s *Service) Start() error {
 
 func (s *Service) announceLoop(gaddr *net.UDPAddr) {
 	defer s.wg.Done()
-	msg := encode(announce{
-		ID: s.cfg.SelfID, Host: s.cfg.Host, IP: primaryIP(),
-		Port: s.cfg.ControlPort, Version: s.cfg.Version,
-	})
 	for i := 0; i < 3; i++ {
-		s.sendTo(gaddr, msg)
+		s.sendTo(gaddr, s.selfMsg)
 		select {
 		case <-s.stop:
 			return
@@ -109,7 +118,7 @@ func (s *Service) announceLoop(gaddr *net.UDPAddr) {
 		case <-s.stop:
 			return
 		case <-t.C:
-			s.sendTo(gaddr, msg)
+			s.sendTo(gaddr, s.selfMsg)
 		}
 	}
 }
@@ -124,6 +133,25 @@ func (s *Service) sendTo(gaddr *net.UDPAddr, msg []byte) {
 		_ = s.pc.SetMulticastInterface(&ifi)
 		_, _ = s.pc.WriteTo(msg, nil, gaddr)
 	}
+	// Also announce to each interface's subnet broadcast: Wi-Fi access
+	// points commonly filter multicast toward wireless clients (IGMP
+	// snooping) while broadcast passes, so this reaches nodes the group
+	// send cannot. Listeners bind 0.0.0.0 and accept either.
+	for _, ip := range broadcastIPs() {
+		_, _ = s.conn.WriteToUDP(msg, &net.UDPAddr{IP: ip, Port: s.cfg.Port})
+	}
+}
+
+// shouldReply rate-limits unicast replies to one per peer per interval.
+func (s *Service) shouldReply(peerID string) bool {
+	s.replyMu.Lock()
+	defer s.replyMu.Unlock()
+	now := time.Now()
+	if last, seen := s.replied[peerID]; seen && now.Sub(last) < s.cfg.Interval {
+		return false
+	}
+	s.replied[peerID] = now
+	return true
 }
 
 func (s *Service) listenLoop() {
@@ -140,31 +168,51 @@ func (s *Service) listenLoop() {
 		if err != nil {
 			continue
 		}
-		a, ok := decode(buf[:n])
-		if !ok {
-			continue
+		if reply := s.handleDatagram(buf[:n], src.IP.String()); reply != nil {
+			// Unicast straight back to the sender's discovery port. This is
+			// the path that survives one-way multicast (Wi-Fi APs commonly
+			// filter group traffic toward wireless clients): if their sends
+			// reach us but ours can't reach them, the reply still completes
+			// discovery in both directions.
+			_, _ = s.conn.WriteToUDP(reply, &net.UDPAddr{IP: src.IP, Port: s.cfg.Port})
 		}
-		if isSelfAnnounce(a, src.IP.String(), s.cfg.SelfID, s.cfg.Host, localIPSet()) {
-			continue
-		}
-		if a.Bye {
-			s.tbl.remove(a.ID)
-			continue
-		}
-		// Prefer the node's self-reported primary outbound IP (consistent on
-		// multi-homed hosts) over the multicast source IP, which varies by the
-		// interface the announce egressed from.
-		ip := a.IP
-		if ip == "" {
-			ip = src.IP.String()
-		}
-		s.tbl.upsert(Peer{
-			ID:      a.ID,
-			Host:    a.Host,
-			Addr:    net.JoinHostPort(ip, strconv.Itoa(a.Port)),
-			Version: a.Version,
-		})
 	}
+}
+
+// handleDatagram processes one received datagram and returns the unicast
+// reply to send back (nil for none). Split from listenLoop so the reply
+// protocol is testable without racing real socket delivery.
+func (s *Service) handleDatagram(data []byte, srcIP string) []byte {
+	a, ok := decode(data)
+	if !ok {
+		return nil
+	}
+	if isSelfAnnounce(a, srcIP, s.cfg.SelfID, s.cfg.Host, localIPSet()) {
+		return nil
+	}
+	if a.Bye {
+		s.tbl.remove(a.ID)
+		return nil
+	}
+	// Prefer the node's self-reported primary outbound IP (consistent on
+	// multi-homed hosts) over the multicast source IP, which varies by the
+	// interface the announce egressed from.
+	ip := a.IP
+	if ip == "" {
+		ip = srcIP
+	}
+	s.tbl.upsert(Peer{
+		ID:      a.ID,
+		Host:    a.Host,
+		Addr:    net.JoinHostPort(ip, strconv.Itoa(a.Port)),
+		Version: a.Version,
+	})
+	// Answer heard announces; never answer replies (loop prevention), so a
+	// pair exchanges at most one extra unicast per interval each.
+	if !a.Reply && s.shouldReply(a.ID) {
+		return s.replyMsg
+	}
+	return nil
 }
 
 // Peers returns the currently-live discovered peers (excludes self and expired).
@@ -256,6 +304,55 @@ func multicastInterfaces() []net.Interface {
 			continue
 		}
 		out = append(out, ifi)
+	}
+	return out
+}
+
+// broadcastIPs returns the IPv4 subnet broadcast address of every up,
+// broadcast-capable, non-loopback interface.
+func broadcastIPs() []net.IP {
+	all, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []net.IP
+	for _, ifi := range all {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagBroadcast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		out = append(out, broadcastFromAddrs(addrs)...)
+	}
+	return out
+}
+
+// broadcastFromAddrs computes ip|^mask for each IPv4 network. Pure for tests.
+func broadcastFromAddrs(addrs []net.Addr) []net.IP {
+	var out []net.IP
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip4 := ipnet.IP.To4()
+		if ip4 == nil {
+			continue
+		}
+		mask := ipnet.Mask
+		if len(mask) == 16 {
+			mask = mask[12:]
+		}
+		if len(mask) != 4 {
+			continue
+		}
+		b := make(net.IP, 4)
+		for i := 0; i < 4; i++ {
+			b[i] = ip4[i] | ^mask[i]
+		}
+		out = append(out, b)
 	}
 	return out
 }

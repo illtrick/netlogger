@@ -5,7 +5,8 @@ import "encoding/json"
 // magic guards our datagrams from other traffic that may land on the port.
 const magic = "nlldisc1"
 
-// announce is the multicast wire record (small JSON).
+// announce is the discovery wire record (small JSON), sent to the multicast
+// group, to subnet broadcast addresses, and as direct unicast replies.
 type announce struct {
 	Magic   string `json:"m"`
 	ID      string `json:"id"`
@@ -14,6 +15,9 @@ type announce struct {
 	Port    int    `json:"port"`
 	Version string `json:"ver"`
 	Bye     bool   `json:"bye,omitempty"`
+	// Reply marks a unicast answer to a received announce. Replies are not
+	// answered again (loop prevention). Older nodes ignore the field.
+	Reply bool `json:"r,omitempty"`
 }
 
 func encode(a announce) []byte {
