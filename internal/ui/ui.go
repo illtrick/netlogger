@@ -566,20 +566,32 @@ func peerBlock(gtx layout.Context, th *material.Theme, p appcore.PeerInfo) layou
 	)
 }
 
-// layoutAdapters renders one line per local NIC: link speed/status, every
-// power-saving property the adapter exposes, and the discard/error deltas since
-// the previous poll. A row turns vermillion when any discard/error ticked up
-// (direct NIC evidence during a drop) and amber when any power-saving property
-// (EEE, Green Ethernet, Gigabit Lite, …) is enabled — the suspect lead.
+// layoutAdapters renders the local NICs, signal-first: links that are Up (or
+// showing fresh faults) get a full line; idle ports collapse into one muted
+// summary row instead of a stack of zero-filled lines. A row turns vermillion
+// when any discard/error ticked up (direct NIC evidence during a drop) and
+// amber when any power-saving property (EEE, Green Ethernet, Gigabit Lite, …)
+// is enabled — the suspect lead.
 func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) layout.Dimensions {
 	if len(s.NICs) == 0 {
 		return material.Body1(th, "Adapters: (none reported)").Layout(gtx)
 	}
-	children := make([]layout.FlexChild, 0, len(s.NICs)+1)
+	var active []appcore.NICInfo
+	var idle []string
+	for _, n := range s.NICs {
+		// A faulting port stays visible even when down: link-training flaps
+		// produce errors precisely while not Up.
+		if strings.EqualFold(n.Status, "Up") || adapterHasFaults(n) {
+			active = append(active, n)
+		} else {
+			idle = append(idle, n.Name)
+		}
+	}
+	children := make([]layout.FlexChild, 0, len(active)+2)
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return material.Body1(th, "Adapters:").Layout(gtx)
 	}))
-	for _, n := range s.NICs {
+	for _, n := range active {
 		n := n
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(3), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -594,28 +606,46 @@ func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) 
 			})
 		}))
 	}
+	if len(idle) > 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(3), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, "no link: "+strings.Join(idle, " · "))
+				lbl.Color = colTextMut
+				return lbl.Layout(gtx)
+			})
+		}))
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
 // adapterLine is the pure text rendering of one NIC row. The middle segment
 // is per-platform: Windows reports power-saving properties (EEE et al.),
 // macOS reports link detail (Wi-Fi radio state, wired duplex); whichever the
-// collector filled is shown, and neither shows an empty placeholder.
+// collector filled is shown. Counter deltas print only when something ticked
+// up — a healthy line stays quiet instead of trailing zeros.
 func adapterLine(n appcore.NICInfo) string {
 	speed := n.LinkSpeed
 	if !strings.EqualFold(n.Status, "Up") {
 		speed = "—" // a down/disconnected link has no meaningful rate
 	}
-	mid := ""
+	line := n.Name + "  "
+	if speed != "" {
+		line += speed + "  "
+	}
+	line += n.Status
 	switch {
 	case n.Detail != "":
-		mid = "  " + n.Detail
+		line += "  " + n.Detail
 	case n.Power != "":
-		mid = "  power[" + powerText(n.Power) + "]"
+		line += "  power[" + powerText(n.Power) + "]"
 	}
-	return fmt.Sprintf("%s  %s  %s%s  discards rx+%d tx+%d  errors rx+%d tx+%d",
-		n.Name, speed, n.Status, mid,
-		n.RecentRxDiscards, n.RecentTxDiscards, n.RecentRxErrors, n.RecentTxErrors)
+	if n.RecentRxDiscards+n.RecentTxDiscards > 0 {
+		line += fmt.Sprintf("  discards rx+%d tx+%d", n.RecentRxDiscards, n.RecentTxDiscards)
+	}
+	if n.RecentRxErrors+n.RecentTxErrors > 0 {
+		line += fmt.Sprintf("  errors rx+%d tx+%d", n.RecentRxErrors, n.RecentTxErrors)
+	}
+	return line
 }
 
 // adapterHasFaults reports whether any discard/error counter ticked up this poll.
