@@ -42,6 +42,27 @@ func resolve(exeDir, fallbackBase string, beside bool, writable func(string) boo
 	return fb, nil
 }
 
+// SidecarDir returns where user-facing sidecar files (netlogger.log, export
+// bundles) belong: beside the executable on portable platforms — the
+// everything-in-one-folder contract — but the data dir when the exe location
+// must not be written (inside a macOS .app bundle, writing would break the
+// codesign seal).
+func SidecarDir(dataDir string) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return dataDir
+	}
+	return sidecarDir(filepath.Dir(exe), dataDir)
+}
+
+// sidecarDir is the injectable core of SidecarDir.
+func sidecarDir(exeDir, dataDir string) string {
+	if preferBeside(exeDir) {
+		return exeDir
+	}
+	return dataDir
+}
+
 // probeWritable tests writability by creating and removing a temp file.
 func probeWritable(dir string) bool {
 	f, err := os.CreateTemp(dir, ".wtest-*")

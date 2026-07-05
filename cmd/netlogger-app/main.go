@@ -6,7 +6,6 @@ package main
 import (
 	"log"
 	"os"
-	"path/filepath"
 
 	"netlogger/internal/appcore"
 	"netlogger/internal/applog"
@@ -20,11 +19,9 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-	logDir := dir
-	if exe, err := os.Executable(); err == nil {
-		logDir = filepath.Dir(exe)
-	}
-	logFile, err := applog.Init(logDir)
+	// Log beside the exe on portable platforms, in the data dir when the exe
+	// lives inside a .app bundle (never write into the bundle).
+	logFile, err := applog.Init(datadir.SidecarDir(dir))
 	if err == nil {
 		defer logFile.Close()
 	}

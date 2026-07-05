@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"image/color"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +22,7 @@ import (
 	"gioui.org/widget/material"
 
 	"netlogger/internal/appcore"
+	"netlogger/internal/datadir"
 )
 
 // Run opens the window and renders until it is closed.
@@ -85,12 +85,13 @@ func Run(a *appcore.App) error {
 				statusMsg = "resetting mesh… (awaiting peer acks)"
 			}
 			if exportBtn.Clicked(gtx) {
-				if exe, err := os.Executable(); err == nil {
-					if p, werr := appcore.WriteExport(filepath.Dir(exe), a.Export(time.Now().Unix())); werr == nil {
-						statusMsg = "exported " + filepath.Base(p)
-					} else {
-						statusMsg = "export failed: " + werr.Error()
-					}
+				// Beside the exe on portable platforms; the data dir when the
+				// exe is inside a .app bundle (never write into the bundle).
+				dir := datadir.SidecarDir(a.DataDir())
+				if p, werr := appcore.WriteExport(dir, a.Export(time.Now().Unix())); werr == nil {
+					statusMsg = "exported " + filepath.Base(p)
+				} else {
+					statusMsg = "export failed: " + werr.Error()
 				}
 			}
 			if sleepBtn.Clicked(gtx) {

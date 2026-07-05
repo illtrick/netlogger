@@ -319,6 +319,9 @@ func New(dataDir string) *App {
 	}
 }
 
+// DataDir returns the resolved data directory the app was created with.
+func (a *App) DataDir() string { return a.dataDir }
+
 func (a *App) statFor(id string) *peerStat {
 	a.peerMu.Lock()
 	defer a.peerMu.Unlock()

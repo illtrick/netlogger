@@ -3,6 +3,7 @@ package datadir
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -79,6 +80,20 @@ func TestResolveSkipsBesideWhenNotPreferred(t *testing.T) {
 	want := filepath.Join(fb, "NetLogger")
 	if got != want {
 		t.Errorf("resolve = %q, want fallback %q", got, want)
+	}
+}
+
+func TestSidecarDir(t *testing.T) {
+	// Non-bundle exe dirs keep sidecars beside the exe on every platform.
+	if got := sidecarDir("/Users/x/dev/bin", "/data"); got != "/Users/x/dev/bin" {
+		t.Errorf("sidecarDir(non-bundle) = %q, want exe dir", got)
+	}
+	// Inside a .app bundle (darwin's preferBeside says no), sidecars must go
+	// to the data dir. Only darwin's preferBeside knows about bundles.
+	if runtime.GOOS == "darwin" {
+		if got := sidecarDir("/Applications/NetLogger.app/Contents/MacOS", "/data"); got != "/data" {
+			t.Errorf("sidecarDir(bundle) = %q, want data dir", got)
+		}
 	}
 }
 
