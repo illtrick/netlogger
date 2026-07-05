@@ -49,8 +49,8 @@ func brand(gtx layout.Context, th *material.Theme) layout.Dimensions {
 // dragArea layouts w and marks its bounds as a native caption region: the OS
 // handles dragging (and double-click maximize) for these stretches of the bar.
 func dragArea(gtx layout.Context, w layout.Widget) layout.Dimensions {
-	if !customChrome {
-		return w(gtx) // native title bar handles dragging
+	if !dragRegions {
+		return w(gtx) // OS decorations handle dragging
 	}
 	macro := op.Record(gtx.Ops)
 	dims := w(gtx)

@@ -4,5 +4,8 @@ package ui
 
 import "gioui.org/app"
 
-// nativeViewChanged is darwin-only (integrated title bar); no-op elsewhere.
+// nativeViewChanged / nativeConfigChanged are darwin-only (re-showing the
+// traffic lights over the app bar); no-ops elsewhere.
 func nativeViewChanged(app.ViewEvent) {}
+
+func nativeConfigChanged() {}

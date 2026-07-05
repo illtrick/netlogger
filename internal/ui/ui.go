@@ -30,7 +30,7 @@ func Run(a *appcore.App) error {
 	w := new(app.Window)
 	w.Option(app.Title("NetLogger"), app.Size(unit.Dp(880), unit.Dp(720)),
 		app.MinSize(unit.Dp(760), unit.Dp(520)), // keep the layout from squishing into overlap
-		app.Decorated(!customChrome))            // Windows: the app bar IS the title bar; macOS: native chrome
+		app.Decorated(nativeDecorations))        // win+mac: the app bar IS the title bar (mac re-adds traffic lights)
 	applyDarkTitleBar("NetLogger") // window icon, rounded corners, close-to-tray hook
 	stopTray := startTray("NetLogger")
 	defer stopTray()
@@ -74,9 +74,10 @@ func Run(a *appcore.App) error {
 		case app.DestroyEvent:
 			return e.Err
 		case app.ViewEvent:
-			nativeViewChanged(e) // darwin: integrate title bar with the app bar
+			nativeViewChanged(e) // darwin: re-show traffic lights over the app bar
 		case app.ConfigEvent:
 			chrome.maximized = e.Config.Mode == app.Maximized
+			nativeConfigChanged() // darwin: Configure re-hides the buttons; re-assert
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			paint.Fill(gtx.Ops, colBg)
