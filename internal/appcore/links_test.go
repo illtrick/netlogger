@@ -48,7 +48,7 @@ func TestMeshWarning(t *testing.T) {
 
 	// Version mismatch dominates a co-occurring same-platform build skew.
 	reps = map[string]LinkReport{
-		"old": {NodeID: "old", Host: "htpc", Version: "1.0.0", Platform: "windows/amd64", Build: "old999"},
+		"old":  {NodeID: "old", Host: "htpc", Version: "1.0.0", Platform: "windows/amd64", Build: "old999"},
 		"skew": {NodeID: "skew", Host: "ncase", Version: "1.1.0", Platform: "windows/amd64", Build: "stale77"},
 	}
 	if w := meshWarning(self, reps); !strings.Contains(w, "version mismatch") {

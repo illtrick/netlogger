@@ -249,10 +249,12 @@ then the live checks above.
   `Build`. Semantics the Mac must confirm live:
   - [ ] A **Mac and a Windows node on the same release (both 1.1.0)** show **no
     banner** — this is the whole point; a same-version/different-OS peer must
-    never warn.
-  - [ ] The footer on the Mac reads `v1.1.0 (darwin/arm64) · build <hash>`.
-  - [ ] A node left on an **older build** (e.g. a peer still on the pre-1.1
-    line) surfaces the loud `version mismatch — update every node to 1.1.0`.
+    never warn. *(pending: as of the Mac sync, both LAN Windows nodes still
+    ran pre-1.1 builds — verify on ryzen's next rebuild)*
+  - [x] The footer on the Mac reads `v1.1.0 (darwin/arm64) · build <hash>`.
+  - [x] A node left on an **older build** (e.g. a peer still on the pre-1.1
+    line) surfaces the loud warning (verified live: ryzen `eed3fe3` and
+    sarah-pc `3d737d6` both beacon no Version → banner shows).
 
 Verify: `./scripts/test-mac.sh` green (note `internal/appcore` unit tests now
 include `TestMeshWarning`, which runs on the Mac too and already asserts the
@@ -262,3 +264,26 @@ Windows 1.1.0 node.
 > **Deploy note:** peers still running pre-1.1 builds will show as "runs an
 > older build" until redeployed — expected, they predate the `Version`/
 > `Platform` link-report fields.
+
+---
+
+## Mac→Windows notes (reverse channel)
+
+### 2026-07-04 · Mac `c184979` (discovery resilience — REBUILD WINDOWS)
+
+All **[Portable]** — no Windows-side code, but a rebuild is required and it
+matters on this LAN (the AP filters wired→wireless multicast; the Mac only
+sees old nodes today by piggybacking on their polling):
+
+- discovery: announces now also go to subnet broadcast; nodes unicast-reply
+  to heard announces (additive `r` wire flag); `SO_REUSEPORT` on unix.
+- appcore: peers are also learned from inbound control-request sources
+  (`/api/links` identity fetch) — works against any version.
+- nicstat (darwin-only): Wi-Fi LinkSpeed stabilized per association; live tx
+  rate moved to Detail (stops the 8s link-speed event spam).
+- gofmt: `internal/appcore/links_test.go` needed a re-format on macOS (the
+  known Windows CRLF/alignment artifact).
+
+After the next Windows build (which also picks up `8523fb8`'s own beacons):
+re-verify the same-version/no-banner check above, and expect discovery to be
+symmetric without the learner fallback.
