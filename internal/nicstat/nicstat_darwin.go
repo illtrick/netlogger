@@ -45,11 +45,20 @@ func Collect() []NIC {
 		}
 		switch {
 		case wifiOK && dev == wifi.Iface:
-			// Live radio state from CoreWLAN: PHY tx rate as the link speed
-			// (the Windows collector reports the same for Wi-Fi), signal
-			// detail for the panel.
-			n.LinkSpeed = formatMbps(wifi.TxRateMbps)
+			// LinkSpeed must be STABLE per association — the NIC change
+			// detector fires a timeline event on every string change, and
+			// CoreWLAN's instantaneous PHY rate wobbles every poll. Use
+			// ifconfig's association ceiling ("downlink rate … [max]",
+			// changes only on roam/band/width moves — events we WANT); the
+			// live tx rate rides along in Detail, which is not compared.
+			n.LinkSpeed = formatMbps(wifiMax)
+			if n.LinkSpeed == "" {
+				n.LinkSpeed = formatMbps(wifi.TxRateMbps)
+			}
 			n.Detail = wifi.detail()
+			if tx := formatMbps(wifi.TxRateMbps); tx != "" {
+				n.Detail += " · tx " + tx
+			}
 		case wifiMax > 0:
 			// Wi-Fi without CoreWLAN data (e.g. mid-association): ifconfig's
 			// PHY ceiling and link-quality lines still tell the story.

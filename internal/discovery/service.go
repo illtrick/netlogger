@@ -218,6 +218,13 @@ func (s *Service) handleDatagram(data []byte, srcIP string) []byte {
 // Peers returns the currently-live discovered peers (excludes self and expired).
 func (s *Service) Peers() []Peer { return s.tbl.list() }
 
+// AddPeer registers a peer learned out-of-band — e.g. from the source IP of
+// inbound control-plane traffic, which keeps working when this node cannot
+// receive the peer's announces at all (multicast-filtering APs, old peers
+// without unicast replies). Normal TTL expiry applies, so the caller should
+// re-add while the evidence keeps arriving.
+func (s *Service) AddPeer(p Peer) { s.tbl.upsert(p) }
+
 // isSelfAnnounce reports whether an announce actually originated from this node:
 // either the same node id, or a *different* identity that shares both our
 // hostname and one of our local IPs — i.e. this same machine running a second

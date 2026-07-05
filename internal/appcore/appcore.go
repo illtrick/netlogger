@@ -471,7 +471,21 @@ func (a *App) Start() error {
 		mux.Handle("/api/internet", internetHandler(func(ep string) InternetResult {
 			return a.runLocalInternet(ep, nil) // remote callers get only the final result
 		}))
-		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(mux)}
+		// Learn peers from whoever polls us: works even when we can never
+		// hear their announces (multicast-filtering APs, pre-1.1.0 peers
+		// that don't send unicast replies).
+		learner := newPeerLearner(func(ip string) (discovery.Peer, error) {
+			addr := net.JoinHostPort(ip, strconv.Itoa(controlPort))
+			rep, err := a.FetchLinks("http://" + addr)
+			if err != nil {
+				return discovery.Peer{}, err
+			}
+			if rep.NodeID == "" || rep.NodeID == a.nodeID {
+				return discovery.Peer{}, errNotAPeer
+			}
+			return discovery.Peer{ID: rep.NodeID, Host: rep.Host, Addr: addr}, nil
+		}, a.disc.AddPeer)
+		a.linksSrv = &http.Server{Addr: "0.0.0.0:" + strconv.Itoa(controlPort), Handler: httpauth.Middleware("")(sightingHandler(learner, mux))}
 		go func() { _ = a.linksSrv.ListenAndServe() }()
 	}
 
