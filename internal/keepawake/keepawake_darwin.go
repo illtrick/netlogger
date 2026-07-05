@@ -4,13 +4,17 @@ package keepawake
 
 import (
 	"log"
+	"os"
 	"os/exec"
+	"strconv"
 )
 
-// Keeper holds a running `caffeinate -i` child that prevents idle system
-// sleep while NetLogger monitors. Killed on Stop; dies with us if we crash
-// (caffeinate exits when its parent's stdin closes is NOT relied on — the
-// assertion simply lapses when the process is gone).
+// Keeper holds a running `caffeinate -i -w <our pid>` child that prevents
+// idle system sleep while NetLogger monitors. Killed on Stop (settings
+// toggle); -w makes caffeinate exit on its own when our process dies by ANY
+// path — including Cmd+Q/AppleEvent termination, which Cocoa performs
+// without unwinding Go defers, and outright crashes — so the child can
+// never outlive the app and hold the Mac awake forever.
 type Keeper struct {
 	cmd *exec.Cmd
 }
@@ -18,7 +22,7 @@ type Keeper struct {
 // Start launches caffeinate. A failure to start is logged, not fatal —
 // monitoring works fine, the machine just may sleep.
 func Start() *Keeper {
-	cmd := exec.Command("/usr/bin/caffeinate", "-i")
+	cmd := exec.Command("/usr/bin/caffeinate", "-i", "-w", strconv.Itoa(os.Getpid()))
 	if err := cmd.Start(); err != nil {
 		log.Printf("keepawake: caffeinate failed to start: %v", err)
 		return &Keeper{}
