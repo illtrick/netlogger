@@ -19,3 +19,6 @@ network.json
 
 # superpowers brainstorm companion (local mockups)
 /.superpowers/
+
+# local Claude Code settings
+/.claude/
