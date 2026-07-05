@@ -18,38 +18,96 @@ type LinkStat struct {
 }
 
 // LinkReport is a node's view of its own outbound links (served at /api/links).
+// It also beacons this node's build identity so peers can detect an incompatible
+// or incompletely-rolled-out mesh. Version is the compatibility contract;
+// Platform and Build exist so an expected cross-OS binary difference is not
+// mistaken for a real mismatch. Version/Platform are absent from pre-1.1 peers.
 type LinkReport struct {
-	NodeID string     `json:"node_id"`
-	Host   string     `json:"host"`
-	Build  string     `json:"build"` // binary identity; lets peers detect mesh build skew
-	Links  []LinkStat `json:"links"`
+	NodeID   string     `json:"node_id"`
+	Host     string     `json:"host"`
+	Version  string     `json:"version,omitempty"`  // semver release, the mesh compatibility contract
+	Platform string     `json:"platform,omitempty"` // GOOS/GOARCH, e.g. "windows/amd64"
+	Build    string     `json:"build"`              // exact git commit; same-OS rollout skew only
+	Links    []LinkStat `json:"links"`
 }
 
-// buildWarning returns a human-facing notice when any peer reports a build
-// string different from this node's — meaning the mesh is running mismatched
-// binaries and cross-machine features (synchronized reset, new probes) may
-// silently fail. Empty when all known peer builds match (or none is reported,
-// e.g. a peer too old to send the field).
-func buildWarning(self string, reps map[string]LinkReport) string {
-	seen := map[string]bool{}
-	var mism []string
+// buildID is a node's self-identity for the mesh compatibility check.
+type buildID struct {
+	Version  string
+	Build    string
+	Platform string
+}
+
+// meshWarning returns a human-facing notice when the mesh is running binaries
+// that either can't interoperate or aren't the same rollout. It reasons about
+// three levels so a legitimate cross-platform mesh (a Mac and a PC on the same
+// release) never false-alarms:
+//
+//   - Version mismatch (a peer on a different — or too-old-to-report — release)
+//     is the real hazard: cross-machine features (synchronized reset, new
+//     probes) may silently fail. This wins and asks the user to align versions.
+//   - Otherwise, if every version matches but a SAME-PLATFORM peer runs a
+//     different git build, that's an incomplete rollout on that OS — a softer
+//     "redeploy the latest build" nudge.
+//   - A same-version peer on a DIFFERENT platform is expected to differ and is
+//     never flagged.
+//
+// Empty when the mesh is consistent.
+func meshWarning(self buildID, reps map[string]LinkReport) string {
+	var verMism, buildSkew []string
+	seenVer, seenSkew := map[string]bool{}, map[string]bool{}
 	for _, r := range reps {
-		if r.Build == "" || r.Build == self || seen[r.Build] {
-			continue
-		}
-		seen[r.Build] = true
 		label := r.Host
 		if label == "" {
 			label = r.NodeID
 		}
-		mism = append(mism, fmt.Sprintf("%s on %s", label, r.Build))
+		switch {
+		case r.Version == "": // pre-1.1 peer that can't report a version → older build
+			if !seenVer["\x00"+label] {
+				seenVer["\x00"+label] = true
+				verMism = append(verMism, fmt.Sprintf("%s runs an older build", label))
+			}
+		case r.Version != self.Version:
+			key := r.Version + "\x00" + label
+			if !seenVer[key] {
+				seenVer[key] = true
+				verMism = append(verMism, fmt.Sprintf("%s runs %s (%s)", label, r.Version, platformOr(r.Platform)))
+			}
+		case r.Platform == self.Platform && r.Build != "" && r.Build != self.Build:
+			// Same release, same OS, different commit → incomplete rollout.
+			if !seenSkew[r.Build] {
+				seenSkew[r.Build] = true
+				buildSkew = append(buildSkew, fmt.Sprintf("%s (%s)", label, r.Build))
+			}
+		}
 	}
-	if len(mism) == 0 {
-		return ""
+
+	if len(verMism) > 0 {
+		sort.Strings(verMism)
+		return fmt.Sprintf("version mismatch — this node runs NetLogger %s (%s); %s. Update every node to %s.",
+			versionOr(self.Version), platformOr(self.Platform), strings.Join(verMism, ", "), versionOr(self.Version))
 	}
-	sort.Strings(mism)
-	return fmt.Sprintf("build mismatch — you: %s; %s. Redeploy the same exe everywhere.",
-		self, strings.Join(mism, ", "))
+	if len(buildSkew) > 0 {
+		sort.Strings(buildSkew)
+		return fmt.Sprintf("build skew — some %s nodes run a different %s build: %s. Redeploy the latest build to all %s nodes.",
+			platformOr(self.Platform), versionOr(self.Version), strings.Join(buildSkew, ", "), platformOr(self.Platform))
+	}
+	return ""
+}
+
+// versionOr / platformOr render an unset field readably in the warning text.
+func versionOr(v string) string {
+	if v == "" {
+		return "an unknown version"
+	}
+	return v
+}
+
+func platformOr(p string) string {
+	if p == "" {
+		return "unknown platform"
+	}
+	return p
 }
 
 // MatrixNode is one node (a row and a column of the matrix).

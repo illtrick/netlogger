@@ -7,24 +7,52 @@ import (
 	"testing"
 )
 
-func TestBuildWarning(t *testing.T) {
-	// all peers match self → no warning
+func TestMeshWarning(t *testing.T) {
+	self := buildID{Version: "1.1.0", Build: "abc123", Platform: "windows/amd64"}
+
+	// Identical build everywhere → no warning.
 	reps := map[string]LinkReport{
-		"b": {NodeID: "b", Host: "ryzen", Build: "abc123"},
+		"b": {NodeID: "b", Host: "ryzen", Version: "1.1.0", Platform: "windows/amd64", Build: "abc123"},
 	}
-	if w := buildWarning("abc123", reps); w != "" {
-		t.Fatalf("matching builds should not warn: %q", w)
+	if w := meshWarning(self, reps); w != "" {
+		t.Fatalf("identical mesh should not warn: %q", w)
 	}
-	// a peer on a different build → warning names it
-	reps["b"] = LinkReport{NodeID: "b", Host: "ryzen", Build: "old999"}
-	w := buildWarning("abc123", reps)
-	if w == "" || !strings.Contains(w, "ryzen on old999") || !strings.Contains(w, "abc123") {
-		t.Fatalf("expected mismatch warning naming the peer+build, got %q", w)
+
+	// THE CROSS-PLATFORM CASE: same version, different OS, different build hash
+	// (a Mac joining a Windows mesh) → NOT a mismatch.
+	reps["b"] = LinkReport{NodeID: "b", Host: "macbook", Version: "1.1.0", Platform: "darwin/arm64", Build: "def456"}
+	if w := meshWarning(self, reps); w != "" {
+		t.Fatalf("same version on another platform must not warn, got %q", w)
 	}
-	// a peer too old to report its build → no false warning
-	reps["b"] = LinkReport{NodeID: "b", Host: "ryzen", Build: ""}
-	if w := buildWarning("abc123", reps); w != "" {
-		t.Fatalf("empty peer build should not warn: %q", w)
+
+	// A peer on an older release → version-mismatch warning naming it + the target.
+	reps["b"] = LinkReport{NodeID: "b", Host: "htpc", Version: "1.0.0", Platform: "windows/amd64", Build: "old999"}
+	w := meshWarning(self, reps)
+	if w == "" || !strings.Contains(w, "version mismatch") || !strings.Contains(w, "htpc runs 1.0.0") || !strings.Contains(w, "Update every node to 1.1.0") {
+		t.Fatalf("expected version-mismatch warning, got %q", w)
+	}
+
+	// A peer too old to report a version at all → treated as older, still warned.
+	reps["b"] = LinkReport{NodeID: "b", Host: "htpc", Build: "veryold"}
+	w = meshWarning(self, reps)
+	if w == "" || !strings.Contains(w, "htpc runs an older build") {
+		t.Fatalf("empty-version peer should warn as older, got %q", w)
+	}
+
+	// Same version, SAME platform, different commit → build-skew nudge (incomplete rollout).
+	reps["b"] = LinkReport{NodeID: "b", Host: "ncase", Version: "1.1.0", Platform: "windows/amd64", Build: "stale77"}
+	w = meshWarning(self, reps)
+	if w == "" || !strings.Contains(w, "build skew") || !strings.Contains(w, "ncase (stale77)") {
+		t.Fatalf("expected build-skew warning, got %q", w)
+	}
+
+	// Version mismatch dominates a co-occurring same-platform build skew.
+	reps = map[string]LinkReport{
+		"old": {NodeID: "old", Host: "htpc", Version: "1.0.0", Platform: "windows/amd64", Build: "old999"},
+		"skew": {NodeID: "skew", Host: "ncase", Version: "1.1.0", Platform: "windows/amd64", Build: "stale77"},
+	}
+	if w := meshWarning(self, reps); !strings.Contains(w, "version mismatch") {
+		t.Fatalf("version mismatch should dominate build skew, got %q", w)
 	}
 }
 

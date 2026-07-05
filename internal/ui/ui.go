@@ -426,7 +426,15 @@ func Run(a *appcore.App) error {
 // build-skew banner + transient status / last-reset messages.
 func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, resetBtn, exportBtn, sleepBtn *widget.Clickable, statusMsg string) layout.Dimensions {
 	statusText, statusColor := overallStatus(s)
-	sub := fmt.Sprintf("up %s · build %s", fmtDuration(s.SessionUptimeSec), versionOr(s.Build))
+	ver := s.Version
+	if ver == "" {
+		ver = "dev"
+	}
+	plat := ""
+	if s.Platform != "" {
+		plat = " · " + s.Platform
+	}
+	sub := fmt.Sprintf("up %s · v%s%s · build %s", fmtDuration(s.SessionUptimeSec), ver, plat, versionOr(s.Build))
 	sleepLabel := "Sleep: prevented"
 	if !s.PreventSleep {
 		sleepLabel = "Sleep: allowed"

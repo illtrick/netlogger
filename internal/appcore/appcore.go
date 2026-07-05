@@ -55,8 +55,10 @@ type Snapshot struct {
 	InternetHist     []float64
 	PreventSleep     bool
 	NICs             []NICInfo
-	Build            string // this binary's build identity
-	BuildWarning     string // set when a peer runs a mismatched build
+	Version          string // this binary's semver release (the mesh compatibility contract)
+	Platform         string // this binary's GOOS/GOARCH
+	Build            string // this binary's exact git commit
+	BuildWarning     string // set when a peer runs an incompatible version or a skewed build
 	LastReset        string // outcome of the most recent ResetAll (empty until one runs)
 	// Events is the merged mesh-wide connectivity timeline (this machine + every
 	// peer's pulled events), oldest first, host-labeled; the UI renders newest first.
@@ -245,6 +247,7 @@ type PeerInfo struct {
 	Host         string
 	Addr         string
 	Version      string
+	Platform     string // peer's GOOS/GOARCH (from its pulled link report)
 	Build        string // peer's binary build id (from its pulled link report), for skew checks
 	LastSeenUnix int64
 	RTTms        float64
@@ -673,7 +676,11 @@ func (a *App) linkReport() LinkReport {
 			links = append(links, LinkStat{PeerID: p.ID, RTTms: rtt, JitterMs: jitter, LossPct: loss, Drops: eps})
 		}
 	}
-	return LinkReport{NodeID: id, Host: host, Build: version.Build, Links: links}
+	return LinkReport{
+		NodeID: id, Host: host,
+		Version: version.Version, Platform: version.Platform(), Build: version.Build,
+		Links: links,
+	}
 }
 
 // linkPullLoop fetches each discovered peer's link report so this window can show
@@ -825,6 +832,8 @@ func (a *App) Snapshot() Snapshot {
 		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
 		GatewayHist:  a.gwHist.values(),
 		InternetHist: a.netHist.values(),
+		Version:      version.Version,
+		Platform:     version.Platform(),
 		Build:        version.Build,
 		LastReset:    a.lastReset,
 	}
@@ -844,10 +853,14 @@ func (a *App) Snapshot() Snapshot {
 	}
 	a.reportMu.Unlock()
 	snap.Matrix = assembleMatrix(a.linkReport(), reps)
-	snap.BuildWarning = buildWarning(version.Build, reps)
+	snap.BuildWarning = meshWarning(buildID{Version: version.Version, Build: version.Build, Platform: version.Platform()}, reps)
 	for i := range snap.Peers {
 		if r, ok := reps[snap.Peers[i].ID]; ok {
 			snap.Peers[i].Build = r.Build
+			snap.Peers[i].Platform = r.Platform
+			if r.Version != "" {
+				snap.Peers[i].Version = r.Version
+			}
 		}
 	}
 	snap.Events = mergeEvents(selfHost, a.recentEvents(), peerEvs, eventRingCap)
