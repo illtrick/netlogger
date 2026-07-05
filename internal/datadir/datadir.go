@@ -31,13 +31,16 @@ func resolve(exeDir, fallbackBase string, beside bool, writable func(string) boo
 	}
 	fb := filepath.Join(fallbackBase, "NetLogger")
 	if err := os.MkdirAll(fb, 0o755); err != nil {
-		return "", fmt.Errorf("create fallback data dir %q: %w", fb, err)
+		return "", fmt.Errorf("create fallback data dir %s: %w", fb, err)
 	}
 	if !writable(fb) {
+		// Use %s, not %q: on Windows %q backslash-escapes the path
+		// ("C:\\Users\\...") — ugly in the ticket line and it breaks substring
+		// checks (and the test) against the real path.
 		if cand != "" {
-			return "", fmt.Errorf("no writable data dir (tried %q and %q)", cand, fb)
+			return "", fmt.Errorf("no writable data dir (tried %s and %s)", cand, fb)
 		}
-		return "", fmt.Errorf("no writable data dir (beside-exe disabled; tried %q)", fb)
+		return "", fmt.Errorf("no writable data dir (beside-exe disabled; tried %s)", fb)
 	}
 	return fb, nil
 }
