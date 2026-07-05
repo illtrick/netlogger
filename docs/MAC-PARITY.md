@@ -1,0 +1,129 @@
+# macOS Parity — Windows→Mac Sync Channel
+
+This is the standing hand-off from the Windows dev line to the macOS build.
+**After every successful Windows build, a new dated entry is appended to the
+[Change log](#change-log) below** describing what changed and what — if
+anything — the Mac side must do to stay at parity. The macOS port itself is
+complete and documented in [docs/MACOS.md](MACOS.md); this file is only the
+running delta between the two platforms.
+
+## How to use this (on the Mac)
+
+1. `git pull` and read the **newest** Change-log entry (top of the list).
+2. For each change, apply its **class** (below) — most are "rebuild + verify."
+3. Run the [verification bar](#verification-bar). It must be green.
+4. Tick the entry's checkboxes, commit any Mac-side code the entry required,
+   and push. If a change needed a new `_darwin.go` seam, that code is the
+   Mac's to write — the Windows side only ships the stub + the contract.
+
+If several Windows builds landed since you last synced, walk the entries
+oldest→newest; each is self-contained.
+
+## Parity model — every change is one of three classes
+
+| Class | What it means | Mac action |
+|---|---|---|
+| **Portable** | Shared, untagged Go (engine, UI logic, `version`, `store`, pure parsers). Compiles and behaves the same on every OS. | **Rebuild + verify.** No Mac code. |
+| **Platform seam** | Windows added or changed a build-tagged value (`*_windows.go` + `*_other.go`, or a new `const`/`func` seam) that darwin must satisfy. | **Implement the `*_darwin.go` counterpart** to the contract the entry states, then verify. |
+| **Spec / behavioral** | A cross-platform behavior, UX rule, or protocol change that the Mac must *match* even though the code is portable (e.g. a new wire field, a copy rule, a warning's semantics). | **Verify the behavior on the Mac**, live, against a Windows node where relevant. |
+
+The guiding pattern the whole codebase follows: **small build-tagged files
+define per-platform values; untagged code consumes them; pure logic stays
+untagged so it unit-tests on any OS.** When you add a seam, keep that shape.
+
+## Standing invariants (the spec guidance that never changes)
+
+These are the cross-platform contracts every change is judged against. A
+Windows change that would violate one of these on the Mac is a parity bug —
+call it out in the entry. Full rationale for each lives in
+[docs/MACOS.md](MACOS.md); the short version:
+
+1. **Compatibility is `version.Version` (semver), not the git build.** Same
+   Version ⇒ nodes interoperate regardless of OS. `version.Platform()`
+   (`GOOS/GOARCH`) exists so a Mac↔PC binary difference is never mistaken for
+   a mismatch. Only bump `Version` when the wire protocol changes; when you do,
+   say so in the entry (every node must upgrade together).
+2. **No elevation on macOS, ever.** Unprivileged ICMP (`privilegedICMP=false`).
+   Nothing may introduce a code path that needs root on darwin.
+3. **The app binary is built on a Mac (cgo + Apple SDK).** The engine stays
+   pure Go and cross-compiles from anywhere; UI/`nicstat` darwin need cgo.
+4. **Nothing is ever written inside the `.app` bundle** (breaks the codesign
+   seal): DB, log, and exports go to `~/Library/Application Support/NetLogger`
+   via `datadir`/`SidecarDir`. A new file the app writes must route through
+   those, not `os.Executable()`'s dir.
+5. **Native window chrome on macOS** (`app.Decorated(false)` + re-shown traffic
+   lights). `customChrome` (hand-drawn caption buttons) is Windows-only. Don't
+   mutate the NSWindow style mask behind Gio's back.
+6. **iperf3 is resolved, not bundled, on macOS** (`brew install iperf3`);
+   monitoring must degrade cleanly when it's absent.
+7. **A platform may lack a signal.** macOS has no rootless RX-drop or EEE
+   source; the UI shows whatever the platform provides. Don't make a Windows
+   metric a hard requirement in shared code.
+8. **UI copy stays plain and factual** — no editorial/verdict language, on
+   either platform.
+
+## Verification bar
+
+A macOS sync is "successful" only when:
+
+- `./scripts/test-mac.sh` is green (6 layers: fmt/vet, `go test ./...`,
+  `-race`, cross-compile Windows+Linux engine, live `nicstat.Collect()`,
+  `build-mac.sh` + bundle assertions).
+- `./scripts/build-mac.sh` produces `bin/NetLogger.app` and it launches.
+- Any change tagged **Spec / behavioral** has been exercised live against a
+  Windows NetLogger node on the same LAN.
+
+## Entry template (copy for each Windows build)
+
+```markdown
+### <YYYY-MM-DD> · Windows `<short-hash>` (<one-line title>)
+
+**Range:** `<prev-hash>..<hash>`  ·  **Net effect for Mac:** <rebuild-only | N seams | behavioral>
+
+- **[Portable]** <what changed> → rebuild + verify. No Mac code.
+- **[Platform seam]** <seam name> — contract: <what the darwin file must return/do>.
+  - [ ] Implement `internal/<pkg>/<file>_darwin.go`
+- **[Spec/behavioral]** <behavior> → verify live: <exact thing to observe>.
+  - [ ] <verification step>
+
+Verify: `./scripts/test-mac.sh` green; <extra live checks>.
+```
+
+---
+
+## Change log
+
+_Newest first. Each entry corresponds to one Windows build push._
+
+### 2026-07-04 · Windows `8523fb8` (version-based compatibility warning + v1.1.0 hygiene)
+
+**Range:** `f124126..8523fb8` (two commits: `eed3fe3`, `8523fb8`) · **Net effect for Mac: rebuild-only + one live check.** No new seams.
+
+- **[Portable]** `internal/datadir/datadir.go` (`eed3fe3`) — the "no writable
+  data dir" error now formats paths with `%s` instead of `%q` (the `%q`
+  backslash-escaping only ever hurt Windows). → rebuild + verify. The darwin
+  `datadir` tests are unaffected; `test-mac.sh` layer 2 covers it.
+- **[Portable]** `internal/version/version.go` — `Version` is now `1.1.0` and a
+  new `Platform()` returns `GOOS/GOARCH`. On the Mac it resolves to
+  `darwin/arm64` (or `amd64`) automatically — **no Mac code needed.** Note:
+  `build-mac.sh` already stamps the bundle version from `version.Version`, so
+  the `.app` becomes 1.1.0 on the next build with no plist edit.
+- **[Spec/behavioral]** `internal/appcore/links.go` + `appcore.go` + `ui.go` —
+  the mesh build-mismatch banner is replaced by a version-based
+  `meshWarning`. `LinkReport` now beacons `Version` + `Platform` alongside
+  `Build`. Semantics the Mac must confirm live:
+  - [ ] A **Mac and a Windows node on the same release (both 1.1.0)** show **no
+    banner** — this is the whole point; a same-version/different-OS peer must
+    never warn.
+  - [ ] The footer on the Mac reads `v1.1.0 (darwin/arm64) · build <hash>`.
+  - [ ] A node left on an **older build** (e.g. a peer still on the pre-1.1
+    line) surfaces the loud `version mismatch — update every node to 1.1.0`.
+
+Verify: `./scripts/test-mac.sh` green (note `internal/appcore` unit tests now
+include `TestMeshWarning`, which runs on the Mac too and already asserts the
+cross-platform-silence case); then the three live checks above against a
+Windows 1.1.0 node.
+
+> **Deploy note:** peers still running pre-1.1 builds will show as "runs an
+> older build" until redeployed — expected, they predate the `Version`/
+> `Platform` link-report fields.

@@ -7,6 +7,11 @@ working reference for building, testing, and extending it. History lives in
 plan) and `docs/MACOS-BUILD-KICKOFF.md` (the bootstrap runbook that started
 it).
 
+**Keeping up with the Windows line:** after each Windows build, a sync entry
+is pushed to [docs/MAC-PARITY.md](MAC-PARITY.md) telling you what changed and
+what the Mac must do (usually just rebuild + verify). Read its newest entry
+whenever you `git pull`.
+
 ## TL;DR
 
 ```bash
