@@ -27,6 +27,8 @@ func Collect() []NIC {
 	}
 	sort.Strings(devs) // stable order for the UI and change detection
 
+	wifi, wifiOK := readWifiRadio()
+
 	var nics []NIC
 	for _, dev := range devs {
 		sec, ok := sections[dev]
@@ -34,11 +36,32 @@ func Collect() []NIC {
 			continue // port exists but interface is gone (e.g. unplugged adapter)
 		}
 		speed, status := parseIfconfig(sec)
+		duplex, wifiMax, quality := parseIfconfigExtras(sec)
 		n := NIC{
 			Name:        dev,
 			Description: ports[dev],
 			LinkSpeed:   speed,
 			Status:      status,
+		}
+		switch {
+		case wifiOK && dev == wifi.Iface:
+			// Live radio state from CoreWLAN: PHY tx rate as the link speed
+			// (the Windows collector reports the same for Wi-Fi), signal
+			// detail for the panel.
+			n.LinkSpeed = formatMbps(wifi.TxRateMbps)
+			n.Detail = wifi.detail()
+		case wifiMax > 0:
+			// Wi-Fi without CoreWLAN data (e.g. mid-association): ifconfig's
+			// PHY ceiling and link-quality lines still tell the story.
+			n.LinkSpeed = formatMbps(wifiMax)
+			if quality != "" {
+				n.Detail = "link quality " + quality
+			}
+		case duplex != "" && status == "Up":
+			// Wired: duplex surfaces the classic mismatch fault; the
+			// negotiated rate is already in LinkSpeed (100 Mbps on a
+			// gigabit port = cable fault).
+			n.Detail = duplex
 		}
 		if c, ok := counters[dev]; ok {
 			n.RxErrors, n.TxErrors = c.RxErrors, c.TxErrors

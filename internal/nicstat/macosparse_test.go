@@ -134,6 +134,61 @@ func TestParseNetstatIB(t *testing.T) {
 	}
 }
 
+// Real detail lines from a live associated Wi-Fi en0 (note: the uplink line
+// may lack the trailing "[max]" tag; downlink carries it).
+const ifconfigWifiDetailFixture = `en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	media: autoselect
+	status: active
+	link quality: 100 (good)
+	uplink rate: 161.44 Mbps [eff] / 304.20 Mbps
+	downlink rate: 161.44 Mbps [eff] / 304.20 Mbps [max]
+`
+
+func TestParseIfconfigExtras(t *testing.T) {
+	duplex, wifiMax, quality := parseIfconfigExtras(ifconfigWifiDetailFixture)
+	if duplex != "" {
+		t.Errorf("wifi duplex = %q, want empty", duplex)
+	}
+	if wifiMax != 304.20 {
+		t.Errorf("wifiMax = %v, want 304.20", wifiMax)
+	}
+	if quality != "100 (good)" {
+		t.Errorf("quality = %q, want '100 (good)'", quality)
+	}
+
+	duplex, wifiMax, quality = parseIfconfigExtras(ifconfigFixture) // wired 1000baseT <full-duplex>
+	if duplex != "full-duplex" {
+		t.Errorf("wired duplex = %q, want full-duplex", duplex)
+	}
+	if wifiMax != 0 || quality != "" {
+		t.Errorf("wired extras = (%v, %q), want zero", wifiMax, quality)
+	}
+
+	if d, _, _ := parseIfconfigExtras("\tmedia: 100baseTX <half-duplex>\n"); d != "half-duplex" {
+		t.Errorf("half duplex = %q", d)
+	}
+}
+
+func TestFormatMbps(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, ""},
+		{0.5, ""},
+		{304.20, "304 Mbps"},
+		{866, "866 Mbps"},
+		{1000, "1 Gbps"},
+		{1921, "1.9 Gbps"},
+		{2400.5, "2.4 Gbps"},
+	}
+	for _, c := range cases {
+		if got := formatMbps(c.in); got != c.want {
+			t.Errorf("formatMbps(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 const ifconfigAllFixture = `lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 	inet 127.0.0.1 netmask 0xff000000
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500

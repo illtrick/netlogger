@@ -70,6 +70,7 @@ type NICInfo struct {
 	LinkSpeed        string
 	Status           string
 	Power            string
+	Detail           string
 	RxErrors         int64
 	RxDiscards       int64
 	TxErrors         int64
@@ -737,6 +738,7 @@ func (a *App) nicLoop(ctx context.Context) {
 			p := prev[n.Name]
 			out = append(out, NICInfo{
 				Name: n.Name, Description: n.Description, LinkSpeed: n.LinkSpeed, Status: n.Status, Power: n.Power,
+				Detail:   n.Detail,
 				RxErrors: n.RxErrors, RxDiscards: n.RxDiscards, TxErrors: n.TxErrors, TxDiscards: n.TxDiscards,
 				RecentRxDiscards: nonNeg(n.RxDiscards - p.RxDiscards),
 				RecentTxDiscards: nonNeg(n.TxDiscards - p.TxDiscards),

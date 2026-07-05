@@ -25,6 +25,10 @@ type NIC struct {
 	// A single field avoids PowerShell's single-element-array JSON quirk; empty
 	// when the adapter reports no such properties (e.g. Wi-Fi).
 	Power string `json:"Power"`
+	// Detail is a per-link human summary the platform can fill: on macOS,
+	// Wi-Fi radio state ("802.11ax · ch 40 (5 GHz, 160 MHz) · RSSI −45 dBm…")
+	// or wired duplex. Optional and additive: older peers ignore it.
+	Detail string `json:"Detail,omitempty"`
 }
 
 // parseNICs decodes the PowerShell JSON, tolerating both a JSON array (multiple

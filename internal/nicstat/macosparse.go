@@ -147,6 +147,63 @@ func parseNetstatIB(out string) map[string]linkCounters {
 	return res
 }
 
+// parseIfconfigExtras pulls the diagnostic detail lines out of one
+// interface's `ifconfig -v` section that parseIfconfig ignores:
+//   - duplex from the media option group ("<full-duplex>"/"<half-duplex>" —
+//     half-duplex on modern gear is a classic mismatch fault),
+//   - the Wi-Fi PHY ceiling from "downlink rate: 161.44 Mbps [eff] / 304.20
+//     Mbps [max]" (falling back to the uplink line, which may lack "[max]"),
+//   - "link quality: 100 (good)" verbatim.
+func parseIfconfigExtras(out string) (duplex string, wifiMaxMbps float64, quality string) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "media: "):
+			if strings.Contains(line, "<full-duplex>") {
+				duplex = "full-duplex"
+			} else if strings.Contains(line, "<half-duplex>") {
+				duplex = "half-duplex"
+			}
+		case strings.HasPrefix(line, "downlink rate: "), strings.HasPrefix(line, "uplink rate: "):
+			// Keep the larger of the trailing "/ N Mbps" ceilings seen.
+			if v := lastMbps(line); v > wifiMaxMbps {
+				wifiMaxMbps = v
+			}
+		default:
+			if v, ok := strings.CutPrefix(line, "link quality: "); ok {
+				quality = v
+			}
+		}
+	}
+	return duplex, wifiMaxMbps, quality
+}
+
+// lastMbps parses the final "<float> Mbps" pair on a rate line.
+func lastMbps(line string) float64 {
+	f := strings.Fields(line)
+	for i := len(f) - 1; i > 0; i-- {
+		if strings.HasPrefix(f[i], "Mbps") {
+			if v, err := strconv.ParseFloat(f[i-1], 64); err == nil {
+				return v
+			}
+		}
+	}
+	return 0
+}
+
+// formatMbps renders a rate in the panel's "<n> Gbps"/"<n> Mbps" vocabulary.
+func formatMbps(m float64) string {
+	switch {
+	case m < 1:
+		return ""
+	case m < 1000:
+		return strconv.FormatFloat(m, 'f', 0, 64) + " Mbps"
+	default:
+		s := strconv.FormatFloat(m/1000, 'f', 1, 64)
+		return strings.TrimSuffix(s, ".0") + " Gbps"
+	}
+}
+
 // splitIfconfigSections splits `ifconfig -a -v` output into one text block per
 // interface, keyed by device name. Section headers are unindented
 // "name: flags=..." lines; continuation lines are indented. Lets Collect run

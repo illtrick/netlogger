@@ -597,14 +597,24 @@ func layoutAdapters(gtx layout.Context, th *material.Theme, s appcore.Snapshot) 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-// adapterLine is the pure text rendering of one NIC row.
+// adapterLine is the pure text rendering of one NIC row. The middle segment
+// is per-platform: Windows reports power-saving properties (EEE et al.),
+// macOS reports link detail (Wi-Fi radio state, wired duplex); whichever the
+// collector filled is shown, and neither shows an empty placeholder.
 func adapterLine(n appcore.NICInfo) string {
 	speed := n.LinkSpeed
 	if !strings.EqualFold(n.Status, "Up") {
 		speed = "—" // a down/disconnected link has no meaningful rate
 	}
-	return fmt.Sprintf("%s  %s  %s  power[%s]  discards rx+%d tx+%d  errors rx+%d tx+%d",
-		n.Name, speed, n.Status, powerText(n.Power),
+	mid := ""
+	switch {
+	case n.Detail != "":
+		mid = "  " + n.Detail
+	case n.Power != "":
+		mid = "  power[" + powerText(n.Power) + "]"
+	}
+	return fmt.Sprintf("%s  %s  %s%s  discards rx+%d tx+%d  errors rx+%d tx+%d",
+		n.Name, speed, n.Status, mid,
 		n.RecentRxDiscards, n.RecentTxDiscards, n.RecentRxErrors, n.RecentTxErrors)
 }
 
