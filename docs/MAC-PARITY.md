@@ -95,6 +95,43 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `0f6084f` (live speed/stress telemetry, loopback fix — v1.2.0)
+
+**Range:** `cd2f7fb..0f6084f` (`89c6f72` loopback fix + units, `0f6084f` live telemetry) · **Net effect for Mac: rebuild-only + live checks.** No new platform seams — everything is untagged Go.
+
+- **[Portable]** `internal/iperf/stream.go` — `RunClientStream` uses
+  `--json-stream` for per-second live intervals. → rebuild + verify; the parser
+  fixtures run on the Mac in layer 2.
+- **[Portable]** Loopback-misroute fix: `SelfPeer.Addr` now advertises the
+  primary LAN IP (`discovery.PrimaryIP`), and speed/stress refuse loopback
+  targets. Remote→self matrix cells previously measured the remote's own
+  loopback (100+ Gbit readings).
+- **[Portable]** UI: rate units everywhere (Mb/s / Gb/s), sweep controls
+  (direction/duration/streams), live rate in the actively-testing cell,
+  per-second chart in pair detail, stress throughput-per-link chart + retr.
+- **[Spec/behavioral]** to confirm live on the Mac:
+  - [ ] `brew info iperf3` reports **≥ 3.17** (current brew is 3.x-recent — fine).
+    Older installs silently fall back to final-only results (no live points
+    from that node); if so, `brew upgrade iperf3`.
+  - [ ] Sweep from the Mac against a Windows 1.2.0 node: the testing cell's
+    rate ticks every second in BOTH directions (Mac-as-client and
+    Mac-as-server pairs), and the Mac→Windows cell reads LAN-plausible
+    (≈ link speed), NOT 20+ Gb/s.
+  - [ ] Pair-detail chart: on the Mac, interval `retransmits`/`rtt` ARE
+    populated (TCP_INFO exists there, unlike Windows/Cygwin) — retransmit
+    counts should be non-zero under a saturating parallel run if the link
+    genuinely drops.
+  - [ ] Stress: per-link throughput chart + latency chart move together every
+    second; rows show `retr N` accumulating on lossy links.
+- **Version:** 1.2.0 — `build-mac.sh` stamps the bundle from
+  `internal/version.Version` automatically; no plist edit. Mixed 1.1/1.2
+  meshes show the version-mismatch banner until all nodes are rebuilt
+  (expected; streamed sweeps degrade gracefully against 1.1 peers).
+
+Verify: `./scripts/test-mac.sh` green (new tests: `internal/iperf` stream
+fixtures, appcore NDJSON handler/client, sweep live-points, stress live-rate),
+then the live checks above.
+
 ### 2026-07-04 · Windows `8523fb8` (version-based compatibility warning + v1.1.0 hygiene)
 
 **Range:** `f124126..8523fb8` (two commits: `eed3fe3`, `8523fb8`) · **Net effect for Mac: rebuild-only + one live check.** No new seams.
