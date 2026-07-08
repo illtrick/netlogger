@@ -26,14 +26,19 @@ type Server struct {
 // until Stop. Returns nil if no iperf3 binary is available — load tests are then
 // simply unavailable, which the readiness check already surfaces.
 func StartServer(port int) *Server {
-	if binary() == "" {
+	bin := binary()
+	if bin == "" {
 		return nil
 	}
 	if port == 0 {
 		port = DefaultServerPort
 	}
 	s := &Server{port: port, stop: make(chan struct{}), done: make(chan struct{})}
-	ensureFirewallPort(port) // best-effort; only effective when elevated (service)
+	// Best-effort; only effective when elevated (the app self-elevates). The
+	// program rule covers the extracted binary on every port; the per-port
+	// rule is belt-and-braces for layouts where the binary path shifts.
+	ensureFirewallProgram(bin)
+	ensureFirewallPort(port)
 	go s.run()
 	return s
 }
