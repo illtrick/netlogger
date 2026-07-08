@@ -294,8 +294,9 @@ func Run(a *appcore.App) error {
 					capMbit := tst.cap() // read on the UI thread; goroutine gets the value
 					// Fan-out + polling stay off the UI thread: StartStress POSTs to
 					// every peer (10s timeout each) and would freeze the frame loop.
+					const durS = 120
 					go func() {
-						_, started := a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: capMbit, Proto: "tcp", DurationS: 120})
+						_, started := a.StartStress(self, peers, appcore.StressParams{PerLinkCapMbit: capMbit, Proto: "tcp", DurationS: durS})
 						if started == 0 {
 							tst.stressMu.Lock()
 							if tst.stressGen == gen {
@@ -306,6 +307,17 @@ func Run(a *appcore.App) error {
 							w.Invalidate()
 							return
 						}
+						// Idle baseline per peer at start; peak RTT tracked each tick.
+						// These maps are goroutine-local (no other writer), so they
+						// need no lock. worst added latency = max(peak − baseline).
+						baseRTT := make(map[string]float64, len(peers))
+						maxRTT := make(map[string]float64, len(peers))
+						hostByID := make(map[string]string, len(peers))
+						for _, p := range peers {
+							baseRTT[p.ID] = p.RTTms
+							hostByID[p.ID] = p.Host
+						}
+						recorded := false
 						for {
 							tst.stressMu.Lock()
 							on := tst.stressOn && tst.stressGen == gen
@@ -314,6 +326,12 @@ func Run(a *appcore.App) error {
 								return
 							}
 							ns := a.PollStress(self, peers)
+							// Track each peer's peak RTT under load from a fresh snapshot.
+							for _, p := range a.Snapshot().Peers {
+								if p.RTTms > maxRTT[p.ID] {
+									maxRTT[p.ID] = p.RTTms
+								}
+							}
 							anyRunning := false
 							for _, s := range ns {
 								if s.Running {
@@ -332,6 +350,36 @@ func Run(a *appcore.App) error {
 							tst.stressMu.Unlock()
 							w.Invalidate()
 							if !anyRunning {
+								// Natural end: the orchestrator records one summary row.
+								if !recorded {
+									recorded = true
+									worstHost, worstAdd := "", 0.0
+									for id, mx := range maxRTT {
+										add := mx - baseRTT[id]
+										if add < 0 {
+											add = 0
+										}
+										if add > worstAdd {
+											worstAdd, worstHost = add, hostByID[id]
+										}
+									}
+									links, aborts := 0, 0
+									for _, s := range ns {
+										for _, l := range s.Links {
+											links++
+											if l.Aborted {
+												aborts++
+											}
+										}
+									}
+									a.RecordStressRun(durS, links, capMbit, "tcp", worstHost, worstAdd, aborts)
+									tst.stressMu.Lock()
+									recheckGen := tst.stressGen == gen
+									tst.stressMu.Unlock()
+									if recheckGen {
+										w.Invalidate()
+									}
+								}
 								return
 							}
 							time.Sleep(time.Second)
@@ -381,6 +429,7 @@ func Run(a *appcore.App) error {
 				if time.Since(tst.histAt) > 5*time.Second {
 					tst.netHist = a.TestHistory("internet", 5)
 					tst.sweepHist = a.TestHistory("sweep", 5)
+					tst.stressHist = a.TestHistory("stress", 5)
 					tst.histAt = time.Now()
 				}
 				items = []layout.Widget{

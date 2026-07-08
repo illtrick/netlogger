@@ -313,6 +313,9 @@ func historyList(gtx layout.Context, th *material.Theme, rows []store.TestResult
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if r.DownMbit == 0 && r.UpMbit == 0 {
+								return layout.Dimensions{} // stress rows carry no rates
+							}
 							l := material.Body2(th, fmt.Sprintf("↓ %s  ↑ %s", fmtRate(r.DownMbit), fmtRate(r.UpMbit)))
 							l.Color = colTextSec
 							return l.Layout(gtx)
@@ -609,6 +612,9 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 					layout.Rigid(gap(14)),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layoutStressList(gtx, th, nodes, snap, st.cap())
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return historyList(gtx, th, st.stressHist)
 					}),
 				)
 			}

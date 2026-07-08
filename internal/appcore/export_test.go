@@ -44,6 +44,22 @@ func TestExportBundleAndWrite(t *testing.T) {
 	}
 }
 
+func TestExportIncludesStressHistory(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	st, err := store.Open(filepath.Join(dir, "e.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	a.store = st
+	a.RecordStressRun(600, 6, 200, "tcp", "ryzen", 38, 0)
+	b := a.Export(100)
+	if len(b.StressTests) != 1 || b.StressTests[0].Kind != "stress" {
+		t.Fatalf("export missing stress history: %+v", b.StressTests)
+	}
+}
+
 func TestLossHeatLabelsAndOrders(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir + "/h.db")
