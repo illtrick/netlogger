@@ -95,6 +95,14 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `f8bae23` (stress links labeled source → target — v1.3.3)
+
+**Range:** `4ca38b3..f8bae23` · **Net effect for Mac: rebuild-only.** Portable:
+`StressStatus.Host` (additive; the reporting node's name) lets the stress list
+and RRUL legend read "ryzen → sarah-pc" instead of destination-only labels
+that made every device appear twice. Pre-1.3.3 peers fall back to the old
+form. Rebuild so the mesh agrees on 1.3.3.
+
 ### 2026-07-08 · Windows `4ca38b3` (Windows firewall rule clobber — v1.3.2)
 
 **Range:** `23bd348..4ca38b3` · **Net effect for Mac: version bump only.** The
