@@ -95,6 +95,15 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `007a068` (v1.3.4 — firewall check-then-add; release retarget)
+
+**Range:** `9bc82e5..007a068` · **Net effect for Mac: version bump only.** The
+firewall rework is inside `//go:build windows` (no more `netsh delete rule` —
+it tripped VirusTotal's defense-impairment Sigma rule); darwin stubs unchanged.
+**Supersedes the v1.3.3 entry below: build and upload the Mac artifact to the
+`v1.3.4` release instead** — same checklist, tag `v1.3.4`, stamp `007a068`,
+`gh release upload v1.3.4 bin/NetLogger-macos.zip`.
+
 ### 2026-07-08 · Windows `03ff62f` (public release v1.3.3 — Mac artifact wanted)
 
 **Range:** `f8bae23..03ff62f` (docs + build scripts only; no engine change) · **Net effect for Mac: rebuild + one upload.**
