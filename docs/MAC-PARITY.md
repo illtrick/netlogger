@@ -117,14 +117,14 @@ it tripped VirusTotal's defense-impairment Sigma rule); darwin stubs unchanged.
 - **[Action]** The GitHub release **v1.3.3** is live with the Windows exe;
   the README promises a downloadable Mac app. From a clean checkout of the
   `v1.3.3` tag on the Mac:
-  - [ ] `git checkout v1.3.3 && ./scripts/build-mac.sh` (stamp must read
-    `03ff62f`, not `-dirty`)
-  - [ ] Smoke-launch `bin/NetLogger.app`, confirm v1.3.3 in the footer and
-    that it joins the Windows mesh
-  - [ ] `shasum -a 256 bin/NetLogger-macos.zip`, then
-    `gh release upload v1.3.3 bin/NetLogger-macos.zip` and append the
-    checksum + a "macOS: download NetLogger-macos.zip, right-click → Open"
-    line to the release notes (`gh release edit v1.3.3 --notes-file …`)
+  - [x] Built as **v1.3.4** from `fe9b140` (the v1.3.4 tag + the Mac line's
+    commits), clean stamp, all 6 layers green
+  - [x] Smoke-launched: footer/API beacon `1.3.4 · darwin/arm64 · fe9b140`,
+    joined the mesh (3 peers, ~8–9ms, 0% loss)
+  - [x] Uploaded `NetLogger-macos.zip` to the **v1.3.4** release (sha256
+    `0fd2ca4e…b82d` appended to the notes with the right-click→Open line);
+    the Download section's "build from source" macOS line replaced with the
+    direct download
 
 ### 2026-07-08 · Windows `f8bae23` (stress links labeled source → target — v1.3.3)
 
