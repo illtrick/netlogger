@@ -24,6 +24,7 @@ func main() {
 	go func() {
 		os.Exit(run())
 	}()
+	defer uiPanicRecover() // darwin: relaunch instead of dying on Gio init flake
 	app.Main()
 }
 
@@ -61,6 +62,10 @@ func run() int {
 	}()
 
 	log.Printf("NetLogger started; data dir %s", dir)
+	// Monitoring runs headless; only the window needs a display. Gio cannot
+	// create one while every display sleeps (launch at login, lid closed) —
+	// its init panics — so hold just the UI until a display wakes.
+	waitForDisplay()
 	if err := ui.Run(a); err != nil {
 		log.Printf("ui exited with error: %v", err)
 	}

@@ -137,12 +137,15 @@ Mac behind a filtering AP won't see it until Windows is rebuilt.
 
 ## Known issues / limitations
 
-- **Upstream Gio flake**: `gio@v0.10.0 os_macos.go window.init` — if
-  display-link creation fails transiently (seen once during rapid
-  kill/relaunch cycling), Gio's error path panics (`misuse of an invalid
-  Handle`) instead of returning the error. Relaunch recovers. Worth an
-  upstream report; add a watchdog relaunch only if it ever appears in
-  normal use.
+- **Upstream Gio bug, now mitigated**: `gio@v0.10.0 os_macos.go
+  window.init` panics (`misuse of an invalid Handle`) instead of returning
+  the error when display-link creation fails — which happens reliably when
+  every display is asleep (launch at login, lid closed; reproduced with
+  `pmset displaysleepnow`). Handled two ways in `cmd/netlogger-app`:
+  `waitForDisplay` (CGDisplayIsAsleep poll) holds the engine+UI until a
+  display wakes, and `uiPanicRecover` re-execs the app if Gio panics
+  anyway (10s backoff, capped). Verified live under forced display sleep.
+  Still worth an upstream report.
 - No tray on macOS: closing the window quits (NSStatusItem needs objc
   bridging — future work, e.g. via purego).
 - iperf3 is not bundled in the .app (would complicate signing); Homebrew or
