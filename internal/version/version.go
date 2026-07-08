@@ -16,7 +16,7 @@ package version
 import "runtime"
 
 // Version is the NetLogger release identifier — the mesh compatibility contract.
-const Version = "1.3.0"
+const Version = "1.3.1"
 
 // Build identifies the exact binary, stamped at link time from the git short
 // hash (see scripts/build-app.ps1: -X netlogger/internal/version.Build=...).

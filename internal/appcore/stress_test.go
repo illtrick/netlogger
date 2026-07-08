@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,22 +16,69 @@ import (
 	"netlogger/internal/iperf"
 )
 
-func TestMeshTargets(t *testing.T) {
+func TestMeshAssignments(t *testing.T) {
 	self := PeerInfo{ID: "self", Host: "ryzen", Addr: "10.0.0.1:8088"}
 	peers := []PeerInfo{
 		{ID: "p", Host: "proj", Addr: "10.0.0.2:8088"},
 		{ID: "s", Host: "laptop", Addr: "10.0.0.3:8088"},
 	}
-	m := meshTargets(self, peers)
-	if len(m["self"]) != 2 || len(m["p"]) != 2 || len(m["s"]) != 2 {
-		t.Fatalf("each node should target 2 others: %+v", m)
-	}
-	for _, ts := range m {
-		for _, tg := range ts {
+	m := meshAssignments(self, peers, true)
+	for id, asg := range m {
+		if len(asg.Targets) != 2 || len(asg.TargetPorts) != 2 {
+			t.Fatalf("%s should target 2 others with ports: %+v", id, asg)
+		}
+		for _, tg := range asg.Targets {
 			if tg == "10.0.0.1:8088" {
 				t.Fatalf("target still has control port: %v", tg)
 			}
 		}
+		// Exactly one extra listener per node in a 3-node mesh: its two inbound
+		// clients get 5201 and 5202.
+		if len(asg.ListenPorts) != 1 || asg.ListenPorts[0] != 5202 {
+			t.Fatalf("%s listen ports = %v, want [5202]", id, asg.ListenPorts)
+		}
+	}
+	// Per target, inbound ports must be distinct — that IS the fix.
+	inbound := map[string]map[int]bool{}
+	for _, asg := range m {
+		for i, tg := range asg.Targets {
+			if inbound[tg] == nil {
+				inbound[tg] = map[int]bool{}
+			}
+			if inbound[tg][asg.TargetPorts[i]] {
+				t.Fatalf("two clients share port %d on target %s", asg.TargetPorts[i], tg)
+			}
+			inbound[tg][asg.TargetPorts[i]] = true
+		}
+	}
+
+	// Legacy mode (a pre-1.3.1 node in the mesh): everything on 5201, no
+	// extra listeners — the old busy-collision beats connection-refused.
+	legacy := meshAssignments(self, peers, false)
+	for id, asg := range legacy {
+		if len(asg.ListenPorts) != 0 {
+			t.Fatalf("legacy %s should open no extra listeners: %+v", id, asg)
+		}
+		for _, p := range asg.TargetPorts {
+			if p != 5201 {
+				t.Fatalf("legacy %s port = %d, want 5201", id, p)
+			}
+		}
+	}
+}
+
+func TestPortsSupported(t *testing.T) {
+	peers := []PeerInfo{{ID: "a", Version: "1.3.1"}, {ID: "b", Version: "1.3.1"}}
+	if !portsSupported(peers, "1.3.1") {
+		t.Fatalf("uniform mesh should support ports")
+	}
+	peers[1].Version = "1.2.0"
+	if portsSupported(peers, "1.3.1") {
+		t.Fatalf("mixed mesh must fall back to legacy single-port")
+	}
+	peers[1].Version = ""
+	if portsSupported(peers, "1.3.1") {
+		t.Fatalf("unknown-version peer must force legacy")
 	}
 }
 
@@ -149,20 +197,73 @@ func TestStartStressReportsFailures(t *testing.T) {
 
 func TestSanitizeTargets(t *testing.T) {
 	in := []string{"a", "b", "a", "", "c"}
-	got := sanitizeTargets(in)
+	ports := []int{5201, 5202, 5203, 5204, 5205}
+	got, gotP := sanitizeTargets(in, ports)
 	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("dedupe wrong: %v", got)
 	}
+	// Ports stay aligned with their surviving targets.
+	if len(gotP) != 3 || gotP[0] != 5201 || gotP[1] != 5202 || gotP[2] != 5205 {
+		t.Fatalf("ports misaligned after sanitize: %v", gotP)
+	}
 	// Loopbacks are misrouted self-load, never a LAN target.
-	if got := sanitizeTargets([]string{"127.0.0.1", "localhost", "10.0.0.2"}); len(got) != 1 || got[0] != "10.0.0.2" {
+	if got, _ := sanitizeTargets([]string{"127.0.0.1", "localhost", "10.0.0.2"}, nil); len(got) != 1 || got[0] != "10.0.0.2" {
 		t.Fatalf("loopbacks not dropped: %v", got)
+	}
+	// Old orchestrator: no ports at all → zeros (iperf3 default).
+	if _, p := sanitizeTargets([]string{"x", "y"}, nil); len(p) != 2 || p[0] != 0 || p[1] != 0 {
+		t.Fatalf("missing ports should default to 0: %v", p)
 	}
 	big := make([]string, 200)
 	for i := range big {
 		big[i] = "t" + strconv.Itoa(i)
 	}
-	if got := sanitizeTargets(big); len(got) != stressMaxTargets {
+	if got, _ := sanitizeTargets(big, nil); len(got) != stressMaxTargets {
 		t.Fatalf("cap = %d, want %d", len(got), stressMaxTargets)
+	}
+}
+
+func TestSanitizeListenPorts(t *testing.T) {
+	in := []int{5202, 5202, 5201, 80, 99999, 5203}
+	got := sanitizeListenPorts(in)
+	if len(got) != 2 || got[0] != 5202 || got[1] != 5203 {
+		t.Fatalf("listen ports = %v, want [5202 5203]", got)
+	}
+}
+
+func TestStressSpawnsAndStopsExtraListeners(t *testing.T) {
+	a := &App{}
+	var mu sync.Mutex
+	started, stopped := []int{}, 0
+	a.stressSrv = func(port int) func() {
+		mu.Lock()
+		started = append(started, port)
+		mu.Unlock()
+		return func() { mu.Lock(); stopped++; mu.Unlock() }
+	}
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
+		if o.Port != 5202 {
+			t.Errorf("client port = %d, want 5202", o.Port)
+		}
+		<-ctx.Done()
+		return iperf.Result{}, ctx.Err()
+	}
+	err := a.startStressLocal(StressOpts{
+		RunID: "rp", Targets: []string{"10.0.0.2"}, TargetPorts: []int{5202},
+		ListenPorts: []int{5202}, DurationS: 1, Proto: "tcp",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	a.stopStressLocal("rp")
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(started) != 1 || started[0] != 5202 {
+		t.Fatalf("extra listener not spawned: %v", started)
+	}
+	if stopped != 1 {
+		t.Fatalf("extra listener not stopped with the run: %d", stopped)
 	}
 }
 

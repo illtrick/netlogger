@@ -165,6 +165,10 @@ type App struct {
 	// stressRunner runs one capped iperf3 client (defaults to iperf.RunClientStream);
 	// injectable for tests.
 	stressRunner func(ctx context.Context, target string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error)
+	// stressSrv starts one EXTRA iperf3 listener for a stress run (each
+	// concurrent inbound client needs its own server — iperf3 serves one test
+	// at a time). nil → real iperf.StartServer; injectable for tests.
+	stressSrv func(port int) func()
 	stressMu     sync.Mutex
 	stress       *stressRun
 	// stressWG tracks stress lifecycle goroutines so Stop() can wait for them
