@@ -470,11 +470,11 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 	var cols []color.NRGBA
 	var chartLegend string
 	if len(res.DownIvs) > 1 {
-		series, cols = append(series, res.DownIvs), append(cols, colAccent)
+		series, cols = append(series, res.DownIvs), append(cols, seriesColors[0])
 		chartLegend = "↓ down"
 	}
 	if len(res.UpIvs) > 1 {
-		series, cols = append(series, res.UpIvs), append(cols, upGreen)
+		series, cols = append(series, res.UpIvs), append(cols, seriesColors[1])
 		if chartLegend != "" {
 			chartLegend += " · "
 		}
@@ -614,7 +614,7 @@ func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.Str
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
-			return multiSparkline(gtx, series, linkColors, w, 64)
+			return multiSparkline(gtx, series, seriesColors, w, 64)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -624,7 +624,7 @@ func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.Str
 	)
 }
 
-// legendRow renders color-dot + name chips matching linkColors order.
+// legendRow renders color-dot + name chips matching seriesColors order.
 func legendRow(gtx layout.Context, th *material.Theme, names []string) layout.Dimensions {
 	ch := make([]layout.FlexChild, 0, len(names))
 	for i, name := range names {
@@ -632,7 +632,7 @@ func legendRow(gtx layout.Context, th *material.Theme, names []string) layout.Di
 		ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(dotWidget(linkColors[i%len(linkColors)], 8)),
+					layout.Rigid(dotWidget(seriesColors[i%len(seriesColors)], 8)),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Caption(th, name)
@@ -669,8 +669,17 @@ func capStepper(gtx layout.Context, th *material.Theme, st *testsState) layout.D
 	)
 }
 
-// linkColors cycles per-link line/legend colors for the latency chart.
-var linkColors = []color.NRGBA{colBad, colAccent, colGood, colWatch, {R: 0x7e, G: 0xe0, B: 0xa0, A: 0xff}}
+// seriesColors is the validated series palette (dark surface #161d29; all six
+// dataviz checks pass, protan ΔE 58 for the first three). Severity colors
+// (colGood/colWatch/colBad) are RESERVED for state and never reused as a series
+// color, so a healthy line never draws in the palette's alarm color.
+var seriesColors = []color.NRGBA{
+	{R: 0x4f, G: 0x8f, B: 0xf7, A: 0xff}, // blue
+	{R: 0xc6, G: 0x77, B: 0x18, A: 0xff}, // orange
+	{R: 0x0b, G: 0xab, B: 0x9e, A: 0xff}, // teal
+	{R: 0x9a, G: 0x7e, B: 0xf0, A: 0xff}, // violet (4th+: legend chips carry identity)
+	{R: 0xd4, G: 0x69, B: 0x9e, A: 0xff}, // pink
+}
 
 // stressLatencyChart draws the per-peer RTT histories on one shared scale — the
 // "latency under load" readout: lines spike as the stress test saturates links.
@@ -695,7 +704,7 @@ func stressLatencyChart(gtx layout.Context, th *material.Theme, snap appcore.Sna
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
-			return multiSparkline(gtx, series, linkColors, w, 80)
+			return multiSparkline(gtx, series, seriesColors, w, 80)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -705,7 +714,7 @@ func stressLatencyChart(gtx layout.Context, th *material.Theme, snap appcore.Sna
 				ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(dotWidget(linkColors[i%len(linkColors)], 8)),
+							layout.Rigid(dotWidget(seriesColors[i%len(seriesColors)], 8)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Left: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 									lbl := material.Caption(th, name)

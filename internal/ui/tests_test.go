@@ -55,6 +55,14 @@ func TestSubViewLabel(t *testing.T) {
 	}
 }
 
+func TestSeriesColorsAvoidSeverity(t *testing.T) {
+	for i, c := range seriesColors {
+		if c == colBad || c == colWatch || c == colGood {
+			t.Errorf("seriesColors[%d] reuses a severity color", i)
+		}
+	}
+}
+
 func TestCoarseAge(t *testing.T) {
 	if coarseAge(42_000_000) != "42s ago" || coarseAge(310_000_000) != "5m ago" || coarseAge(7_300_000_000) != "2h ago" {
 		t.Fatalf("coarse ages wrong: %s %s %s", coarseAge(42_000_000), coarseAge(310_000_000), coarseAge(7_300_000_000))
