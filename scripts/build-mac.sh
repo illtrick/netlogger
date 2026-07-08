@@ -7,10 +7,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Dirty if ANYTHING differs from HEAD — unstaged, staged, or untracked —
-# matching build-app.ps1's `git status --porcelain` check.
+# Dirty = modified TRACKED files only (untracked files don't change the
+# binary) — matching build-app.ps1.
 BUILD="$(git rev-parse --short HEAD)"
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   BUILD="${BUILD}-dirty"
 fi
 LDFLAGS="-s -w -X netlogger/internal/version.Build=${BUILD}"
@@ -48,4 +48,9 @@ go run ./tools/genicon -icns -o "${APP}/Contents/Resources/NetLogger.icns"
 # repeated Gatekeeper friction on the local machine.
 codesign --force --deep --sign - "${APP}"
 
+# Release artifact: ditto preserves the bundle structure and signatures
+# (plain zip tools can corrupt .app bundles).
+ditto -c -k --keepParent "${APP}" "bin/NetLogger-macos.zip"
+
 echo "Done: ${APP} (build ${BUILD})"
+echo "Release zip: bin/NetLogger-macos.zip"

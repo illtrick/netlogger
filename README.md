@@ -53,12 +53,21 @@ NetLogger was built to catch a real ghost: a PC whose wired connection silently 
 
 ---
 
+## Get it
+
+**[⬇ Download the latest release](https://github.com/illtrick/netlogger/releases/latest)** — grab `NetLogger.exe` (Windows) or `NetLogger-macos.zip` (macOS). No installer, nothing else to set up.
+
+> The binaries aren't code-signed (yet), so your OS will hesitate the first time:
+> **Windows** — SmartScreen may show "Windows protected your PC": click *More info → Run anyway*.
+> **macOS** — right-click the app → *Open*, once. Then allow local-network access when asked.
+
+Or build it yourself in a few minutes — see [Building from source](#building-from-source).
+
 ## Quick start
 
-1. Build the app (below) and put the **same build** on two or more machines on the same network.
-2. Run it. Windows asks for administrator once per launch; macOS just asks to allow local network access.
-3. That's it — no setup. The machines find each other within seconds and the dashboard starts filling in. Leave it running; the longer it watches, the more it can tell you.
-4. When something misbehaves, check the heatmap for red. To provoke a load-triggered fault on purpose, run the stress test and watch.
+1. Put the **same version** on two or more machines on the same network and run it (Windows asks for administrator each launch; that's expected).
+2. That's it — no setup. The machines find each other within seconds and the dashboard starts filling in. Leave it running; the longer it watches, the more it can tell you.
+3. When something misbehaves, check the heatmap for red. To provoke a load-triggered fault on purpose, run the stress test and watch.
 
 **Requirements:** Windows 10/11 or macOS 11+, machines on the same local network.
 
@@ -88,14 +97,15 @@ Tests: `go test ./...`
 
 ### macOS
 
-Must be built on a Mac (the UI toolkit links Apple frameworks). Developer guide: [docs/MACOS.md](docs/MACOS.md).
+Must be built on a Mac (the UI toolkit links Apple frameworks). Three commands:
 
 ```bash
-./scripts/bootstrap-mac.sh  # once: Xcode CLT, Go, iperf3
-./scripts/build-mac.sh      # → bin/NetLogger.app
+git clone https://github.com/illtrick/netlogger && cd netlogger
+./scripts/bootstrap-mac.sh  # once: installs Xcode CLT, Go, iperf3 (re-run if it asks)
+./scripts/build-mac.sh      # → bin/NetLogger.app (universal) + bin/NetLogger-macos.zip
 ```
 
-macOS notes: no admin ever; speed/stress tests need `brew install iperf3`; data lives in `~/Library/Application Support/NetLogger`; unsigned app → right-click → Open, once.
+Then `open bin/NetLogger.app`. Notes: never needs admin; speed/stress tests use `brew`'s iperf3 (bootstrap installs it); data lives in `~/Library/Application Support/NetLogger`. Developer guide: [docs/MACOS.md](docs/MACOS.md).
 
 ---
 

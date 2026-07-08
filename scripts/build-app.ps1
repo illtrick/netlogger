@@ -10,7 +10,8 @@ Write-Host "Building NetLogger.exe (windowsgui, elevated)..."
 $env:CGO_ENABLED = "0"
 $build = (git rev-parse --short HEAD 2>$null)
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($build)) { $build = "dev" }
-if ((git status --porcelain 2>$null)) { $build = "$build-dirty" }
+# Dirty = modified TRACKED files only; untracked files don't change the binary.
+if ((git status --porcelain --untracked-files=no 2>$null)) { $build = "$build-dirty" }
 $ldflags = "-H windowsgui -s -w -X netlogger/internal/version.Build=$build"
 go build -ldflags $ldflags -o bin/NetLogger.exe ./cmd/netlogger-app
 
