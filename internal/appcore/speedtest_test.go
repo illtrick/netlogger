@@ -48,7 +48,9 @@ func TestSpeedTestHandlerRoundTrip(t *testing.T) {
 	run := func(target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
 		return iperf.Result{SumBitsPerSec: 500e6}, nil
 	}
-	h := speedTestHandler(func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult { return runSpeedTest(run, req.Target, req, nil) })
+	h := speedTestHandler(func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult {
+		return runSpeedTest(run, req.Target, req, nil)
+	})
 
 	body := `{"target":"10.0.0.5","direction":"up","streams":4,"duration_s":3}`
 	rr := httptest.NewRecorder()
@@ -244,7 +246,9 @@ func TestSpeedSweepReportsLivePoints(t *testing.T) {
 
 func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 	a := &App{nodeID: "self", host: "ryzen"}
-	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult { return SpeedResult{UpMbit: 111, Proto: "tcp"} }
+	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult {
+		return SpeedResult{UpMbit: 111, Proto: "tcp"}
+	}
 	var gotURL string
 	a.FetchSpeed = func(_ context.Context, baseURL string, req SpeedReq, _ func(LivePoint)) (SpeedResult, error) {
 		gotURL = baseURL
@@ -264,7 +268,10 @@ func TestAppSpeedTestRemoteVsLocal(t *testing.T) {
 func TestSpeedTestStripsControlPortForIperf(t *testing.T) {
 	a := &App{nodeID: "self"}
 	var gotTarget string
-	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult { gotTarget = req.Target; return SpeedResult{} }
+	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult {
+		gotTarget = req.Target
+		return SpeedResult{}
+	}
 	// Self is the From node → runs locally; the iperf target must be the bare host
 	// (control port 8088 stripped) so iperf3 hits the peer's :5201 server.
 	a.SpeedTest(context.Background(), PeerInfo{ID: "self"}, "10.0.0.2:8088", SpeedReq{Direction: "down"}, nil)
@@ -440,7 +447,9 @@ func TestSpeedSweepEndpointExclusive(t *testing.T) {
 
 func TestSpeedSweepRunsEveryPair(t *testing.T) {
 	a := &App{nodeID: "self"}
-	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult { return SpeedResult{DownMbit: 900} }
+	a.localSpeed = func(_ context.Context, req SpeedReq, _ func(LivePoint)) SpeedResult {
+		return SpeedResult{DownMbit: 900}
+	}
 	a.FetchSpeed = func(_ context.Context, baseURL string, req SpeedReq, _ func(LivePoint)) (SpeedResult, error) {
 		return SpeedResult{DownMbit: 500}, nil
 	}

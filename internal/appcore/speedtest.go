@@ -470,8 +470,8 @@ func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, r
 	// call on this one goroutine.
 	liveCh := make(chan liveUpdate, 4*total+16)
 	busy := map[string]bool{}
-	active := map[string]SpeedPair{}  // key → pair currently under test
-	live := map[string]LivePoint{}    // key → latest per-second reading
+	active := map[string]SpeedPair{} // key → pair currently under test
+	live := map[string]LivePoint{}   // key → latest per-second reading
 	pending := pairs
 	inFlight := 0
 	report := func() {

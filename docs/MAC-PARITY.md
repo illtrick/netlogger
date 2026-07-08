@@ -106,6 +106,10 @@ it tripped VirusTotal's defense-impairment Sigma rule); darwin stubs unchanged.
 
 ### 2026-07-08 · Windows `03ff62f` (public release v1.3.3 — Mac artifact wanted)
 
+> **Superseded on the Mac:** built as **v1.3.4** instead (v1.3.3 + the Mac
+> line's discovery-resilience commits, which v1.3.3 predates). Same steps,
+> new tag; see the reverse-channel entry below.
+
 **Range:** `f8bae23..03ff62f` (docs + build scripts only; no engine change) · **Net effect for Mac: rebuild + one upload.**
 
 - **[Portable]** `build-mac.sh` now also emits `bin/NetLogger-macos.zip`
@@ -287,3 +291,20 @@ sees old nodes today by piggybacking on their polling):
 After the next Windows build (which also picks up `8523fb8`'s own beacons):
 re-verify the same-version/no-banner check above, and expect discovery to be
 symmetric without the learner fallback.
+
+### 2026-07-08 · Mac `v1.3.4` (v1.3.3 + discovery resilience — WINDOWS REBUILD + RELEASE ASSET WANTED)
+
+The v1.3.3 tag predates the Mac line's discovery work (subnet-broadcast
+announces, unicast replies, inbound-traffic peer learning, SO_REUSEPORT,
+stable Wi-Fi LinkSpeed). Shipping a Mac artifact without it would leave Mac
+nodes blind on multicast-filtering networks, so the Mac artifact is
+**v1.3.4** = v1.3.3 + those three commits + this bump. All portable — no
+Windows-side code.
+
+On the PC:
+- [ ] Pull, fast-forward main to the v1.3.4 tag, `./scripts/build-app.ps1`
+- [ ] Upload `NetLogger.exe` to the **v1.3.4** release and publish it
+      (the Mac zip + checksum are already attached; release is a draft
+      until the exe joins it)
+- [ ] Re-verify the v1.1.0 entry's same-version/no-banner check (now at
+      1.3.4) and expect symmetric discovery without the learner fallback

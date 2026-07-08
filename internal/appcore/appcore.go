@@ -169,8 +169,8 @@ type App struct {
 	// concurrent inbound client needs its own server — iperf3 serves one test
 	// at a time). nil → real iperf.StartServer; injectable for tests.
 	stressSrv func(port int) func()
-	stressMu     sync.Mutex
-	stress       *stressRun
+	stressMu  sync.Mutex
+	stress    *stressRun
 	// stressWG tracks stress lifecycle goroutines so Stop() can wait for them
 	// before closing the store (they record an "ended" event on completion).
 	stressWG sync.WaitGroup
@@ -249,22 +249,22 @@ type PeerLister interface {
 
 // PeerInfo is a discovered peer as exposed to the UI.
 type PeerInfo struct {
-	ID           string
-	Host         string
-	Addr         string
+	ID            string
+	Host          string
+	Addr          string
 	Version       string
 	Platform      string // peer's GOOS/GOARCH (from its pulled link report)
 	Build         string // peer's binary build id (from its pulled link report), for skew checks
 	LinkSpeedMbit int    // peer's fastest Up NIC (from its pulled link report); 0 → unknown
 	LastSeenUnix  int64
-	RTTms        float64
-	LossPct      float64
-	JitterMs     float64
-	UDPLossPct   float64
-	DropEpisodes int
-	UpForSec     int64
-	RTTHist      []float64
-	LossHist     []float64
+	RTTms         float64
+	LossPct       float64
+	JitterMs      float64
+	UDPLossPct    float64
+	DropEpisodes  int
+	UpForSec      int64
+	RTTHist       []float64
+	LossHist      []float64
 }
 
 // New creates an App for the given (already-resolved) data dir.
