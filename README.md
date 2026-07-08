@@ -119,6 +119,9 @@ Then `open bin/NetLogger.app`. Notes: never needs admin; speed/stress tests use 
 **Windows/macOS warned me the app is untrusted. Is it safe?**
 The warning means the binary is unsigned (see [the note above](#%EF%B8%8F-the-binaries-are-not-code-signed)), not that anything was detected. Verify the release checksums or build from source if you'd rather not take a stranger's word for it. Code-signing is planned if the project grows.
 
+**What does VirusTotal say about it?**
+Zero detections. Sandboxes note a few behaviors that are simply what the app does by design: it asks for administrator (the elevation manifest), adds its own firewall allow rules, extracts the bundled iperf3 into its data folder, and is a stripped Go binary (which generic heuristics tag "obfuscated"). Scan any release yourself — the checksums make that easy.
+
 **Why does it need administrator on Windows?**
 Pings need raw network access, and the app adds its own firewall rules so machines can reach each other. macOS needs neither.
 
