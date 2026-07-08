@@ -65,6 +65,45 @@ func TestSpeedTestHandlerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIsLoopbackTarget(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"127.0.0.1:8088", true},
+		{"::1", true},
+		{"localhost", true},
+		{"LOCALHOST", true},
+		{"192.168.0.42", false},
+		{"10.0.0.2:8088", false},
+		{"some-host", false},
+	}
+	for _, c := range cases {
+		if got := isLoopbackTarget(c.in); got != c.want {
+			t.Errorf("isLoopbackTarget(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSpeedTestHandlerRejectsLoopbackTarget(t *testing.T) {
+	ran := false
+	h := speedTestHandler(func(_ context.Context, req SpeedReq) SpeedResult { ran = true; return SpeedResult{} })
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/api/speedtest",
+		strings.NewReader(`{"target":"127.0.0.1","direction":"down"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d", rr.Code)
+	}
+	var out SpeedResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Err == "" || ran {
+		t.Fatalf("loopback target must be refused without running (err=%q ran=%v)", out.Err, ran)
+	}
+}
+
 func TestSpeedTestHandlerRejectsGet(t *testing.T) {
 	h := speedTestHandler(func(_ context.Context, req SpeedReq) SpeedResult { return SpeedResult{} })
 	rr := httptest.NewRecorder()

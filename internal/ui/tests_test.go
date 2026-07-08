@@ -15,8 +15,28 @@ func TestMatrixCellStyle(t *testing.T) {
 	if matrixCellColor(950) != colGood || matrixCellColor(600) != colWatch || matrixCellColor(100) != colBad {
 		t.Fatalf("cell colors wrong")
 	}
-	if matrixCellText(-1) != "—" || matrixCellText(941) != "941" {
-		t.Fatalf("cell text wrong")
+	if matrixCellText(-1) != "—" || matrixCellText(941) != "941 Mb/s" {
+		t.Fatalf("cell text wrong: %q %q", matrixCellText(-1), matrixCellText(941))
+	}
+}
+
+func TestFmtRate(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0 Mb/s"},
+		{-1, "0 Mb/s"},
+		{941, "941 Mb/s"},
+		{999.4, "999 Mb/s"},
+		{2372, "2.37 Gb/s"},
+		{9860, "9.86 Gb/s"},
+		{123989, "124.0 Gb/s"}, // the loopback-bug magnitude, now at least honest
+	}
+	for _, c := range cases {
+		if got := fmtRate(c.in); got != c.want {
+			t.Errorf("fmtRate(%v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

@@ -225,7 +225,7 @@ func historyList(gtx layout.Context, th *material.Theme, rows []store.TestResult
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Body2(th, fmt.Sprintf("%.0f↓ %.0f↑", r.DownMbit, r.UpMbit))
+							l := material.Body2(th, fmt.Sprintf("↓ %s  ↑ %s", fmtRate(r.DownMbit), fmtRate(r.UpMbit)))
 							l.Color = colTextSec
 							return l.Layout(gtx)
 						}),
@@ -291,7 +291,7 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 							return material.Body1(th, "Test matrix").Layout(gtx)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							sub := "download Mbit/s · every live pair"
+							sub := "download · every live pair"
 							if status != "" {
 								sub = status
 							}
@@ -360,8 +360,8 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 			break
 		}
 	}
-	txt := fmt.Sprintf("%s → %s   ↓ %.0f  ↑ %.0f Mbit/s   retransmits %d",
-		hostByID[from], hostByID[to], res.DownMbit, res.UpMbit, res.Retransmits)
+	txt := fmt.Sprintf("%s → %s   ↓ %s  ↑ %s   retransmits %d",
+		hostByID[from], hostByID[to], fmtRate(res.DownMbit), fmtRate(res.UpMbit), res.Retransmits)
 	if res.RTTms > 0 {
 		txt += fmt.Sprintf("   rtt %.1f ms", res.RTTms)
 	}
@@ -432,7 +432,7 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return configChips(gtx, th,
 				"Topology · full mesh",
-				fmt.Sprintf("Per-link cap · %d Mbit/s", st.cap()),
+				fmt.Sprintf("Per-link cap · %s", fmtRate(float64(st.cap()))),
 				"Protocol · TCP",
 				"Probes · continuous",
 			)
@@ -465,7 +465,7 @@ func capStepper(gtx layout.Context, th *material.Theme, st *testsState) layout.D
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(86))
-				lbl := material.Body2(th, fmt.Sprintf("%d Mbit/s", st.cap()))
+				lbl := material.Body2(th, fmtRate(float64(st.cap())))
 				lbl.Color = colTextPri
 				return lbl.Layout(gtx)
 			})
@@ -598,6 +598,23 @@ func mmss(sec int64) string {
 	return fmt.Sprintf("%d:%02d", sec/60, sec%60)
 }
 
+// fmtRate renders a Mbit/s value with an explicit unit: whole Mb/s below
+// 1 Gbit, Gb/s above (two decimals under 10 Gb/s, one above). Pure.
+func fmtRate(mbit float64) string {
+	switch {
+	case mbit <= 0:
+		return "0 Mb/s"
+	case mbit >= 1000:
+		g := mbit / 1000
+		if g >= 10 {
+			return fmt.Sprintf("%.1f Gb/s", g)
+		}
+		return fmt.Sprintf("%.2f Gb/s", g)
+	default:
+		return fmt.Sprintf("%.0f Mb/s", mbit)
+	}
+}
+
 // layoutStressList renders one row per (node, link): the target device (name large,
 // IP small), a load bar (sent vs cap), and a health label/dot.
 func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot, cap int) layout.Dimensions {
@@ -629,7 +646,7 @@ func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.St
 								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								txt := fmt.Sprintf("%.0f Mbit/s", l.SentMbit)
+								txt := fmtRate(l.SentMbit)
 								col := colTextSec
 								if l.Aborted {
 									txt, col = "aborted", colBad
@@ -687,7 +704,7 @@ func matrixCellText(downMbit float64) string {
 	if downMbit < 0 {
 		return "—"
 	}
-	return fmt.Sprintf("%.0f", downMbit)
+	return fmtRate(downMbit)
 }
 
 // speedKeyUI builds the SpeedMatrix.Cells key (mirrors appcore's speedKey).
@@ -862,7 +879,7 @@ func matrixCellSub(res appcore.SpeedResult) string {
 	case res.RTTms > 0: // mean TCP RTT, when the platform reports it
 		return fmt.Sprintf("%.1f ms", res.RTTms)
 	case res.UpMbit > 0: // otherwise show the upload leg (down/up asymmetry)
-		return fmt.Sprintf("↑ %.0f", res.UpMbit)
+		return "↑ " + fmtRate(res.UpMbit)
 	default:
 		return ""
 	}
@@ -891,5 +908,5 @@ func matrixLegend(gtx layout.Context, th *material.Theme) layout.Dimensions {
 		})
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		item(colGood, "≥900"), item(colWatch, "400–900"), item(colBad, "<400"))
+		item(colGood, "≥900 Mb/s"), item(colWatch, "400–900"), item(colBad, "<400"))
 }

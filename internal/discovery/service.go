@@ -222,6 +222,12 @@ func (s *Service) Stop() error {
 	return nil
 }
 
+// PrimaryIP returns the local IP the OS would use for outbound traffic — the
+// same address this node advertises to peers in its announces. Exported so the
+// engine can hand out a LAN-reachable self address (a remote node told to test
+// against "127.0.0.1" would test itself). Returns "" if it can't be determined.
+func PrimaryIP() string { return primaryIP() }
+
 // primaryIP returns the local IP the OS would use for outbound traffic (the
 // default-route source). On a multi-homed host this gives one stable, routable
 // address instead of letting the receiver guess from a per-interface multicast

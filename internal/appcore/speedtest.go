@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 
 	"netlogger/internal/iperf"
 )
@@ -153,6 +154,11 @@ func speedTestHandler(do func(context.Context, SpeedReq) SpeedResult) http.Handl
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		if isLoopbackTarget(req.Target) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(SpeedResult{Err: "target is this node's loopback — sweep misrouted; not a LAN measurement"})
+			return
+		}
 		// Clamp everything a peer could inflate. Duration ≤30 keeps a "both" run
 		// (two sequential legs) inside the orchestrator's 90s client timeout.
 		if req.DurationS <= 0 || req.DurationS > 30 {
@@ -215,6 +221,18 @@ func (a *App) SpeedTest(ctx context.Context, from PeerInfo, targetAddr string, r
 		return SpeedResult{Err: err.Error()}
 	}
 	return out
+}
+
+// isLoopbackTarget reports whether an iperf target names this machine's own
+// loopback. A sweep must never route a node to itself: loopback runs at memory
+// speed and reads as a 100+ Gbit/s "LAN" result.
+func isLoopbackTarget(hostOrAddr string) bool {
+	h := iperfHost(hostOrAddr)
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // iperfHost returns the bare host of a node address, stripping the control

@@ -133,6 +133,10 @@ func TestSanitizeTargets(t *testing.T) {
 	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("dedupe wrong: %v", got)
 	}
+	// Loopbacks are misrouted self-load, never a LAN target.
+	if got := sanitizeTargets([]string{"127.0.0.1", "localhost", "10.0.0.2"}); len(got) != 1 || got[0] != "10.0.0.2" {
+		t.Fatalf("loopbacks not dropped: %v", got)
+	}
 	big := make([]string, 200)
 	for i := range big {
 		big[i] = "t" + strconv.Itoa(i)

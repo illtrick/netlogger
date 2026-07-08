@@ -84,12 +84,14 @@ const (
 	stressMaxDelay   = 10 * time.Second // the protocol schedules 2s ahead; clock skew must not wedge the node
 )
 
-// sanitizeTargets dedupes and caps a peer-supplied target list.
+// sanitizeTargets dedupes, drops loopbacks, and caps a peer-supplied target
+// list. A loopback target would make this node stress-load itself at memory
+// speed — always a misrouted mesh, never a LAN measurement.
 func sanitizeTargets(ts []string) []string {
 	seen := make(map[string]bool, len(ts))
 	out := make([]string, 0, len(ts))
 	for _, t := range ts {
-		if t == "" || seen[t] {
+		if t == "" || seen[t] || isLoopbackTarget(t) {
 			continue
 		}
 		seen[t] = true

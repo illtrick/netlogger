@@ -110,6 +110,7 @@ type App struct {
 	disc      *discovery.Service
 	nodeID    string
 	host      string
+	selfAddr  string // this node's LAN-reachable control address (ip:port), set in Start; guarded by a.mu
 
 	// FetchLinks fetches a peer's link report; defaults to an HTTP client call.
 	FetchLinks func(baseURL string) (LinkReport, error)
@@ -422,6 +423,13 @@ func (a *App) Start() error {
 	a.mu.Lock()
 	a.nodeID = nodeID
 	a.host = host
+	// Self's control address as PEERS must reach it. Loopback is the fallback
+	// only — handing "127.0.0.1" to a remote node as a test target makes it
+	// test itself (loopback runs at memory speed and reads as a 100+ Gbit LAN).
+	a.selfAddr = "127.0.0.1:" + strconv.Itoa(controlPort)
+	if ip := discovery.PrimaryIP(); ip != "" {
+		a.selfAddr = net.JoinHostPort(ip, strconv.Itoa(controlPort))
+	}
 	if disc != nil {
 		a.disc = disc
 		a.Discovery = disc
@@ -778,6 +786,16 @@ func nonNeg(v int64) int64 {
 	return v
 }
 
+// selfAddrLocked returns this node's LAN-reachable control address (a.mu held).
+// Falls back to loopback for engines that never ran Start (tests): loopback is
+// fine for local API calls, and such engines never orchestrate remote peers.
+func (a *App) selfAddrLocked() string {
+	if a.selfAddr != "" {
+		return a.selfAddr
+	}
+	return "127.0.0.1:" + strconv.Itoa(controlPort)
+}
+
 // Snapshot returns an immutable copy of current engine state.
 func (a *App) Snapshot() Snapshot {
 	a.mu.Lock()
@@ -826,7 +844,7 @@ func (a *App) Snapshot() Snapshot {
 		LastRTTms:      a.lastRTTms,
 		LossPct:        loss,
 		Peers:          peers,
-		SelfPeer:       PeerInfo{ID: a.nodeID, Host: a.host, Addr: "127.0.0.1:" + strconv.Itoa(controlPort)},
+		SelfPeer:       PeerInfo{ID: a.nodeID, Host: a.host, Addr: a.selfAddrLocked()},
 		GatewayIP:      a.GatewayIP, GatewayRTTms: gwRTT, GatewayLossPct: gwLoss,
 		SessionUptimeSec: int64(time.Since(a.startedAt).Seconds()),
 		InternetIP:       a.InternetIP, InternetRTTms: netRTT, InternetLossPct: netLoss,
