@@ -77,6 +77,14 @@ type testsState struct {
 	sweep       appcore.SweepProgress // live fill while a sweep runs (guarded by mu)
 	sweepCancel context.CancelFunc    // stops the running sweep (guarded by mu)
 
+	// Sweep controls (frame-thread-only): direction, duration, parallel streams.
+	swDirSegs [4]widget.Clickable // Both / Down / Up / Bidir
+	swDir     int
+	swDurSegs [2]widget.Clickable // 10s / 30s
+	swDur     int
+	swStrSegs [3]widget.Clickable // 1 / 4 / 8 streams
+	swStreams int
+
 	sub         int // 0 Speed, 1 Stress, 2 Internet (placeholder until Build #3)
 	speedSeg    widget.Clickable
 	stressSeg   widget.Clickable
@@ -152,6 +160,84 @@ func (st *testsState) snapshot() (appcore.SpeedMatrix, bool, bool, string, appco
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.matrix, st.haveMatrix, st.running, st.status, st.sweep
+}
+
+// sweepDirs/sweepDurs/sweepStreams map control indices to request values.
+var (
+	sweepDirs    = [4]string{"both", "down", "up", "bidir"}
+	sweepDirLbls = [4]string{"Both", "Down", "Up", "Bidir"}
+	sweepDurs    = [2]int{10, 30}
+	sweepStreams = [3]int{1, 4, 8}
+)
+
+// sweepReq builds the SpeedReq for the configured controls (frame thread).
+// The first second is omitted (-O 1) so averages reflect steady state, not
+// TCP slow-start.
+func (st *testsState) sweepReq() appcore.SpeedReq {
+	return appcore.SpeedReq{
+		Direction: sweepDirs[st.swDir],
+		DurationS: sweepDurs[st.swDur],
+		Streams:   sweepStreams[st.swStreams],
+		OmitS:     1,
+	}
+}
+
+// sweepControls renders the direction / duration / streams segmented controls
+// and handles their clicks (frame thread). Hidden while a sweep runs.
+func sweepControls(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+	for i := range st.swDirSegs {
+		if st.swDirSegs[i].Clicked(gtx) {
+			st.swDir = i
+		}
+	}
+	for i := range st.swDurSegs {
+		if st.swDurSegs[i].Clicked(gtx) {
+			st.swDur = i
+		}
+	}
+	for i := range st.swStrSegs {
+		if st.swStrSegs[i].Clicked(gtx) {
+			st.swStreams = i
+		}
+	}
+	group := func(label string, seg func(gtx layout.Context) layout.Dimensions) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(18)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Caption(th, label)
+						l.Color = colTextSec
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(gapX(8)),
+					layout.Rigid(seg),
+				)
+			})
+		})
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		group("Direction", func(gtx layout.Context) layout.Dimensions {
+			return segControl(gtx, th,
+				segSpec{click: &st.swDirSegs[0], label: sweepDirLbls[0], active: st.swDir == 0},
+				segSpec{click: &st.swDirSegs[1], label: sweepDirLbls[1], active: st.swDir == 1},
+				segSpec{click: &st.swDirSegs[2], label: sweepDirLbls[2], active: st.swDir == 2},
+				segSpec{click: &st.swDirSegs[3], label: sweepDirLbls[3], active: st.swDir == 3},
+			)
+		}),
+		group("Duration", func(gtx layout.Context) layout.Dimensions {
+			return segControl(gtx, th,
+				segSpec{click: &st.swDurSegs[0], label: "10s", active: st.swDur == 0},
+				segSpec{click: &st.swDurSegs[1], label: "30s", active: st.swDur == 1},
+			)
+		}),
+		group("Streams", func(gtx layout.Context) layout.Dimensions {
+			return segControl(gtx, th,
+				segSpec{click: &st.swStrSegs[0], label: "1", active: st.swStreams == 0},
+				segSpec{click: &st.swStrSegs[1], label: "4", active: st.swStreams == 1},
+				segSpec{click: &st.swStrSegs[2], label: "8", active: st.swStreams == 2},
+			)
+		}),
+	)
 }
 
 // stressSnapshot reads the stress run state safely (the poll goroutine writes
@@ -314,6 +400,14 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if running {
+				return layout.Dimensions{} // controls locked while a sweep runs
+			}
+			return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return sweepControls(gtx, th, st)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if !live {
 				return layout.Dimensions{}
 			}
@@ -328,7 +422,7 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutSpeedMatrix(gtx, th, st, matrix, active)
+			return layoutSpeedMatrix(gtx, th, st, matrix, active, sweep.Live)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return pairDetail(gtx, th, st, matrix)
@@ -371,15 +465,53 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 	if res.Err != "" {
 		txt = fmt.Sprintf("%s → %s   error: %s", hostByID[from], hostByID[to], res.Err)
 	}
+	// Per-second series from the run's 1s intervals, on one shared scale.
+	var series [][]float64
+	var cols []color.NRGBA
+	var chartLegend string
+	if len(res.DownIvs) > 1 {
+		series, cols = append(series, res.DownIvs), append(cols, colAccent)
+		chartLegend = "↓ down"
+	}
+	if len(res.UpIvs) > 1 {
+		series, cols = append(series, res.UpIvs), append(cols, upGreen)
+		if chartLegend != "" {
+			chartLegend += " · "
+		}
+		chartLegend += "↑ up"
+	}
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return roundedBG(gtx, colCardAlt, unit.Dp(8), unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			l := material.Body2(th, txt)
-			l.Color = colTextPri
-			if res.Err != "" {
-				l.Color = colBad
-			}
-			return l.Layout(gtx)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Body2(th, txt)
+					l.Color = colTextPri
+					if res.Err != "" {
+						l.Color = colBad
+					}
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if len(series) == 0 {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
+								return multiSparkline(gtx, series, cols, w, 56)
+							}),
+							layout.Rigid(gap(4)),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								l := material.Caption(th, chartLegend+" · per second")
+								l.Color = colTextMut
+								return l.Layout(gtx)
+							}),
+						)
+					})
+				}),
+			)
 		})
 	})
 }
@@ -439,6 +571,9 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		}),
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return stressRateChart(gtx, th, nodes, snap)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return stressLatencyChart(gtx, th, snap)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -450,6 +585,66 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 			return layoutStressList(gtx, th, nodes, snap, st.cap())
 		}),
 	)
+}
+
+// stressRateChart draws each loaded link's per-second achieved rate on one
+// shared scale — throughput under load, streamed live from the iperf3 clients.
+// Read together with the latency chart below it: rate sag + RTT spike on the
+// same second is the load-triggered fault caught in the act.
+func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot) layout.Dimensions {
+	var series [][]float64
+	var names []string
+	for _, n := range nodes {
+		for _, l := range n.Links {
+			if len(l.RateHist) >= 2 {
+				series = append(series, l.RateHist)
+				names = append(names, "→ "+snap.DeviceName(l.Target))
+			}
+		}
+	}
+	if len(series) == 0 {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Throughput per link · Mb/s per second")
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(gap(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
+			return multiSparkline(gtx, series, linkColors, w, 64)
+		}),
+		layout.Rigid(gap(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return legendRow(gtx, th, names)
+		}),
+		layout.Rigid(gap(14)),
+	)
+}
+
+// legendRow renders color-dot + name chips matching linkColors order.
+func legendRow(gtx layout.Context, th *material.Theme, names []string) layout.Dimensions {
+	ch := make([]layout.FlexChild, 0, len(names))
+	for i, name := range names {
+		i, name := i, name
+		ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(dotWidget(linkColors[i%len(linkColors)], 8)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Caption(th, name)
+							lbl.Color = colTextSec
+							return lbl.Layout(gtx)
+						})
+					}),
+				)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
 }
 
 // capStepper is the per-link bandwidth control: − value + (ghost buttons).
@@ -647,6 +842,9 @@ func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.St
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								txt := fmtRate(l.SentMbit)
+								if l.Retransmits > 0 {
+									txt += fmt.Sprintf(" · retr %d", l.Retransmits)
+								}
 								col := colTextSec
 								if l.Aborted {
 									txt, col = "aborted", colBad
@@ -713,9 +911,10 @@ func speedKeyUI(from, to string) string { return from + "\x00" + to }
 // layoutSpeedMatrix draws the directed speed grid with uniform column widths
 // and a fixed row height. Every column (including the row-label column) uses an
 // equal flex weight so cells never bleed; a small inset is the gutter. Cells in
-// `active` are currently under test and render as a pulsing accent state.
+// `active` are currently under test: they show the per-second rate streaming
+// in from the running iperf3 (live), or "testing" before the first interval.
 // Clicking a completed cell toggles the pair-detail panel below the grid.
-func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, active map[string]bool) layout.Dimensions {
+func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, active map[string]bool, live map[string]appcore.LivePoint) layout.Dimensions {
 	if len(m.Nodes) == 0 {
 		return material.Body2(th, "no live devices").Layout(gtx)
 	}
@@ -823,7 +1022,11 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 				case from.ID == to.ID:
 					cells = append(cells, dataCell(colCardAlt, colTextMut, "—", ""))
 				case active[key]:
-					cells = append(cells, dataCell(colTestingBG, colAccent, "testing", "•••"))
+					txt, sub := "testing", "•••"
+					if lp, ok := live[key]; ok && lp.Mbit > 0 {
+						txt, sub = fmtRate(lp.Mbit), phaseArrow(lp.Phase)+" testing"
+					}
+					cells = append(cells, dataCell(colTestingBG, colAccent, txt, sub))
 				default:
 					res, ok := m.Cells[key]
 					if !ok {
@@ -867,6 +1070,20 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 			)
 		}),
 	)
+}
+
+// phaseArrow maps a live point's phase to its direction glyph. Pure.
+func phaseArrow(phase string) string {
+	switch phase {
+	case "down":
+		return "↓"
+	case "up":
+		return "↑"
+	case "bidir":
+		return "⇅"
+	default:
+		return "·"
+	}
 }
 
 // matrixCellSub is the small second line in a matrix cell: loss, "slow", or RTT.

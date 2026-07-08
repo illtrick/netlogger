@@ -116,11 +116,12 @@ type App struct {
 	FetchLinks func(baseURL string) (LinkReport, error)
 	// FetchEvents fetches a peer's recent-event ring; defaults to an HTTP call.
 	FetchEvents func(baseURL string) ([]EventInfo, error)
-	// FetchSpeed asks a peer to run a speed test (defaults to postSpeedTest).
-	FetchSpeed func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error)
+	// FetchSpeed asks a peer to run a speed test (defaults to postSpeedTest);
+	// onLive receives streamed per-second readings from 1.2+ peers.
+	FetchSpeed func(ctx context.Context, baseURL string, req SpeedReq, onLive func(LivePoint)) (SpeedResult, error)
 	// localSpeed runs a speed test on this node (defaults to runSpeedTest over
-	// a ctx-bound iperf.RunClientCtx so a stopped sweep kills the client).
-	localSpeed  func(ctx context.Context, req SpeedReq) SpeedResult
+	// a ctx-bound iperf.RunClientStream so a stopped sweep kills the client).
+	localSpeed  func(ctx context.Context, req SpeedReq, onLive func(LivePoint)) SpeedResult
 	linksSrv    *http.Server
 	reportMu    sync.Mutex
 	peerReports map[string]LinkReport
@@ -161,9 +162,9 @@ type App struct {
 	nicMu       sync.Mutex
 	nics        []NICInfo
 
-	// stressRunner runs one capped iperf3 client (defaults to iperf.RunClientCtx);
+	// stressRunner runs one capped iperf3 client (defaults to iperf.RunClientStream);
 	// injectable for tests.
-	stressRunner func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error)
+	stressRunner func(ctx context.Context, target string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error)
 	stressMu     sync.Mutex
 	stress       *stressRun
 	// stressWG tracks stress lifecycle goroutines so Stop() can wait for them
@@ -287,15 +288,15 @@ func New(dataDir string) *App {
 		FetchEvents: func(baseURL string) ([]EventInfo, error) {
 			return fetchEvents(&http.Client{Timeout: 1500 * time.Millisecond}, baseURL)
 		},
-		FetchSpeed: func(ctx context.Context, baseURL string, req SpeedReq) (SpeedResult, error) {
-			return postSpeedTest(ctx, &http.Client{Timeout: 90 * time.Second}, baseURL, req)
+		FetchSpeed: func(ctx context.Context, baseURL string, req SpeedReq, onLive func(LivePoint)) (SpeedResult, error) {
+			return postSpeedTest(ctx, &http.Client{Timeout: 90 * time.Second}, baseURL, req, onLive)
 		},
-		localSpeed: func(ctx context.Context, req SpeedReq) SpeedResult {
-			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
-				return iperf.RunClientCtx(ctx, t, o)
-			}, req.Target, req)
+		localSpeed: func(ctx context.Context, req SpeedReq, onLive func(LivePoint)) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error) {
+				return iperf.RunClientStream(ctx, t, o, onIv)
+			}, req.Target, req, onLive)
 		},
-		stressRunner: iperf.RunClientCtx,
+		stressRunner: iperf.RunClientStream,
 		FetchStressStart: func(baseURL string, o StressOpts) error {
 			return postStressStart(&http.Client{Timeout: 10 * time.Second}, baseURL, o)
 		},
@@ -454,10 +455,10 @@ func (a *App) Start() error {
 		mux.Handle("/api/command", commandHandler(a.ResetSession))
 		mux.Handle("/api/events", eventsHandler(a.recentEvents))
 		mux.Handle("/api/lossbuckets", lossBucketsHandler(a.LossHeat))
-		mux.Handle("/api/speedtest", speedTestHandler(func(ctx context.Context, req SpeedReq) SpeedResult {
-			return runSpeedTest(func(t string, o iperf.Opts) (iperf.Result, error) {
-				return iperf.RunClientCtx(ctx, t, o) // orchestrator hangs up → iperf3 dies
-			}, req.Target, req)
+		mux.Handle("/api/speedtest", speedTestHandler(func(ctx context.Context, req SpeedReq, onLive func(LivePoint)) SpeedResult {
+			return runSpeedTest(func(t string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error) {
+				return iperf.RunClientStream(ctx, t, o, onIv) // orchestrator hangs up → iperf3 dies
+			}, req.Target, req, onLive)
 		}))
 		mux.Handle("/api/stress/start", stressStartHandler(a.startStressLocal))
 		mux.Handle("/api/stress/stop", stressStopHandler(a.stopStressLocal))

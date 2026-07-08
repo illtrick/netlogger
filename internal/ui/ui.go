@@ -177,11 +177,11 @@ func Run(a *appcore.App) error {
 				tst.mu.Unlock()
 				if !alreadyRunning {
 					self, peers := snap.SelfPeer, snap.Peers
+					req := tst.sweepReq() // read the controls on the frame thread
 					go func() {
 						done := a.BeginSpeedTestNote()
-						m := a.SpeedSweep(ctx, self, peers,
-							appcore.SpeedReq{Direction: "both", Streams: 4, DurationS: 10, OmitS: 2},
-							func(p appcore.SweepProgress) { // live matrix fill
+						m := a.SpeedSweep(ctx, self, peers, req,
+							func(p appcore.SweepProgress) { // live matrix + per-second rates
 								tst.mu.Lock()
 								tst.sweep = p
 								tst.mu.Unlock()

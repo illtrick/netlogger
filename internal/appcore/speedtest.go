@@ -1,6 +1,7 @@
 package appcore
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -23,6 +24,7 @@ type SpeedReq struct {
 	DurationS int    `json:"duration_s"`         // 0 => 10
 	OmitS     int    `json:"omit_s"`             // warm-up seconds to skip
 	CapMbit   int    `json:"cap_mbit,omitempty"` // UDP rate cap
+	Stream    bool   `json:"stream,omitempty"`   // respond with NDJSON live points (1.2+); old peers ignore it
 }
 
 // SpeedResult is the parsed outcome of a speed test, in Mbit/s.
@@ -34,7 +36,27 @@ type SpeedResult struct {
 	JitterMs    float64 `json:"jitter_ms"`
 	LossPct     float64 `json:"loss_pct"`
 	Proto       string  `json:"proto"`
-	Err         string  `json:"err,omitempty"`
+	// DownIvs/UpIvs are the per-second Mbit/s samples of each leg (iperf3
+	// 1s intervals), for charting a completed run. Empty on old peers.
+	DownIvs []float64 `json:"down_ivs,omitempty"`
+	UpIvs   []float64 `json:"up_ivs,omitempty"`
+	Err     string    `json:"err,omitempty"`
+}
+
+// LivePoint is one in-flight per-second reading from a running speed test —
+// what makes the matrix fill live instead of only at the end.
+type LivePoint struct {
+	Phase string  `json:"phase"` // "up" | "down" | "bidir"
+	Sec   float64 `json:"sec"`   // seconds since the phase started
+	Mbit  float64 `json:"mbit"`
+	Retr  int     `json:"retr"`
+}
+
+// streamMsg is one NDJSON line of a streamed /api/speedtest response:
+// any number of {"live":…} lines followed by exactly one {"result":…}.
+type streamMsg struct {
+	Live   *LivePoint   `json:"live,omitempty"`
+	Result *SpeedResult `json:"result,omitempty"`
 }
 
 // meanRTTms averages the non-zero per-interval TCP RTTs (microseconds) into ms.
@@ -56,12 +78,26 @@ func meanRTTms(ivs []iperf.Interval) float64 {
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
 func mbit(bps float64) float64 { return round1(bps / 1e6) }
 
-// runner matches iperf.RunClient; injected for tests.
-type runner func(target string, o iperf.Opts) (iperf.Result, error)
+// runner matches iperf.RunClientStream's shape; injected for tests. onIv (may
+// be nil) receives each 1-second interval while the client runs.
+type runner func(target string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error)
+
+// ivMbits maps a run's intervals to per-second Mbit/s samples.
+func ivMbits(ivs []iperf.Interval) []float64 {
+	if len(ivs) == 0 {
+		return nil
+	}
+	out := make([]float64, 0, len(ivs))
+	for _, iv := range ivs {
+		out = append(out, mbit(iv.BitsPerSecond))
+	}
+	return out
+}
 
 // runSpeedTest executes the requested direction(s) and maps to SpeedResult.
-// "both" runs upload (forward) then download (-R) sequentially.
-func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
+// "both" runs upload (forward) then download (-R) sequentially. onLive (may be
+// nil) receives one LivePoint per interval while a leg runs.
+func runSpeedTest(run runner, target string, req SpeedReq, onLive func(LivePoint)) SpeedResult {
 	res := SpeedResult{Proto: req.Proto}
 	if res.Proto == "" {
 		res.Proto = "tcp"
@@ -73,13 +109,22 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 		UDP:         req.Proto == "udp",
 		BitrateMbit: req.CapMbit,
 	}
+	emit := func(phase string) func(iperf.Interval) {
+		if onLive == nil {
+			return nil
+		}
+		return func(iv iperf.Interval) {
+			onLive(LivePoint{Phase: phase, Sec: iv.EndS, Mbit: mbit(iv.BitsPerSecond), Retr: iv.Retransmits})
+		}
+	}
 	doUp := func() bool {
-		r, err := run(target, base)
+		r, err := run(target, base, emit("up"))
 		if err != nil {
 			res.Err = err.Error()
 			return false
 		}
 		res.UpMbit = mbit(r.SumBitsPerSec)
+		res.UpIvs = ivMbits(r.Intervals)
 		res.Retransmits += r.SumRetransmits
 		res.JitterMs = r.UDPJitterMs
 		res.LossPct = r.UDPLostPercent
@@ -91,12 +136,13 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 	doDown := func() bool {
 		o := base
 		o.Reverse = true
-		r, err := run(target, o)
+		r, err := run(target, o, emit("down"))
 		if err != nil {
 			res.Err = err.Error()
 			return false
 		}
 		res.DownMbit = mbit(r.SumRecvBitsPerSec)
+		res.DownIvs = ivMbits(r.Intervals)
 		res.Retransmits += r.SumRetransmits
 		if r.UDPJitterMs > res.JitterMs {
 			res.JitterMs = r.UDPJitterMs
@@ -114,7 +160,7 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 	case "bidir":
 		o := base
 		o.Bidir = true
-		r, err := run(target, o)
+		r, err := run(target, o, emit("bidir"))
 		if err != nil {
 			res.Err = err.Error()
 		} else {
@@ -127,6 +173,7 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 				down = r.SumRecvBitsPerSec
 			}
 			res.DownMbit = mbit(down)
+			res.UpIvs = ivMbits(r.Intervals) // interval sums track the sent direction
 			res.Retransmits = r.SumRetransmits
 			res.RTTms = meanRTTms(r.Intervals)
 			res.JitterMs = r.UDPJitterMs
@@ -140,10 +187,15 @@ func runSpeedTest(run runner, target string, req SpeedReq) SpeedResult {
 	return res
 }
 
-// speedTestHandler accepts POST SpeedReq and returns SpeedResult JSON. The
-// request context is threaded into the runner so a caller that stops its sweep
+// speedTestHandler accepts POST SpeedReq and returns the result. The request
+// context is threaded into the runner so a caller that stops its sweep
 // (dropping the connection) also kills the iperf3 client running here.
-func speedTestHandler(do func(context.Context, SpeedReq) SpeedResult) http.HandlerFunc {
+//
+// Plain requests get one SpeedResult JSON object. When req.Stream is set (a
+// 1.2+ orchestrator), the response is NDJSON: a {"live":…} line per interval
+// as the test runs, then one final {"result":…} line — flushed eagerly so the
+// caller's matrix updates every second.
+func speedTestHandler(do func(context.Context, SpeedReq, func(LivePoint)) SpeedResult) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -173,15 +225,34 @@ func speedTestHandler(do func(context.Context, SpeedReq) SpeedResult) http.Handl
 		if req.CapMbit < 0 || req.CapMbit > 10000 {
 			req.CapMbit = 0
 		}
+		if fl, canFlush := w.(http.Flusher); req.Stream && canFlush {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			enc := json.NewEncoder(w)
+			res := do(r.Context(), req, func(p LivePoint) {
+				// onLive fires sequentially from the runner's scanning loop;
+				// the final result encode below happens after do returns.
+				_ = enc.Encode(streamMsg{Live: &p})
+				fl.Flush()
+			})
+			_ = enc.Encode(streamMsg{Result: &res})
+			fl.Flush()
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(do(r.Context(), req))
+		_ = json.NewEncoder(w).Encode(do(r.Context(), req, nil))
 	}
 }
 
 // postSpeedTest asks a remote node (baseURL = its control URL) to run a client.
-// Cancelling ctx drops the connection, which cancels the remote handler's
-// request context and kills its iperf3 run.
-func postSpeedTest(ctx context.Context, client *http.Client, baseURL string, req SpeedReq) (SpeedResult, error) {
+// With onLive set it requests a streamed (NDJSON) response and forwards each
+// live point; a pre-1.2 peer ignores the stream flag and returns one bare
+// SpeedResult object, which decodes through the same line loop. Cancelling ctx
+// drops the connection, which cancels the remote handler's request context and
+// kills its iperf3 run.
+func postSpeedTest(ctx context.Context, client *http.Client, baseURL string, req SpeedReq, onLive func(LivePoint)) (SpeedResult, error) {
+	if onLive != nil {
+		req.Stream = true
+	}
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/speedtest", bytes.NewReader(body))
 	if err != nil {
@@ -196,27 +267,57 @@ func postSpeedTest(ctx context.Context, client *http.Client, baseURL string, req
 	if resp.StatusCode != http.StatusOK {
 		return SpeedResult{}, fmt.Errorf("speedtest: status %d", resp.StatusCode)
 	}
-	var out SpeedResult
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var final *SpeedResult
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var msg streamMsg
+		if err := json.Unmarshal(line, &msg); err == nil && (msg.Live != nil || msg.Result != nil) {
+			if msg.Live != nil && onLive != nil {
+				onLive(*msg.Live)
+			}
+			if msg.Result != nil {
+				r := *msg.Result
+				final = &r
+			}
+			continue
+		}
+		// Old peer: the whole body is one bare SpeedResult object.
+		var bare SpeedResult
+		if err := json.Unmarshal(line, &bare); err == nil {
+			final = &bare
+		}
+	}
+	if err := sc.Err(); err != nil {
 		return SpeedResult{}, err
 	}
-	return out, nil
+	if final == nil {
+		return SpeedResult{}, fmt.Errorf("speedtest: empty response")
+	}
+	return *final, nil
 }
 
 // SpeedTest orchestrates a single pair: it tells the `from` node to run an
 // iperf3 client against `targetAddr`. If `from` is this node, it runs locally;
-// otherwise it POSTs to the peer's control plane. Orchestrator-agnostic — the
-// caller need not be either endpoint. Cancelling ctx aborts the run (local
-// iperf3 killed; remote request dropped, which kills the remote iperf3 too).
-func (a *App) SpeedTest(ctx context.Context, from PeerInfo, targetAddr string, req SpeedReq) SpeedResult {
+// otherwise it POSTs to the peer's control plane. onLive (may be nil) receives
+// per-second readings while the test runs — locally and, on 1.2+ peers, over
+// the streamed response. Orchestrator-agnostic — the caller need not be either
+// endpoint. Cancelling ctx aborts the run (local iperf3 killed; remote request
+// dropped, which kills the remote iperf3 too).
+func (a *App) SpeedTest(ctx context.Context, from PeerInfo, targetAddr string, req SpeedReq, onLive func(LivePoint)) SpeedResult {
 	// Node addresses are host:controlPort (e.g. 10.0.0.2:8088). iperf3's server
 	// listens on its own default port (5201) and `-c` wants a bare host, so strip
 	// the control port before handing the target to iperf3.
 	req.Target = iperfHost(targetAddr)
+	req.Stream = onLive != nil
 	if from.ID == a.nodeID {
-		return a.localSpeed(ctx, req)
+		return a.localSpeed(ctx, req, onLive)
 	}
-	out, err := a.FetchSpeed(ctx, "http://"+from.Addr, req)
+	out, err := a.FetchSpeed(ctx, "http://"+from.Addr, req, onLive)
 	if err != nil {
 		return SpeedResult{Err: err.Error()}
 	}
@@ -324,12 +425,14 @@ func speedColorBucket(mbit float64) string {
 }
 
 // SweepProgress is a live update from a running SpeedSweep: the completed cells
-// so far, the pairs currently under test, and the done/total counts. Everything
-// is a copy — the receiver may hold it across frames.
+// so far, the pairs currently under test (with their latest per-second reading
+// in Live, keyed like Cells), and the done/total counts. Everything is a copy —
+// the receiver may hold it across frames.
 type SweepProgress struct {
 	Nodes       []SpeedNode
 	Cells       map[string]SpeedResult
 	Active      []SpeedPair
+	Live        map[string]LivePoint
 	Done, Total int
 }
 
@@ -357,9 +460,18 @@ func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, r
 		from, to string
 		res      SpeedResult
 	}
+	type liveUpdate struct {
+		key string
+		p   LivePoint
+	}
 	ch := make(chan result, total)
+	// Buffered so a pair goroutine never blocks on a slow UI; the scheduler
+	// drains it in the same select as completions, keeping every report()
+	// call on this one goroutine.
+	liveCh := make(chan liveUpdate, 4*total+16)
 	busy := map[string]bool{}
-	active := map[string]SpeedPair{} // key → pair currently under test
+	active := map[string]SpeedPair{}  // key → pair currently under test
+	live := map[string]LivePoint{}    // key → latest per-second reading
 	pending := pairs
 	inFlight := 0
 	report := func() {
@@ -367,9 +479,13 @@ func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, r
 			return
 		}
 		p := SweepProgress{Nodes: nodes, Done: len(cells), Total: total,
-			Cells: make(map[string]SpeedResult, len(cells))}
+			Cells: make(map[string]SpeedResult, len(cells)),
+			Live:  make(map[string]LivePoint, len(live))}
 		for k, v := range cells {
 			p.Cells[k] = v
+		}
+		for k, v := range live {
+			p.Live[k] = v
 		}
 		for _, pr := range active {
 			p.Active = append(p.Active, pr)
@@ -388,27 +504,42 @@ func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, r
 			}
 			busy[pr.From.ID], busy[pr.To.ID] = true, true
 			pending = append(pending[:i], pending[i+1:]...)
-			active[speedKey(pr.From.ID, pr.To.ID)] = pr
+			key := speedKey(pr.From.ID, pr.To.ID)
+			active[key] = pr
 			inFlight++
 			from := byID[pr.From.ID]
-			go func(pr SpeedPair, from PeerInfo) {
-				ch <- result{
-					key: speedKey(pr.From.ID, pr.To.ID), from: pr.From.ID, to: pr.To.ID,
-					res: a.SpeedTest(ctx, from, pr.To.Addr, req),
+			go func(pr SpeedPair, from PeerInfo, key string) {
+				onLive := func(p LivePoint) {
+					select { // never block a running test on a full channel
+					case liveCh <- liveUpdate{key: key, p: p}:
+					default:
+					}
 				}
-			}(pr, from)
+				ch <- result{
+					key: key, from: pr.From.ID, to: pr.To.ID,
+					res: a.SpeedTest(ctx, from, pr.To.Addr, req, onLive),
+				}
+			}(pr, from, key)
 		}
 	}
 	launch()
 	report()
 	for inFlight > 0 {
-		r := <-ch
-		cells[r.key] = r.res
-		delete(active, r.key)
-		busy[r.from], busy[r.to] = false, false
-		inFlight--
-		launch()
-		report()
+		select {
+		case lu := <-liveCh:
+			if _, still := active[lu.key]; still {
+				live[lu.key] = lu.p
+				report()
+			}
+		case r := <-ch:
+			cells[r.key] = r.res
+			delete(active, r.key)
+			delete(live, r.key)
+			busy[r.from], busy[r.to] = false, false
+			inFlight--
+			launch()
+			report()
+		}
 	}
 	if ctx.Err() == nil { // a stopped sweep is partial — don't record it
 		if sum, ok := sweepSummary(nodes, cells); ok {

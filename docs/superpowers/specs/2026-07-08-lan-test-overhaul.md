@@ -1,6 +1,6 @@
 # LAN Speed & Stress Overhaul — live intervals, retransmits, honest units
 
-Status: implementing (2026-07-08). Follows the Tests subsystem spec
+Status: shipped in v1.2.0 (2026-07-08). Follows the Tests subsystem spec
 (2026-06-18); this revises its Speed/Stress presentation and engine plumbing.
 
 ## Why

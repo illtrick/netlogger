@@ -32,12 +32,19 @@ type StressOpts struct {
 	StartAtUnixUS  int64    `json:"start_at_unix_us"`
 }
 
-// LinkLoad is one target's live load/health during a run.
+// stressRateHist is how many per-second rate samples a link keeps for the
+// throughput-under-load chart (one minute at 1 Hz).
+const stressRateHist = 60
+
+// LinkLoad is one target's live load/health during a run. SentMbit is the
+// latest per-second rate (streamed live from iperf3); RateHist is the recent
+// per-second series for charting.
 type LinkLoad struct {
-	Target      string  `json:"target"`
-	SentMbit    float64 `json:"sent_mbit"`
-	Retransmits int     `json:"retransmits"`
-	Aborted     bool    `json:"aborted"`
+	Target      string    `json:"target"`
+	SentMbit    float64   `json:"sent_mbit"`
+	Retransmits int       `json:"retransmits"`
+	RateHist    []float64 `json:"rate_hist,omitempty"`
+	Aborted     bool      `json:"aborted"`
 }
 
 // StressStatus is a node's current stress state.
@@ -207,12 +214,24 @@ func (a *App) startStressLocal(o StressOpts) error {
 }
 
 // loadTarget repeatedly runs a capped iperf3 client against one target until ctx
-// is done, updating the link's live load. Consecutive errors auto-abort the link.
+// is done, updating the link's live load: each streamed 1s interval refreshes
+// SentMbit and extends RateHist, so the UI's bars and charts move every second
+// instead of every 5s chunk. Consecutive errors auto-abort the link.
 func (a *App) loadTarget(ctx context.Context, run *stressRun, target string, capMbit, dur int, proto string) {
 	var consec int
 	chunk := 5
 	if dur < chunk {
 		chunk = dur
+	}
+	onIv := func(iv iperf.Interval) {
+		run.mu.Lock()
+		l := run.links[target]
+		l.SentMbit = math.Round(iv.BitsPerSecond/1e6*10) / 10
+		l.RateHist = append(l.RateHist, l.SentMbit)
+		if len(l.RateHist) > stressRateHist {
+			l.RateHist = l.RateHist[len(l.RateHist)-stressRateHist:]
+		}
+		run.mu.Unlock()
 	}
 	for {
 		select {
@@ -224,7 +243,7 @@ func (a *App) loadTarget(ctx context.Context, run *stressRun, target string, cap
 			DurationS:   chunk,
 			BitrateMbit: capMbit,
 			UDP:         proto == "udp",
-		})
+		}, onIv)
 		if ctx.Err() != nil {
 			return
 		}
@@ -240,6 +259,8 @@ func (a *App) loadTarget(ctx context.Context, run *stressRun, target string, cap
 		} else {
 			consec = 0
 			l.SentMbit = math.Round(res.SumBitsPerSec/1e6*10) / 10
+			// Retransmits from the end summary only (interval sums lack them on
+			// Windows/Cygwin) — no double counting.
 			l.Retransmits += res.SumRetransmits
 		}
 		run.mu.Unlock()
@@ -275,8 +296,11 @@ func (a *App) stressStatusLocal() StressStatus {
 		StartedUnixUS: run.starts, EndsUnixUS: run.ends,
 	}
 	for _, tg := range sortedKeys(run.links) {
-		l := run.links[tg]
-		st.Links = append(st.Links, *l)
+		l := *run.links[tg]
+		// Deep-copy the rate history: the loader goroutine keeps appending to
+		// the original slice under run.mu after we return.
+		l.RateHist = append([]float64(nil), l.RateHist...)
+		st.Links = append(st.Links, l)
 	}
 	return st
 }

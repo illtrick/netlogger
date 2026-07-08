@@ -40,35 +40,64 @@ type Result struct {
 	UDPJitterMs            float64 `json:"udp_jitter_ms"`
 }
 
+// rawIntervalSum is the "sum" block of one interval — shared by the plain
+// --json document and the --json-stream "interval" event payload.
+type rawIntervalSum struct {
+	Sum struct {
+		Start         float64 `json:"start"`
+		End           float64 `json:"end"`
+		BitsPerSecond float64 `json:"bits_per_second"`
+		Retransmits   int     `json:"retransmits"`
+		RTT           int     `json:"rtt"`
+		JitterMs      float64 `json:"jitter_ms"`
+		LostPercent   float64 `json:"lost_percent"`
+	} `json:"sum"`
+}
+
+func (r rawIntervalSum) interval() Interval {
+	return Interval{
+		StartS:        r.Sum.Start,
+		EndS:          r.Sum.End,
+		BitsPerSecond: r.Sum.BitsPerSecond,
+		Retransmits:   r.Sum.Retransmits,
+		RTTus:         r.Sum.RTT,
+		JitterMs:      r.Sum.JitterMs,
+		LostPercent:   r.Sum.LostPercent,
+	}
+}
+
+// rawEnd is the "end" block — also the payload of --json-stream's "end" event.
+type rawEnd struct {
+	SumSent struct {
+		BitsPerSecond float64 `json:"bits_per_second"`
+		Retransmits   int     `json:"retransmits"`
+	} `json:"sum_sent"`
+	SumReceived struct {
+		BitsPerSecond float64 `json:"bits_per_second"`
+	} `json:"sum_received"`
+	SumReceivedBidirReverse struct {
+		BitsPerSecond float64 `json:"bits_per_second"`
+	} `json:"sum_received_bidir_reverse"`
+	Sum struct {
+		JitterMs    float64 `json:"jitter_ms"`
+		LostPercent float64 `json:"lost_percent"`
+	} `json:"sum"`
+}
+
+// applyEnd fills a Result's summary fields from the end block.
+func applyEnd(res *Result, e rawEnd) {
+	res.SumBitsPerSec = e.SumSent.BitsPerSecond
+	res.SumRetransmits = e.SumSent.Retransmits
+	res.SumRecvBitsPerSec = e.SumReceived.BitsPerSecond
+	res.SumRecvBidirBitsPerSec = e.SumReceivedBidirReverse.BitsPerSecond
+	res.UDPLostPercent = e.Sum.LostPercent
+	res.UDPJitterMs = e.Sum.JitterMs
+}
+
 type rawResult struct {
-	Intervals []struct {
-		Sum struct {
-			Start         float64 `json:"start"`
-			End           float64 `json:"end"`
-			BitsPerSecond float64 `json:"bits_per_second"`
-			Retransmits   int     `json:"retransmits"`
-			RTT           int     `json:"rtt"`
-			JitterMs      float64 `json:"jitter_ms"`
-			LostPercent   float64 `json:"lost_percent"`
-		} `json:"sum"`
-	} `json:"intervals"`
-	End struct {
-		SumSent struct {
-			BitsPerSecond float64 `json:"bits_per_second"`
-			Retransmits   int     `json:"retransmits"`
-		} `json:"sum_sent"`
-		SumReceived struct {
-			BitsPerSecond float64 `json:"bits_per_second"`
-		} `json:"sum_received"`
-		SumReceivedBidirReverse struct {
-			BitsPerSecond float64 `json:"bits_per_second"`
-		} `json:"sum_received_bidir_reverse"`
-		Sum struct {
-			JitterMs    float64 `json:"jitter_ms"`
-			LostPercent float64 `json:"lost_percent"`
-		} `json:"sum"`
-	} `json:"end"`
-	Error string `json:"error"`
+	Intervals []rawIntervalSum `json:"intervals"`
+	End       rawEnd           `json:"end"`
+	Error     string           `json:"error"`
 }
 
 // Parse converts iperf3 --json bytes into a Result.
@@ -80,24 +109,10 @@ func Parse(data []byte) (Result, error) {
 	if raw.Error != "" {
 		return Result{}, fmt.Errorf("iperf3: %s", raw.Error)
 	}
-	res := Result{
-		SumBitsPerSec:  raw.End.SumSent.BitsPerSecond,
-		SumRetransmits: raw.End.SumSent.Retransmits,
-		UDPLostPercent: raw.End.Sum.LostPercent,
-		UDPJitterMs:    raw.End.Sum.JitterMs,
-	}
-	res.SumRecvBitsPerSec = raw.End.SumReceived.BitsPerSecond
-	res.SumRecvBidirBitsPerSec = raw.End.SumReceivedBidirReverse.BitsPerSecond
+	var res Result
+	applyEnd(&res, raw.End)
 	for _, iv := range raw.Intervals {
-		res.Intervals = append(res.Intervals, Interval{
-			StartS:        iv.Sum.Start,
-			EndS:          iv.Sum.End,
-			BitsPerSecond: iv.Sum.BitsPerSecond,
-			Retransmits:   iv.Sum.Retransmits,
-			RTTus:         iv.Sum.RTT,
-			JitterMs:      iv.Sum.JitterMs,
-			LostPercent:   iv.Sum.LostPercent,
-		})
+		res.Intervals = append(res.Intervals, iv.interval())
 	}
 	return res, nil
 }

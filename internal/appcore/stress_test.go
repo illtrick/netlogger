@@ -55,7 +55,7 @@ func TestStressStartDelay(t *testing.T) {
 func TestStressLifecycleWithFakeRunner(t *testing.T) {
 	a := &App{}
 	var calls int64
-	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error) {
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
 		atomic.AddInt64(&calls, 1)
 		select {
 		case <-ctx.Done():
@@ -89,7 +89,7 @@ func TestStressLifecycleWithFakeRunner(t *testing.T) {
 
 func TestStressAutoAbortsFailingLink(t *testing.T) {
 	a := &App{}
-	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error) {
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
 		if target == "bad" {
 			return iperf.Result{}, errors.New("connection refused")
 		}
@@ -113,6 +113,26 @@ func TestStressAutoAbortsFailingLink(t *testing.T) {
 		t.Fatalf("the failing link should auto-abort: %+v", st.Links)
 	}
 	a.stopStressLocal("r2")
+}
+
+func TestLoadTargetStreamsLiveRates(t *testing.T) {
+	a := &App{}
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, onIv func(iperf.Interval)) (iperf.Result, error) {
+		if onIv != nil {
+			onIv(iperf.Interval{EndS: 1, BitsPerSecond: 150e6})
+			onIv(iperf.Interval{EndS: 2, BitsPerSecond: 180e6})
+		}
+		<-ctx.Done() // hold the run open so status observes the live values
+		return iperf.Result{}, ctx.Err()
+	}
+	_ = a.startStressLocal(StressOpts{RunID: "rl", Targets: []string{"10.0.0.2"}, DurationS: 2, Proto: "tcp"})
+	time.Sleep(30 * time.Millisecond)
+	st := a.stressStatusLocal()
+	if len(st.Links) != 1 || st.Links[0].SentMbit != 180 || len(st.Links[0].RateHist) != 2 {
+		t.Fatalf("live rates not streamed into the link: %+v", st.Links)
+	}
+	a.stopStressLocal("rl")
+	time.Sleep(20 * time.Millisecond)
 }
 
 func TestStartStressReportsFailures(t *testing.T) {
@@ -180,7 +200,7 @@ func TestStartStressFansOutPerNodeTargets(t *testing.T) {
 
 func TestStressStartStopStatusHandlers(t *testing.T) {
 	a := &App{}
-	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts) (iperf.Result, error) {
+	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
 		select {
 		case <-ctx.Done():
 			return iperf.Result{}, ctx.Err()
