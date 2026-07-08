@@ -95,6 +95,27 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `edbc99f` (stress per-link server ports — v1.3.1)
+
+**Range:** `44b3f34..edbc99f` · **Net effect for Mac: rebuild-only + one live check.** No new seams.
+
+- **[Portable]** N≥3 full-mesh stress aborted one inbound link per node within
+  seconds: iperf3 serves one test at a time, and two clients hit each node's
+  single 5201 server. The orchestrator now assigns each target's inbound
+  clients distinct ports and nodes spawn extra ephemeral `iperf3 -s -p 520N`
+  listeners for the run (`StressOpts.TargetPorts`/`ListenPorts`, additive).
+  Multi-port mode engages only when every participant runs the same release.
+- **[Spec/behavioral]** live check on the Mac (needs ≥3 nodes, all 1.3.1):
+  - [ ] Start a full-mesh stress including the Mac: all 2·N(N−1)/2 directed
+    links load (none "aborted" at start), and `ps aux | grep iperf3` on the
+    Mac shows the extra `-p 5202` listener during the run, gone after it.
+  - [ ] macOS firewall: the extra listener is the same brew iperf3 binary
+    already allowed — confirm no new prompt mid-run (a prompt would pause
+    loading; if it appears, allow once and note it).
+
+Verify: `./scripts/test-mac.sh` green (new: meshAssignments/portsSupported/
+sanitize pair tests, listener spawn-stop lifecycle test).
+
 ### 2026-07-08 · Windows `9dc1919` (tests visual overhaul + directional matrix + stress history — v1.3.0)
 
 **Range:** `cb68bfb..9dc1919` (8 feature commits, plan `docs/superpowers/plans/2026-07-08-tests-visual-overhaul.md`, rationale `docs/superpowers/specs/2026-07-08-tests-ux-research.md`) · **Net effect for Mac: rebuild-only + live checks.** No new platform seams.
