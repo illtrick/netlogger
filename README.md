@@ -57,11 +57,16 @@ NetLogger was built to catch a real ghost: a PC whose wired connection silently 
 
 **[⬇ Download the latest release](https://github.com/illtrick/netlogger/releases/latest)** — grab `NetLogger.exe` (Windows) or `NetLogger-macos.zip` (macOS). No installer, nothing else to set up.
 
-> The binaries aren't code-signed (yet), so your OS will hesitate the first time:
-> **Windows** — SmartScreen may show "Windows protected your PC": click *More info → Run anyway*.
-> **macOS** — right-click the app → *Open*, once. Then allow local-network access when asked.
-
 Or build it yourself in a few minutes — see [Building from source](#building-from-source).
+
+### ⚠️ The binaries are not code-signed
+
+Your OS **will warn you** the first time you run NetLogger. That's the absence of a paid certificate, not a malware verdict — code-signing costs real money per year, and this is a young open-source project. (If NetLogger picks up steam, signing is the first thing on the list.)
+
+- **Windows** — SmartScreen shows "Windows protected your PC": click *More info → Run anyway*.
+- **macOS** — right-click the app → *Open*, once.
+
+Don't want to trust a stranger's binary? Fair. Verify the SHA-256 checksums on the [release page](https://github.com/illtrick/netlogger/releases/latest), read the source — it's all here — or build it yourself.
 
 ## Quick start
 
@@ -110,6 +115,9 @@ Then `open bin/NetLogger.app`. Notes: never needs admin; speed/stress tests use 
 ---
 
 ## FAQ
+
+**Windows/macOS warned me the app is untrusted. Is it safe?**
+The warning means the binary is unsigned (see [the note above](#%EF%B8%8F-the-binaries-are-not-code-signed)), not that anything was detected. Verify the release checksums or build from source if you'd rather not take a stranger's word for it. Code-signing is planned if the project grows.
 
 **Why does it need administrator on Windows?**
 Pings need raw network access, and the app adds its own firewall rules so machines can reach each other. macOS needs neither.
