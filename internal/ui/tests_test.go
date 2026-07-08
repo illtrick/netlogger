@@ -1,6 +1,33 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestGradeSubLineOmitsPhantomZeros(t *testing.T) {
+	if got := gradeSubLine(1415, 0, 0); got != "RPM 1415" {
+		t.Fatalf("unmeasured jitter/loss must be omitted, got %q", got)
+	}
+	if got := gradeSubLine(1415, 2, 0); !strings.Contains(got, "jitter 2 ms") {
+		t.Fatalf("jitter should show when > 0, got %q", got)
+	}
+	if got := gradeSubLine(1415, 0, 0.5); !strings.Contains(got, "loss 0.5%") {
+		t.Fatalf("loss should show when > 0, got %q", got)
+	}
+}
+
+func TestInternetProvenanceNamesNodeAndServer(t *testing.T) {
+	at := time.Date(2026, 1, 2, 15, 4, 0, 0, time.UTC)
+	got := internetProvenance(at, "ryzen", "Los Angeles (Clouvider)")
+	if !strings.Contains(got, "on ryzen") || !strings.Contains(got, "Los Angeles (Clouvider)") {
+		t.Fatalf("provenance missing node/server: %q", got)
+	}
+	if internetProvenance(time.Time{}, "ryzen", "x") != "" {
+		t.Fatalf("zero time should yield no provenance")
+	}
+}
 
 func TestNextTab(t *testing.T) {
 	if nextTab(navDashboard, navTests) != navTests {

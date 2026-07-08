@@ -147,7 +147,7 @@ func layoutInternet(gtx layout.Context, th *material.Theme, st *testsState, snap
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			default:
-				return internetResults(gtx, th, v)
+				return internetResults(gtx, th, v, snap.SelfPeer.Host)
 			}
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -211,17 +211,13 @@ func endpointOptions(gtx layout.Context, th *material.Theme, st *testsState) lay
 	})
 }
 
-// nodePicker lets the operator choose which device runs the internet test.
+// nodePicker lets the operator choose which device runs the internet test. The
+// chips reuse the segmented-control look so the selected node is unambiguous
+// (filled active segment), matching the endpoint dropdown's selected style.
 func nodePicker(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
 	nodes := append([]appcore.PeerInfo{snap.SelfPeer}, snap.Peers...)
-	ch := make([]layout.FlexChild, 0, len(nodes)+1)
-	ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		lbl := material.Caption(th, "from")
-		lbl.Color = colTextSec
-		return lbl.Layout(gtx)
-	}), layout.Rigid(gapX(8)))
+	segs := make([]segSpec, 0, len(nodes))
 	for i, n := range nodes {
-		n := n
 		selected := st.netNodeID == n.ID || (st.netNodeID == "" && i == 0)
 		c := clickFor(&st.nodeClicks, n.ID)
 		if c.Clicked(gtx) {
@@ -231,46 +227,113 @@ func nodePicker(gtx layout.Context, th *material.Theme, st *testsState, snap app
 		if i == 0 {
 			label += " · this device"
 		}
-		ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return navPill(gtx, th, c, label, selected)
-			})
-		}))
+		segs = append(segs, segSpec{click: c, label: label, active: selected})
 	}
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "from")
+			lbl.Color = colTextSec
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(gapX(8)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return segControl(gtx, th, segs...)
+		}),
+	)
 }
 
-// internetResults lays out the metric cards, grade badge, phase strip, and the
-// measurement provenance (when + where it ran).
-func internetResults(gtx layout.Context, th *material.Theme, v internetView) layout.Dimensions {
+// gradeSubLine renders the grade context without claiming unmeasured zeros.
+func gradeSubLine(rpm int, jitterMs, lossPct float64) string {
+	s := fmt.Sprintf("RPM %d", rpm)
+	if jitterMs > 0 {
+		s += fmt.Sprintf(" · jitter %.0f ms", jitterMs)
+	}
+	if lossPct > 0 {
+		s += fmt.Sprintf(" · loss %.1f%%", lossPct)
+	}
+	return s
+}
+
+// internetProvenance names when + where a result was measured:
+// "measured Jan 2 15:04 · on ryzen · Los Angeles (Clouvider)". host is the node
+// the test ran on (remote host when set, else this device); server is the
+// resolved endpoint.
+func internetProvenance(at time.Time, host, server string) string {
+	if at.IsZero() {
+		return ""
+	}
+	s := "measured " + at.Format("Jan 2 15:04")
+	if host != "" {
+		s += " · on " + host
+	}
+	if server != "" {
+		s += " · " + server
+	}
+	return s
+}
+
+// internetResults lays out the throughput cards, one merged latency strip (idle →
+// loaded → +Δ + grade + scale legend), and the measurement provenance. selfHost
+// names this device for local runs.
+func internetResults(gtx layout.Context, th *material.Theme, v internetView, selfHost string) layout.Dimensions {
 	res := v.res
+	added := res.LoadedMs - res.IdleMs
+	if added < 0 {
+		added = 0
+	}
 	loadedCol := colTextPri
-	if res.LoadedMs-res.IdleMs >= 60 {
+	if added >= 60 {
 		loadedCol = colWatch
 	}
-	provenance := ""
-	if !v.at.IsZero() {
-		provenance = "measured " + v.at.Format("Jan 2 15:04")
-		if v.host != "" {
-			provenance += " · on " + v.host
-		}
+	host := v.host
+	if host == "" {
+		host = selfHost
+	}
+	provenance := internetProvenance(v.at, host, res.Endpoint)
+	stat := func(label, value string, col color.NRGBA) layout.FlexChild {
+		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Right: unit.Dp(22)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(th, unit.Sp(11), label)
+						l.Color = colTextMut
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(gap(2)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(th, unit.Sp(20), value)
+						l.Color = col
+						l.Font.Weight = 500
+						return l.Layout(gtx)
+					}),
+				)
+			})
+		})
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				metricCardChild(th, "↓ Download", fmt.Sprintf("%.0f", res.DownMbit), "Mbit/s", colAccent),
+				metricCardChild(th, "↓ Download", fmt.Sprintf("%.0f", res.DownMbit), "Mb/s", colAccent),
 				layout.Rigid(gapX(10)),
-				metricCardChild(th, "↑ Upload", fmt.Sprintf("%.0f", res.UpMbit), "Mbit/s", upGreen),
-				layout.Rigid(gapX(10)),
-				metricCardChild(th, "Idle latency", fmt.Sprintf("%.0f", res.IdleMs), "ms", colTextPri),
-				layout.Rigid(gapX(10)),
-				metricCardChild(th, "Loaded latency", fmt.Sprintf("%.0f", res.LoadedMs), "ms", loadedCol),
+				metricCardChild(th, "↑ Upload", fmt.Sprintf("%.0f", res.UpMbit), "Mb/s", upGreen),
+			)
+		}),
+		layout.Rigid(gap(14)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				stat("idle", fmt.Sprintf("%.0f ms", res.IdleMs), colTextPri),
+				stat("loaded", fmt.Sprintf("%.0f ms", res.LoadedMs), loadedCol),
+				stat("added", fmt.Sprintf("+%.0f ms", added), loadedCol),
 			)
 		}),
 		layout.Rigid(gap(12)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return gradeBadge(gtx, th, res) }),
-		layout.Rigid(gap(14)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return phaseStrip(gtx, th, phaseAllDone) }),
+		layout.Rigid(gap(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "A <30 · B <60 · C <100 · D <200 ms added")
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
+		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if provenance == "" {
 				return layout.Dimensions{}
@@ -358,7 +421,7 @@ func gradeBadge(gtx layout.Context, th *material.Theme, res appcore.InternetResu
 							}),
 							layout.Rigid(gap(2)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								l := material.Caption(th, fmt.Sprintf("RPM %d · jitter %.0f ms · loss %.1f%%", res.RPM, res.JitterMs, res.LossPct))
+								l := material.Caption(th, gradeSubLine(res.RPM, res.JitterMs, res.LossPct))
 								l.Color = colTextSec
 								return l.Layout(gtx)
 							}),
@@ -409,9 +472,9 @@ func internetLive(gtx layout.Context, th *material.Theme, v internetView) layout
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				metricCardChild(th, "↓ Download", downVal, "Mbit/s", downCol),
+				metricCardChild(th, "↓ Download", downVal, "Mb/s", downCol),
 				layout.Rigid(gapX(10)),
-				metricCardChild(th, "↑ Upload", upVal, "Mbit/s", upCol),
+				metricCardChild(th, "↑ Upload", upVal, "Mb/s", upCol),
 				layout.Rigid(gapX(10)),
 				metricCardChild(th, "Idle latency", idleVal, "ms", idleCol),
 				layout.Rigid(gapX(10)),
