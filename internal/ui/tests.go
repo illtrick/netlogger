@@ -125,6 +125,7 @@ type testsState struct {
 	selPairKey string                       // matrix pair opened for detail ("" = none)
 	netHist    []store.TestResult           // recent internet runs (newest first)
 	sweepHist  []store.TestResult           // recent sweep runs (newest first)
+	stressHist []store.TestResult           // recent stress runs (newest first)
 	histAt     time.Time                    // last history refresh
 }
 
@@ -529,6 +530,18 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 	on, nodes, msg := st.stressSnapshot()
 	n := len(snap.Peers) + 1
 	pairs := n * (n - 1) / 2
+	active := on || len(nodes) > 0 // a run is live or just finished polling
+	// Run-start marker position within the 60-sample window: at the right edge
+	// when the run just began, scrolling left over the first minute, off once
+	// the window no longer contains the start.
+	var elapsed int64
+	if len(nodes) > 0 && nodes[0].StartedUnixUS > 0 {
+		elapsed = (time.Now().UnixMicro() - nodes[0].StartedUnixUS) / 1_000_000
+	}
+	markFrac := -1.0
+	if elapsed >= 0 && elapsed <= 60 {
+		markFrac = 1 - float64(elapsed)/60
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// running banner, or the Start control when idle.
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -562,29 +575,49 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		}),
 		layout.Rigid(gap(12)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return configChips(gtx, th,
-				"Topology · full mesh",
-				fmt.Sprintf("Per-link cap · %s", fmtRate(float64(st.cap()))),
-				"Protocol · TCP",
-				"Probes · continuous",
-			)
-		}),
-		layout.Rigid(gap(14)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return stressRateChart(gtx, th, nodes, snap, st.cap(), -1)
-		}),
-		layout.Rigid(gap(14)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return stressLatencyChart(gtx, th, snap, -1)
-		}),
-		layout.Rigid(gap(14)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !on && len(nodes) == 0 {
-				lbl := material.Caption(th, "no active run")
-				lbl.Color = colTextMut
-				return lbl.Layout(gtx)
+			// The cap chip is redundant with the stepper beside Start, so it only
+			// appears while running (when the stepper is hidden).
+			chips := []string{"Topology · full mesh"}
+			if on {
+				chips = append(chips, fmt.Sprintf("Cap · %s", fmtRate(float64(st.cap()))))
 			}
-			return layoutStressList(gtx, th, nodes, snap, st.cap())
+			chips = append(chips, "Protocol · TCP", "Probes · continuous")
+			return configChips(gtx, th, chips...)
+		}),
+		layout.Rigid(gap(14)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if active {
+				// RRUL-aligned panel: throughput over latency on one shared time
+				// axis, one legend for both, then the per-link list.
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return stressRateChart(gtx, th, nodes, snap, st.cap(), markFrac)
+					}),
+					layout.Rigid(gap(10)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return stressLatencyChart(gtx, th, snap, markFrac)
+					}),
+					layout.Rigid(gap(6)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return stressTimeCaption(gtx, th, elapsed)
+					}),
+					layout.Rigid(gap(10)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return legendRow(gtx, th, stressLinkNames(nodes, snap))
+					}),
+					layout.Rigid(gap(14)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutStressList(gtx, th, nodes, snap, st.cap())
+					}),
+				)
+			}
+			// Idle: the recent-runs history, or a quiet caption when there is none.
+			if len(st.stressHist) > 0 {
+				return historyList(gtx, th, st.stressHist)
+			}
+			lbl := material.Caption(th, "no active run")
+			lbl.Color = colTextMut
+			return lbl.Layout(gtx)
 		}),
 	)
 }
@@ -595,12 +628,10 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 // same second is the load-triggered fault caught in the act.
 func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot, cap int, markFrac float64) layout.Dimensions {
 	var series [][]float64
-	var names []string
 	for _, n := range nodes {
 		for _, l := range n.Links {
 			if len(l.RateHist) >= 2 {
 				series = append(series, l.RateHist)
-				names = append(names, "→ "+snap.DeviceName(l.Target))
 			}
 		}
 	}
@@ -618,10 +649,42 @@ func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.Str
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return scaledChart(gtx, th, series, seriesColors, 56, 0, mx, fmtRate(mx), markFrac)
 		}),
-		layout.Rigid(gap(6)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return legendRow(gtx, th, names)
-		}),
+	)
+}
+
+// stressLinkNames lists the loaded links' target device names, in the same order
+// stressRateChart draws their series — the shared legend for the RRUL panel.
+func stressLinkNames(nodes []appcore.StressStatus, snap appcore.Snapshot) []string {
+	var names []string
+	for _, n := range nodes {
+		for _, l := range n.Links {
+			if len(l.RateHist) >= 2 {
+				names = append(names, "→ "+snap.DeviceName(l.Target))
+			}
+		}
+	}
+	return names
+}
+
+// stressTimeCaption is the shared RRUL time axis under the stacked charts:
+// run start (or "last 60 s" once the run window has scrolled) on the left, "now"
+// on the right.
+func stressTimeCaption(gtx layout.Context, th *material.Theme, elapsed int64) layout.Dimensions {
+	left := "last 60 s"
+	if elapsed < 60 {
+		left = "run start"
+	}
+	cap := func(txt string) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			l := material.Label(th, unit.Sp(10), txt)
+			l.Color = colTextMut
+			return l.Layout(gtx)
+		}
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(cap(left)),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
+		layout.Rigid(cap("now")),
 	)
 }
 
