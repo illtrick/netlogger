@@ -95,6 +95,15 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `4ca38b3` (Windows firewall rule clobber — v1.3.2)
+
+**Range:** `23bd348..4ca38b3` · **Net effect for Mac: version bump only.** The
+fix is inside `//go:build windows` (per-port firewall rule names + a program
+rule for the extracted binary); darwin's `ensureFirewallPort`/`ensureFirewallProgram`
+are no-ops (ALF's one-time per-binary Allow already covers every port).
+Rebuild so the mesh agrees on 1.3.2; the v1.3.1 entry's live stress check
+applies unchanged.
+
 ### 2026-07-08 · Windows `edbc99f` (stress per-link server ports — v1.3.1)
 
 **Range:** `44b3f34..edbc99f` · **Net effect for Mac: rebuild-only + one live check.** No new seams.
