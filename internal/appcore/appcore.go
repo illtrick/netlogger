@@ -248,10 +248,11 @@ type PeerInfo struct {
 	ID           string
 	Host         string
 	Addr         string
-	Version      string
-	Platform     string // peer's GOOS/GOARCH (from its pulled link report)
-	Build        string // peer's binary build id (from its pulled link report), for skew checks
-	LastSeenUnix int64
+	Version       string
+	Platform      string // peer's GOOS/GOARCH (from its pulled link report)
+	Build         string // peer's binary build id (from its pulled link report), for skew checks
+	LinkSpeedMbit int    // peer's fastest Up NIC (from its pulled link report); 0 → unknown
+	LastSeenUnix  int64
 	RTTms        float64
 	LossPct      float64
 	JitterMs     float64
@@ -685,10 +686,24 @@ func (a *App) linkReport() LinkReport {
 			links = append(links, LinkStat{PeerID: p.ID, RTTms: rtt, JitterMs: jitter, LossPct: loss, Drops: eps})
 		}
 	}
+	// This node's link speed = its fastest Up NIC, so a %-of-link grade reflects
+	// the best physical path (peers beacon this; old peers omit it → 0).
+	a.nicMu.Lock()
+	nics := a.nics
+	a.nicMu.Unlock()
+	linkSpeed := 0
+	for _, n := range nics {
+		if strings.EqualFold(n.Status, "Up") {
+			if s := parseLinkSpeedMbit(n.LinkSpeed); s > linkSpeed {
+				linkSpeed = s
+			}
+		}
+	}
 	return LinkReport{
 		NodeID: id, Host: host,
 		Version: version.Version, Platform: version.Platform(), Build: version.Build,
-		Links: links,
+		LinkSpeedMbit: linkSpeed,
+		Links:         links,
 	}
 }
 
@@ -871,12 +886,15 @@ func (a *App) Snapshot() Snapshot {
 		peerEvs = append(peerEvs, v)
 	}
 	a.reportMu.Unlock()
-	snap.Matrix = assembleMatrix(a.linkReport(), reps)
+	selfRep := a.linkReport()
+	snap.Matrix = assembleMatrix(selfRep, reps)
+	snap.SelfPeer.LinkSpeedMbit = selfRep.LinkSpeedMbit
 	snap.BuildWarning = meshWarning(buildID{Version: version.Version, Build: version.Build, Platform: version.Platform()}, reps)
 	for i := range snap.Peers {
 		if r, ok := reps[snap.Peers[i].ID]; ok {
 			snap.Peers[i].Build = r.Build
 			snap.Peers[i].Platform = r.Platform
+			snap.Peers[i].LinkSpeedMbit = r.LinkSpeedMbit
 			if r.Version != "" {
 				snap.Peers[i].Version = r.Version
 			}

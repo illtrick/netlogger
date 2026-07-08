@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -23,12 +24,33 @@ type LinkStat struct {
 // Platform and Build exist so an expected cross-OS binary difference is not
 // mistaken for a real mismatch. Version/Platform are absent from pre-1.1 peers.
 type LinkReport struct {
-	NodeID   string     `json:"node_id"`
-	Host     string     `json:"host"`
-	Version  string     `json:"version,omitempty"`  // semver release, the mesh compatibility contract
-	Platform string     `json:"platform,omitempty"` // GOOS/GOARCH, e.g. "windows/amd64"
-	Build    string     `json:"build"`              // exact git commit; same-OS rollout skew only
-	Links    []LinkStat `json:"links"`
+	NodeID        string     `json:"node_id"`
+	Host          string     `json:"host"`
+	Version       string     `json:"version,omitempty"`         // semver release, the mesh compatibility contract
+	Platform      string     `json:"platform,omitempty"`        // GOOS/GOARCH, e.g. "windows/amd64"
+	Build         string     `json:"build"`                     // exact git commit; same-OS rollout skew only
+	LinkSpeedMbit int        `json:"link_speed_mbit,omitempty"` // this node's fastest Up NIC; 0 → old peer, grade absolute
+	Links         []LinkStat `json:"links"`
+}
+
+// parseLinkSpeedMbit converts nicstat's LinkSpeed vocabulary ("2.5 Gbps",
+// "1 Gbps", "100 Mbps") to Mbit/s; 0 when unknown.
+func parseLinkSpeedMbit(s string) int {
+	fields := strings.Fields(s)
+	if len(fields) < 2 {
+		return 0
+	}
+	val, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	switch strings.ToLower(fields[1]) {
+	case "gbps":
+		return int(val * 1000)
+	case "mbps":
+		return int(val)
+	}
+	return 0
 }
 
 // buildID is a node's self-identity for the mesh compatibility check.

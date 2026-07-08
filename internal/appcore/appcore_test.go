@@ -164,6 +164,23 @@ func TestSnapshotExposesDiscoveredPeers(t *testing.T) {
 	}
 }
 
+func TestSnapshotCopiesPeerLinkSpeed(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	a.CollectNICs = func() []nicstat.NIC { return nil }
+	a.Discovery = fakeLister{peers: []discovery.Peer{{ID: "p1", Host: "h1", Addr: "10.0.0.1:8088"}}}
+	a.reportMu.Lock()
+	a.peerReports["p1"] = LinkReport{NodeID: "p1", Host: "h1", LinkSpeedMbit: 1000, Platform: "linux/amd64", Build: "z"}
+	a.reportMu.Unlock()
+	snap := a.Snapshot()
+	if len(snap.Peers) != 1 || snap.Peers[0].LinkSpeedMbit != 1000 {
+		t.Fatalf("peer link speed not copied: %+v", snap.Peers)
+	}
+	if snap.Peers[0].Platform != "linux/amd64" { // the sibling copy must not regress
+		t.Fatalf("platform copy regressed: %+v", snap.Peers[0])
+	}
+}
+
 func TestSnapshotShowsPerPeerRTTAndLoss(t *testing.T) {
 	dir := t.TempDir()
 	a := New(dir)

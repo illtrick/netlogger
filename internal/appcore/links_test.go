@@ -108,6 +108,33 @@ func TestLinksHandlerServesReport(t *testing.T) {
 	}
 }
 
+func TestParseLinkSpeedMbit(t *testing.T) {
+	cases := map[string]int{
+		"2.5 Gbps": 2500, "1 Gbps": 1000, "100 Mbps": 100,
+		"10 Gbps": 10000, "": 0, "autoselect": 0,
+	}
+	for in, want := range cases {
+		if got := parseLinkSpeedMbit(in); got != want {
+			t.Errorf("parseLinkSpeedMbit(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestLinkReportCarriesLinkSpeed(t *testing.T) {
+	rep := LinkReport{NodeID: "a", Host: "hostA", LinkSpeedMbit: 2500, Links: []LinkStat{{PeerID: "b"}}}
+	mux := http.NewServeMux()
+	mux.Handle("/api/links", linksHandler(func() LinkReport { return rep }))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	got, err := fetchLinks(http.DefaultClient, srv.URL)
+	if err != nil {
+		t.Fatalf("fetchLinks: %v", err)
+	}
+	if got.LinkSpeedMbit != 2500 {
+		t.Fatalf("link speed lost in round-trip: %d", got.LinkSpeedMbit)
+	}
+}
+
 func TestFetchLinksErrorsOnBadStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusInternalServerError)

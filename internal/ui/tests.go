@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -265,7 +266,7 @@ func layoutTests(gtx layout.Context, th *material.Theme, st *testsState, snap ap
 			case 2:
 				return layoutInternet(gtx, th, st, snap)
 			default:
-				return layoutSpeed(gtx, th, st)
+				return layoutSpeed(gtx, th, st, snap)
 			}
 		}),
 	)
@@ -358,8 +359,14 @@ func sweepStatusLine(p appcore.SweepProgress) string {
 // layoutSpeed renders the Speed (LAN) sub-view: a header (title · subtitle · the
 // Run-all primary action) above the test matrix. While a sweep runs the matrix
 // fills in live: completed cells land as they finish, active pairs pulse.
-func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.Dimensions {
+func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState, snap appcore.Snapshot) layout.Dimensions {
 	matrix, have, running, status, sweep := st.snapshot()
+	// Per-node link speed (Mbit/s) for %-of-link grading, keyed by node id.
+	// Old peers report 0 → linkPct falls back to absolute thresholds.
+	linkSpeed := map[string]int{snap.SelfPeer.ID: snap.SelfPeer.LinkSpeedMbit}
+	for _, p := range snap.Peers {
+		linkSpeed[p.ID] = p.LinkSpeedMbit
+	}
 	live := running && sweep.Total > 0
 	if live {
 		matrix = appcore.SpeedMatrix{Nodes: sweep.Nodes, Cells: sweep.Cells}
@@ -427,10 +434,10 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 				lbl.Color = colTextMut
 				return lbl.Layout(gtx)
 			}
-			return layoutSpeedMatrix(gtx, th, st, matrix, active, sweep.Live)
+			return layoutSpeedMatrix(gtx, th, st, matrix, active, sweep.Live, linkSpeed)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return pairDetail(gtx, th, st, matrix)
+			return pairDetail(gtx, th, st, matrix, linkSpeed)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return historyList(gtx, th, st.sweepHist)
@@ -438,13 +445,26 @@ func layoutSpeed(gtx layout.Context, th *material.Theme, st *testsState) layout.
 	)
 }
 
-// pairDetail shows the clicked matrix cell's full result: both directions plus
-// the TCP/UDP health numbers hidden inside the cell.
-func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix) layout.Dimensions {
+// linkSpeedLabel renders a link speed in Mbit/s compactly ("1 Gb", "2.5 Gb",
+// "100 Mb") for the "% of <n> link" provenance. Pure.
+func linkSpeedLabel(mbit int) string {
+	if mbit >= 1000 {
+		g := float64(mbit) / 1000
+		return strconv.FormatFloat(g, 'f', -1, 64) + " Gb"
+	}
+	return fmt.Sprintf("%d Mb", mbit)
+}
+
+// pairDetail shows the clicked flow's full result: the row→column rate, its
+// %-of-link grade, retransmits, and the reverse direction; the chart plots the
+// measured per-second series for this direction plus (when present) the mirror
+// run's confirming series.
+func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, linkSpeed map[string]int) layout.Dimensions {
 	if st.selPairKey == "" {
 		return layout.Dimensions{}
 	}
-	res, ok := m.Cells[st.selPairKey]
+	flows := flowCells(m.Cells)
+	fc, ok := flows[st.selPairKey]
 	if !ok {
 		return layout.Dimensions{}
 	}
@@ -452,38 +472,46 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 	for _, n := range m.Nodes {
 		hostByID[n.ID] = n.Host
 	}
-	from, to := st.selPairKey, ""
-	for i := 0; i < len(st.selPairKey); i++ {
-		if st.selPairKey[i] == 0 {
-			from, to = st.selPairKey[:i], st.selPairKey[i+1:]
-			break
+	from, to := splitFlowKey(st.selPairKey)
+	var txt string
+	if fc.Mbit > 0 {
+		txt = fmt.Sprintf("%s → %s   %s", hostByID[from], hostByID[to], fmtRate(fc.Mbit))
+		lo := linkSpeed[from]
+		if linkSpeed[to] < lo {
+			lo = linkSpeed[to]
 		}
+		if pct := linkPct(fc.Mbit, linkSpeed[from], linkSpeed[to]); pct >= 0 {
+			txt += fmt.Sprintf(" · %.0f%% of %s link", pct*100, linkSpeedLabel(lo))
+		}
+		txt += fmt.Sprintf(" · retransmits %d", fc.Retr)
+		if fc.RTTms > 0 {
+			txt += fmt.Sprintf(" · rtt %.1f ms", fc.RTTms)
+		}
+		if fc.Confirm > 0 {
+			txt += fmt.Sprintf(" · reverse direction %s", fmtRate(fc.Confirm))
+		}
+	} else {
+		txt = fmt.Sprintf("%s → %s   error: %s", hostByID[from], hostByID[to], fc.Err)
 	}
-	txt := fmt.Sprintf("%s → %s   ↓ %s  ↑ %s   retransmits %d",
-		hostByID[from], hostByID[to], fmtRate(res.DownMbit), fmtRate(res.UpMbit), res.Retransmits)
-	if res.RTTms > 0 {
-		txt += fmt.Sprintf("   rtt %.1f ms", res.RTTms)
+	// Per-second series: this direction = run[from,to] up leg (from→to); reverse
+	// confirm = run[to,from] down leg. Fall back to the mirror down leg when no
+	// up leg ran (one-way peer). Both on one shared zero-based scale.
+	runFwd := m.Cells[speedKeyUI(from, to)]
+	runRev := m.Cells[speedKeyUI(to, from)]
+	primaryIvs, confirmIvs := runFwd.UpIvs, runRev.DownIvs
+	if len(primaryIvs) < 2 {
+		primaryIvs, confirmIvs = runRev.DownIvs, nil
 	}
-	if res.JitterMs > 0 || res.LossPct > 0 {
-		txt += fmt.Sprintf("   jitter %.1f ms   loss %.1f%%", res.JitterMs, res.LossPct)
-	}
-	if res.Err != "" {
-		txt = fmt.Sprintf("%s → %s   error: %s", hostByID[from], hostByID[to], res.Err)
-	}
-	// Per-second series from the run's 1s intervals, on one shared scale.
 	var series [][]float64
 	var cols []color.NRGBA
-	var chartLegend string
-	if len(res.DownIvs) > 1 {
-		series, cols = append(series, res.DownIvs), append(cols, seriesColors[0])
-		chartLegend = "↓ down"
+	var names []string
+	if len(primaryIvs) > 1 {
+		series, cols = append(series, primaryIvs), append(cols, seriesColors[0])
+		names = append(names, "this direction")
 	}
-	if len(res.UpIvs) > 1 {
-		series, cols = append(series, res.UpIvs), append(cols, seriesColors[1])
-		if chartLegend != "" {
-			chartLegend += " · "
-		}
-		chartLegend += "↑ up"
+	if len(confirmIvs) > 1 {
+		series, cols = append(series, confirmIvs), append(cols, seriesColors[1])
+		names = append(names, "reverse")
 	}
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return roundedBG(gtx, colCardAlt, unit.Dp(8), unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
@@ -492,7 +520,7 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					l := material.Body2(th, txt)
 					l.Color = colTextPri
-					if res.Err != "" {
+					if fc.Mbit == 0 {
 						l.Color = colBad
 					}
 					return l.Layout(gtx)
@@ -507,11 +535,9 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 								_, mx := chartBounds(series, 0)
 								return scaledChart(gtx, th, series, cols, 56, 0, mx, fmtRate(mx), -1)
 							}),
-							layout.Rigid(gap(4)),
+							layout.Rigid(gap(6)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								l := material.Caption(th, chartLegend+" · per second")
-								l.Color = colTextMut
-								return l.Layout(gtx)
+								return legendRow(gtx, th, names)
 							}),
 						)
 					})
@@ -1001,10 +1027,20 @@ func speedKeyUI(from, to string) string { return from + "\x00" + to }
 // `active` are currently under test: they show the per-second rate streaming
 // in from the running iperf3 (live), or "testing" before the first interval.
 // Clicking a completed cell toggles the pair-detail panel below the grid.
-func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, active map[string]bool, live map[string]appcore.LivePoint) layout.Dimensions {
+func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m appcore.SpeedMatrix, active map[string]bool, live map[string]appcore.LivePoint, linkSpeed map[string]int) layout.Dimensions {
 	if len(m.Nodes) == 0 {
 		return material.Body2(th, "no live devices").Layout(gtx)
 	}
+	flows := flowCells(m.Cells)
+	// Show the %-of-link legend only when at least two nodes report a link speed
+	// (so at least one pair can be graded); otherwise the absolute legend.
+	known := 0
+	for _, n := range m.Nodes {
+		if linkSpeed[n.ID] > 0 {
+			known++
+		}
+	}
+	linkGraded := known >= 2
 	cellH := gtx.Dp(unit.Dp(46))
 	labelW := gtx.Dp(unit.Dp(104))
 	gut := unit.Dp(5)
@@ -1087,11 +1123,11 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 
 	rows := make([]layout.FlexChild, 0, len(m.Nodes)+1)
 
-	// header row: fixed corner cell + one centered header per node.
+	// header row: fixed corner cell (axis key) + one centered bare header per node.
 	header := make([]layout.FlexChild, 0, len(m.Nodes)+1)
-	header = append(header, labelCell(""))
+	header = append(header, labelCell("from ↓ · to →"))
 	for _, n := range m.Nodes {
-		header = append(header, headerCol("↓ "+n.Host))
+		header = append(header, headerCol(n.Host))
 	}
 	rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, header...)
@@ -1115,8 +1151,8 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 					}
 					cells = append(cells, dataCell(colTestingBG, colAccent, txt, sub))
 				default:
-					res, ok := m.Cells[key]
-					if !ok {
+					fc, ok := flows[key]
+					if !ok || (fc.Mbit == 0 && fc.Err == "") {
 						cells = append(cells, dataCell(colCardAlt, colTextMut, "·", ""))
 						break
 					}
@@ -1129,9 +1165,22 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 						}
 					}
 					bg, fg, txt, sub := colCardAlt, colTextMut, "·", ""
-					if res.Err == "" {
-						bg, fg = matrixCellColor(res.DownMbit), colBg
-						txt, sub = matrixCellText(res.DownMbit), matrixCellSub(res)
+					if fc.Mbit > 0 {
+						pct := linkPct(fc.Mbit, linkSpeed[from.ID], linkSpeed[to.ID])
+						if pct >= 0 {
+							bg = pctBucket(pct)
+						} else {
+							bg = matrixCellColor(fc.Mbit)
+						}
+						fg = colBg
+						txt = fmtRate(fc.Mbit)
+						// Mark this cell when it is the slower half of an asymmetric
+						// mirror pair (row→col meaningfully slower than col→row).
+						rev := flows[speedKeyUI(to.ID, from.ID)].Mbit
+						if asymmetric(fc.Mbit, rev) && fc.Mbit < rev {
+							txt += " ▲"
+						}
+						sub = flowCellSub(fc, pct)
 					}
 					cells = append(cells, clickableCell(click, bg, fg, txt, sub))
 				}
@@ -1148,12 +1197,12 @@ func layoutSpeedMatrix(gtx layout.Context, th *material.Theme, st *testsState, m
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, "row = client (sender) → col = server")
+					lbl := material.Caption(th, "cell = data flowing from row to column · ▲ slower than reverse")
 					lbl.Color = colTextMut
 					return lbl.Layout(gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return matrixLegend(gtx, th) }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return matrixLegend(gtx, th, linkGraded) }),
 			)
 		}),
 	)
@@ -1173,24 +1222,24 @@ func phaseArrow(phase string) string {
 	}
 }
 
-// matrixCellSub is the small second line in a matrix cell: loss, "slow", or RTT.
-func matrixCellSub(res appcore.SpeedResult) string {
+// flowCellSub is the small second line under a flow cell's rate: %-of-link when
+// graded, else a slow/RTT hint.
+func flowCellSub(fc flowCell, pct float64) string {
 	switch {
-	case res.LossPct > 0:
-		return fmt.Sprintf("%.1f%% loss", res.LossPct)
-	case res.DownMbit > 0 && res.DownMbit < 400:
+	case pct >= 0:
+		return fmt.Sprintf("%.0f%% of link", pct*100)
+	case fc.Mbit > 0 && fc.Mbit < 400:
 		return "slow"
-	case res.RTTms > 0: // mean TCP RTT, when the platform reports it
-		return fmt.Sprintf("%.1f ms", res.RTTms)
-	case res.UpMbit > 0: // otherwise show the upload leg (down/up asymmetry)
-		return "↑ " + fmtRate(res.UpMbit)
+	case fc.RTTms > 0:
+		return fmt.Sprintf("%.1f ms", fc.RTTms)
 	default:
 		return ""
 	}
 }
 
-// matrixLegend is the severity key shown under the matrix.
-func matrixLegend(gtx layout.Context, th *material.Theme) layout.Dimensions {
+// matrixLegend is the severity key shown under the matrix: a %-of-link scale
+// when link speeds are known, else the absolute Mb/s scale.
+func matrixLegend(gtx layout.Context, th *material.Theme, linkGraded bool) layout.Dimensions {
 	item := func(c color.NRGBA, txt string) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1210,6 +1259,10 @@ func matrixLegend(gtx layout.Context, th *material.Theme) layout.Dimensions {
 				)
 			})
 		})
+	}
+	if linkGraded {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			item(colGood, "≥85% of link"), item(colWatch, "50–85%"), item(colBad, "<50%"))
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		item(colGood, "≥900 Mb/s"), item(colWatch, "400–900"), item(colBad, "<400"))
