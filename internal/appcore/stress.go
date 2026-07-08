@@ -57,8 +57,12 @@ type LinkLoad struct {
 	Aborted     bool      `json:"aborted"`
 }
 
-// StressStatus is a node's current stress state.
+// StressStatus is a node's current stress state. Host names the reporting
+// node — its links' SOURCE — so the UI can label each directed link
+// "source → target" (every device is a target twice in a 3-node mesh;
+// destination-only rows read as duplicates). Empty on pre-1.3.3 peers.
 type StressStatus struct {
+	Host          string     `json:"host,omitempty"`
 	RunID         string     `json:"run_id"`
 	Running       bool       `json:"running"`
 	StartedUnixUS int64      `json:"started_unix_us"`
@@ -384,6 +388,9 @@ func (a *App) stopStressLocal(runID string) {
 
 // stressStatusLocal returns a snapshot of the current run (empty if none).
 func (a *App) stressStatusLocal() StressStatus {
+	a.mu.Lock()
+	host := a.host
+	a.mu.Unlock()
 	a.stressMu.Lock()
 	run := a.stress
 	a.stressMu.Unlock()
@@ -393,6 +400,7 @@ func (a *App) stressStatusLocal() StressStatus {
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	st := StressStatus{
+		Host:  host,
 		RunID: run.runID, Running: run.running,
 		StartedUnixUS: run.starts, EndsUnixUS: run.ends,
 	}

@@ -67,6 +67,16 @@ func TestFmtRate(t *testing.T) {
 	}
 }
 
+func TestStressLinkName(t *testing.T) {
+	if got := stressLinkName("ryzen", "sarah-pc"); got != "ryzen → sarah-pc" {
+		t.Errorf("labeled link = %q", got)
+	}
+	// Pre-1.3.3 peers report no host: destination-only fallback.
+	if got := stressLinkName("", "sarah-pc"); got != "→ sarah-pc" {
+		t.Errorf("fallback link = %q", got)
+	}
+}
+
 func TestStressLoadColor(t *testing.T) {
 	if stressHealthColor(true) != colBad {
 		t.Fatalf("aborted link should be red")

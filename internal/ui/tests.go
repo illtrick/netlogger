@@ -685,14 +685,25 @@ func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.Str
 	)
 }
 
-// stressLinkNames lists the loaded links' target device names, in the same order
-// stressRateChart draws their series — the shared legend for the RRUL panel.
+// stressLinkName labels one directed link "source → target". Every device is
+// a TARGET of N-1 links, so destination-only labels read as duplicates; the
+// source is what tells two "→ sarah-pc" rows apart. Pre-1.3.3 peers report no
+// Host — those keep the destination-only form. Pure.
+func stressLinkName(srcHost, dstName string) string {
+	if srcHost == "" {
+		return "→ " + dstName
+	}
+	return srcHost + " → " + dstName
+}
+
+// stressLinkNames lists the loaded links as "source → target", in the same
+// order stressRateChart draws their series — the shared legend for the RRUL panel.
 func stressLinkNames(nodes []appcore.StressStatus, snap appcore.Snapshot) []string {
 	var names []string
 	for _, n := range nodes {
 		for _, l := range n.Links {
 			if len(l.RateHist) >= 2 {
-				names = append(names, "→ "+snap.DeviceName(l.Target))
+				names = append(names, stressLinkName(n.Host, snap.DeviceName(l.Target)))
 			}
 		}
 	}
@@ -929,17 +940,17 @@ func layoutStressList(gtx layout.Context, th *material.Theme, nodes []appcore.St
 	rows := make([]layout.FlexChild, 0)
 	for _, n := range nodes {
 		for _, l := range n.Links {
-			l := l
+			l, src := l, n.Host
 			rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return roundedBG(gtx, colCardAlt, unit.Dp(6), unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(dotWidget(stressHealthColor(l.Aborted), 8)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								gtx.Constraints.Min.X = gtx.Dp(unit.Dp(150))
-								gtx.Constraints.Max.X = gtx.Dp(unit.Dp(150))
+								gtx.Constraints.Min.X = gtx.Dp(unit.Dp(196))
+								gtx.Constraints.Max.X = gtx.Dp(unit.Dp(196))
 								return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return deviceLabel(gtx, th, snap.DeviceName(l.Target), l.Target)
+									return deviceLabel(gtx, th, stressLinkName(src, snap.DeviceName(l.Target)), l.Target)
 								})
 							}),
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

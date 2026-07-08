@@ -101,7 +101,7 @@ func TestStressStartDelay(t *testing.T) {
 }
 
 func TestStressLifecycleWithFakeRunner(t *testing.T) {
-	a := &App{}
+	a := &App{host: "ryzen"}
 	var calls int64
 	a.stressRunner = func(ctx context.Context, target string, o iperf.Opts, _ func(iperf.Interval)) (iperf.Result, error) {
 		atomic.AddInt64(&calls, 1)
@@ -124,6 +124,9 @@ func TestStressLifecycleWithFakeRunner(t *testing.T) {
 	st := a.stressStatusLocal()
 	if !st.Running || len(st.Links) != 2 {
 		t.Fatalf("expected running with 2 links, got %+v", st)
+	}
+	if st.Host != "ryzen" {
+		t.Fatalf("status must name its source node, got %q", st.Host)
 	}
 	a.stopStressLocal("r1")
 	time.Sleep(20 * time.Millisecond)
