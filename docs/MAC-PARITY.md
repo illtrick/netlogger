@@ -95,6 +95,24 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `03ff62f` (public release v1.3.3 — Mac artifact wanted)
+
+**Range:** `f8bae23..03ff62f` (docs + build scripts only; no engine change) · **Net effect for Mac: rebuild + one upload.**
+
+- **[Portable]** `build-mac.sh` now also emits `bin/NetLogger-macos.zip`
+  (ditto, bundle-safe) and marks `-dirty` only for modified tracked files.
+- **[Action]** The GitHub release **v1.3.3** is live with the Windows exe;
+  the README promises a downloadable Mac app. From a clean checkout of the
+  `v1.3.3` tag on the Mac:
+  - [ ] `git checkout v1.3.3 && ./scripts/build-mac.sh` (stamp must read
+    `03ff62f`, not `-dirty`)
+  - [ ] Smoke-launch `bin/NetLogger.app`, confirm v1.3.3 in the footer and
+    that it joins the Windows mesh
+  - [ ] `shasum -a 256 bin/NetLogger-macos.zip`, then
+    `gh release upload v1.3.3 bin/NetLogger-macos.zip` and append the
+    checksum + a "macOS: download NetLogger-macos.zip, right-click → Open"
+    line to the release notes (`gh release edit v1.3.3 --notes-file …`)
+
 ### 2026-07-08 · Windows `f8bae23` (stress links labeled source → target — v1.3.3)
 
 **Range:** `4ca38b3..f8bae23` · **Net effect for Mac: rebuild-only.** Portable:
