@@ -499,8 +499,8 @@ func pairDetail(gtx layout.Context, th *material.Theme, st *testsState, m appcor
 					return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
-								return multiSparkline(gtx, series, cols, w, 56)
+								_, mx := chartBounds(series, 0)
+								return scaledChart(gtx, th, series, cols, 56, 0, mx, fmtRate(mx), -1)
 							}),
 							layout.Rigid(gap(4)),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -571,11 +571,13 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 		}),
 		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return stressRateChart(gtx, th, nodes, snap)
+			return stressRateChart(gtx, th, nodes, snap, st.cap(), -1)
 		}),
+		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return stressLatencyChart(gtx, th, snap)
+			return stressLatencyChart(gtx, th, snap, -1)
 		}),
+		layout.Rigid(gap(14)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if !on && len(nodes) == 0 {
 				lbl := material.Caption(th, "no active run")
@@ -591,7 +593,7 @@ func layoutStress(gtx layout.Context, th *material.Theme, st *testsState, snap a
 // shared scale — throughput under load, streamed live from the iperf3 clients.
 // Read together with the latency chart below it: rate sag + RTT spike on the
 // same second is the load-triggered fault caught in the act.
-func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot) layout.Dimensions {
+func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.StressStatus, snap appcore.Snapshot, cap int, markFrac float64) layout.Dimensions {
 	var series [][]float64
 	var names []string
 	for _, n := range nodes {
@@ -605,22 +607,21 @@ func stressRateChart(gtx layout.Context, th *material.Theme, nodes []appcore.Str
 	if len(series) == 0 {
 		return layout.Dimensions{}
 	}
+	_, mx := chartBounds(series, float64(cap))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Throughput per link · Mb/s per second")
+			lbl := material.Caption(th, "Throughput per link")
 			lbl.Color = colTextMut
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
-			return multiSparkline(gtx, series, seriesColors, w, 64)
+			return scaledChart(gtx, th, series, seriesColors, 56, 0, mx, fmtRate(mx), markFrac)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return legendRow(gtx, th, names)
 		}),
-		layout.Rigid(gap(14)),
 	)
 }
 
@@ -645,6 +646,38 @@ func legendRow(gtx layout.Context, th *material.Theme, names []string) layout.Di
 		}))
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
+}
+
+// scaledChart wraps multiSparklineRange with a labeled y-axis (max over 0).
+// fmtMax renders the top label (e.g. fmtRate or "80 ms").
+func scaledChart(gtx layout.Context, th *material.Theme, serieses [][]float64, cols []color.NRGBA, hDp int, min, max float64, fmtMax string, markFrac float64) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			w, h := gtx.Dp(unit.Dp(52)), gtx.Dp(unit.Dp(hDp))
+			gtx.Constraints.Min = image.Pt(w, h)
+			gtx.Constraints.Max = image.Pt(w, h)
+			return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				axisLbl := func(txt string) layout.Widget {
+					return func(gtx layout.Context) layout.Dimensions {
+						return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(th, unit.Sp(10), txt)
+							l.Color = colTextMut
+							return l.Layout(gtx)
+						})
+					}
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(axisLbl(fmtMax)),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: gtx.Constraints.Min} }),
+					layout.Rigid(axisLbl("0")),
+				)
+			})
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
+			return multiSparklineRange(gtx, serieses, cols, w, hDp, min, max, markFrac)
+		}),
+	)
 }
 
 // capStepper is the per-link bandwidth control: − value + (ghost buttons).
@@ -683,52 +716,27 @@ var seriesColors = []color.NRGBA{
 
 // stressLatencyChart draws the per-peer RTT histories on one shared scale — the
 // "latency under load" readout: lines spike as the stress test saturates links.
-func stressLatencyChart(gtx layout.Context, th *material.Theme, snap appcore.Snapshot) layout.Dimensions {
+func stressLatencyChart(gtx layout.Context, th *material.Theme, snap appcore.Snapshot, markFrac float64) layout.Dimensions {
 	var series [][]float64
-	var names []string
 	for _, p := range snap.Peers {
 		if len(p.RTTHist) >= 2 {
 			series = append(series, p.RTTHist)
-			names = append(names, p.Host)
 		}
 	}
 	if len(series) == 0 {
 		return layout.Dimensions{}
 	}
+	_, mx := chartBounds(series, 0)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Latency under load · last minute")
+			lbl := material.Caption(th, "Latency")
 			lbl.Color = colTextMut
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(gap(6)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			w := int(gtx.Metric.PxToDp(gtx.Constraints.Max.X))
-			return multiSparkline(gtx, series, seriesColors, w, 80)
+			return scaledChart(gtx, th, series, seriesColors, 56, 0, mx, fmt.Sprintf("%.0f ms", mx), markFrac)
 		}),
-		layout.Rigid(gap(6)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ch := make([]layout.FlexChild, 0, len(names))
-			for i, name := range names {
-				i, name := i, name
-				ch = append(ch, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(dotWidget(seriesColors[i%len(seriesColors)], 8)),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Caption(th, name)
-									lbl.Color = colTextSec
-									return lbl.Layout(gtx)
-								})
-							}),
-						)
-					})
-				}))
-			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, ch...)
-		}),
-		layout.Rigid(gap(14)),
 	)
 }
 
