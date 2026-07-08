@@ -95,6 +95,39 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-08 · Windows `9dc1919` (tests visual overhaul + directional matrix + stress history — v1.3.0)
+
+**Range:** `cb68bfb..9dc1919` (8 feature commits, plan `docs/superpowers/plans/2026-07-08-tests-visual-overhaul.md`, rationale `docs/superpowers/specs/2026-07-08-tests-ux-research.md`) · **Net effect for Mac: rebuild-only + live checks.** No new platform seams.
+
+- **[Portable]** All UI: scaled charts (y-axis labels, zero-based throughput),
+  validated series palette (severity colors reserved), RRUL-aligned stress
+  charts + quiet idle, internet latency strip + `Mb/s` units, config
+  provenance chips. → rebuild + verify.
+- **[Portable]** Directional speed matrix: cell = flow row→column (pure
+  render-side transform; sweep engine unchanged), ▲ asymmetry markers,
+  severity graded as % of min(endpoint link speeds).
+- **[Portable]** Stress runs persist: orchestrator records a `stress` history
+  row (links · cap · duration · worst added latency · aborts); rows appear
+  under the Stress view and in the export bundle.
+- **[Spec/behavioral]** One additive wire field: `LinkReport.LinkSpeedMbit`
+  (fastest Up NIC, parsed from nicstat's LinkSpeed vocabulary). The darwin
+  collector already emits that vocabulary ("1 Gbps", "2.5 Gbps" via
+  `mediaToSpeed`), so `parseLinkSpeedMbit` should work unchanged — confirm live:
+  - [ ] A Mac↔Windows 1.3.0 sweep shows `% of link` sub-lines on Mac-involved
+    cells (not the absolute fallback), with the Mac's real negotiated rate as
+    the denominator when it is the slower endpoint.
+  - [ ] Wi-Fi caveat: CoreWLAN reports live PHY rate as LinkSpeed — %-of-link
+    on a Wi-Fi Mac grades against PHY rate, which is optimistic; note what you
+    observe (acceptable for 1.3, flag if it grades absurdly).
+  - [ ] Stress run from the Mac records a history row with plausible worst
+    added latency; mixed mesh with any pre-1.3 peer must fall back to
+    absolute grading without crashing (covered by unit tests, verify visually).
+- **Version:** 1.3.0 — `build-mac.sh` stamps the bundle automatically.
+
+Verify: `./scripts/test-mac.sh` green (new suites: flow transform, linkPct/
+pctBucket, parseLinkSpeedMbit, RecordStressRun, chartBounds, gradeSubLine),
+then the live checks above.
+
 ### 2026-07-08 · Windows `0f6084f` (live speed/stress telemetry, loopback fix — v1.2.0)
 
 **Range:** `cd2f7fb..0f6084f` (`89c6f72` loopback fix + units, `0f6084f` live telemetry) · **Net effect for Mac: rebuild-only + live checks.** No new platform seams — everything is untagged Go.
