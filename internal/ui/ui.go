@@ -178,6 +178,9 @@ func Run(a *appcore.App) error {
 				if !alreadyRunning {
 					self, peers := snap.SelfPeer, snap.Peers
 					req := tst.sweepReq() // read the controls on the frame thread
+					tst.mu.Lock()
+					tst.lastReq = req
+					tst.mu.Unlock()
 					go func() {
 						done := a.BeginSpeedTestNote()
 						m := a.SpeedSweep(ctx, self, peers, req,
@@ -188,7 +191,7 @@ func Run(a *appcore.App) error {
 								w.Invalidate()
 							})
 						done()
-						status := "completed " + time.Now().Format("15:04")
+						status := "completed " + time.Now().Format("15:04") + " · " + appcore.SweepConfigLine(req)
 						if ctx.Err() != nil {
 							status = "stopped — partial results"
 						}

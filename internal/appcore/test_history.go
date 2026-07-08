@@ -25,10 +25,25 @@ func (a *App) TestHistory(kind string, limit int) []store.TestResult {
 	return out
 }
 
+// SweepConfigLine renders a run's settings for provenance chips/history.
+// e.g. "both · 10s · 4 streams".
+func SweepConfigLine(req SpeedReq) string {
+	d := req.Direction
+	if d == "" {
+		d = "both"
+	}
+	streams := req.Streams
+	if streams <= 0 {
+		streams = 1
+	}
+	return fmt.Sprintf("%s · %ds · %d streams", d, req.DurationS, streams)
+}
+
 // sweepSummary condenses a finished sweep into one history row: how many pairs
-// succeeded and the slowest link (the diagnostic headline). ok is false when no
-// pair produced a result (nothing worth recording).
-func sweepSummary(nodes []SpeedNode, cells map[string]SpeedResult) (store.TestResult, bool) {
+// succeeded, the slowest link (the diagnostic headline), and the run config so a
+// row's numbers are read against the settings that produced them. ok is false
+// when no pair produced a result (nothing worth recording).
+func sweepSummary(nodes []SpeedNode, cells map[string]SpeedResult, req SpeedReq) (store.TestResult, bool) {
 	hostByID := make(map[string]string, len(nodes))
 	for _, n := range nodes {
 		hostByID[n.ID] = n.Host
@@ -55,7 +70,7 @@ func sweepSummary(nodes []SpeedNode, cells map[string]SpeedResult) (store.TestRe
 		Label:    fmt.Sprintf("%d/%d pairs", okCount, len(cells)),
 		DownMbit: slow.DownMbit,
 		UpMbit:   slow.UpMbit,
-		Detail:   "slowest " + hostByID[fromID] + " → " + hostByID[toID],
+		Detail:   "slowest " + hostByID[fromID] + " → " + hostByID[toID] + " · " + SweepConfigLine(req),
 	}, true
 }
 

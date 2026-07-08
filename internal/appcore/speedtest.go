@@ -542,7 +542,7 @@ func (a *App) SpeedSweep(ctx context.Context, self PeerInfo, peers []PeerInfo, r
 		}
 	}
 	if ctx.Err() == nil { // a stopped sweep is partial — don't record it
-		if sum, ok := sweepSummary(nodes, cells); ok {
+		if sum, ok := sweepSummary(nodes, cells, req); ok {
 			a.recordTestResult(sum)
 		}
 	}

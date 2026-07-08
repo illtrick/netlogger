@@ -14,21 +14,33 @@ func TestSweepSummarySlowestPair(t *testing.T) {
 		speedKey("a", "c"): {DownMbit: 941, UpMbit: 887},
 		speedKey("b", "c"): {Err: "server busy"}, // failed pairs don't count
 	}
-	sum, ok := sweepSummary(nodes, cells)
+	sum, ok := sweepSummary(nodes, cells, SpeedReq{Direction: "both", DurationS: 10, Streams: 4})
 	if !ok {
 		t.Fatalf("expected a summary")
 	}
 	if sum.Label != "2/3 pairs" {
 		t.Fatalf("label = %q, want 2/3 pairs", sum.Label)
 	}
-	if sum.DownMbit != 235 || sum.Detail != "slowest ryzen → nas" {
+	if sum.DownMbit != 235 || sum.Detail != "slowest ryzen → nas · both · 10s · 4 streams" {
 		t.Fatalf("slowest = %v %q", sum.DownMbit, sum.Detail)
 	}
 }
 
 func TestSweepSummaryNothingSucceeded(t *testing.T) {
-	if _, ok := sweepSummary(nil, map[string]SpeedResult{"a\x00b": {Err: "x"}}); ok {
+	if _, ok := sweepSummary(nil, map[string]SpeedResult{"a\x00b": {Err: "x"}}, SpeedReq{}); ok {
 		t.Fatalf("all-failed sweep should not record")
+	}
+}
+
+func TestSweepConfigLine(t *testing.T) {
+	if got := SweepConfigLine(SpeedReq{}); got != "both · 0s · 1 streams" {
+		t.Fatalf("defaults = %q", got)
+	}
+	if got := SweepConfigLine(SpeedReq{Direction: "bidir", DurationS: 30, Streams: 8}); got != "bidir · 30s · 8 streams" {
+		t.Fatalf("bidir = %q", got)
+	}
+	if got := SweepConfigLine(SpeedReq{Direction: "down", DurationS: 10, Streams: 1}); got != "down · 10s · 1 streams" {
+		t.Fatalf("down = %q", got)
 	}
 }
 

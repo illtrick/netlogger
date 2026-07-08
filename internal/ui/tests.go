@@ -76,6 +76,7 @@ type testsState struct {
 	status      string
 	sweep       appcore.SweepProgress // live fill while a sweep runs (guarded by mu)
 	sweepCancel context.CancelFunc    // stops the running sweep (guarded by mu)
+	lastReq     appcore.SpeedReq      // config of the running/last sweep (guarded by mu)
 
 	// Sweep controls (frame-thread-only): direction, duration, parallel streams.
 	swDirSegs [4]widget.Clickable // Both / Down / Up / Bidir
