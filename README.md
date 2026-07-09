@@ -1,10 +1,10 @@
 # NetLogger
 
-**A portable, zero-config tool for catching network problems that come and go.**
+**A portable, zero-config tool for catching intermitent network problem, LAN speed and stresstesting .**
 
 Put the same app on every machine on your network (Windows `.exe`, macOS `.app`). The copies find each other, watch every connection around the clock, and line their timelines up side by side — so when your stream stutters at 2 AM, you can see **which machine's connection** blinked, **when**, and **whether it only happens under load**.
 
-NetLogger was built to catch a real ghost: a PC whose wired connection silently reset only while streaming, on a network where every speed test said "all healthy." One-shot tests can't catch problems that come and go. NetLogger watches everything, all the time.
+NetLogger was built to catch flakey issues that disapear as quickly as you see them. I had wired connections silently reset intermitently on a network where every speed test and ping said "all healthy." One-shot tests can't catch problems that come and go. NetLogger watches everything, all the time and make it easy to see all the events on a common timeline.
 
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20·%20macOS%2011%2B-blue) ![go](https://img.shields.io/badge/Go-single%20binary-00ADD8) ![license](https://img.shields.io/badge/license-MIT-green)
 
