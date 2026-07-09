@@ -1,6 +1,6 @@
 # NetLogger
 
-**A portable, zero-config tool for catching intermitent network problem, LAN speed and stresstesting .**
+**A portable, zero-config tool for catching intermittent network problem, LAN speed and stress testing.**
 
 Put the same app on every machine on your network (Windows `.exe`, macOS `.app`). The copies find each other, watch every connection around the clock, and line their timelines up side by side — so when your stream stutters at 2 AM, you can see **which machine's connection** blinked, **when**, and **whether it only happens under load**.
 
