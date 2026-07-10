@@ -95,6 +95,15 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-10 · Windows `2064a77` (v1.3.6 — announces/self-addr track IP changes)
+
+**Range:** `6dd8f22..2064a77` · **Net effect for Mac: rebuild-only.** Both fixes
+are portable (discovery announce rebuilt per send with a fresh primary IP;
+appcore selfAddr refreshed every 10s) — no darwin seams touched. **Supersedes
+v1.3.5's upload instruction: build from tag `v1.3.6` (stamp `2064a77`) and
+`gh release upload v1.3.6 bin/NetLogger-macos.zip`.** The v1.3.5 entry's
+ALF live check still applies, on this tag.
+
 ### 2026-07-10 · Windows `5b59774` (v1.3.5 — firewall health verification + inbound-blackout warning)
 
 **Range:** `61616f2..5b59774` · **Net effect for Mac: rebuild + one live check.**
