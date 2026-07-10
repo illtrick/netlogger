@@ -95,6 +95,26 @@ Verify: `./scripts/test-mac.sh` green; <extra live checks>.
 
 _Newest first. Each entry corresponds to one Windows build push._
 
+### 2026-07-10 · Windows `5b59774` (v1.3.5 — firewall health verification + inbound-blackout warning)
+
+**Range:** `61616f2..5b59774` · **Net effect for Mac: rebuild + one live check.**
+
+- **[Windows-only]** Firewall rules verified by effective properties
+  (enabled/inbound/allow/program) via PowerShell cmdlets; drift healed by
+  adding a fresh rule, never deleting. darwin stubs unchanged.
+- **[Portable]** `reachWarning` (appcore/links.go): when every peer's pulled
+  link report shows ~100% loss TOWARD this node while our pulls succeed, the
+  header warns "inbound traffic looks blocked". This detects the 2026-07-10
+  incident class (macOS analogue: ALF deny / block-all).
+  - [ ] Live check: with the Mac's firewall temporarily set to block the app
+    (or ALF "block all incoming"), confirm the Mac's header shows the
+    inbound-blocked warning within ~a minute, and clears after unblocking.
+- **[Action]** Build and upload the Mac artifact to **v1.3.5** (supersedes the
+  v1.3.4/v1.3.3 upload instructions below): `git checkout v1.3.5`,
+  `./scripts/build-mac.sh` (stamp `5b59774`), smoke-launch, then
+  `gh release upload v1.3.5 bin/NetLogger-macos.zip` + append its sha256 to
+  the release notes.
+
 ### 2026-07-08 · Windows `007a068` (v1.3.4 — firewall check-then-add; release retarget)
 
 **Range:** `9bc82e5..007a068` · **Net effect for Mac: version bump only.** The
