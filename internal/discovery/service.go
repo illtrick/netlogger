@@ -88,14 +88,21 @@ func (s *Service) Start() error {
 	return nil
 }
 
-func (s *Service) announceLoop(gaddr *net.UDPAddr) {
-	defer s.wg.Done()
-	msg := encode(announce{
-		ID: s.cfg.SelfID, Host: s.cfg.Host, IP: primaryIP(),
+// announceMsg builds a FRESH announce, re-reading the primary IP. It must be
+// rebuilt for every send: a frozen announce kept broadcasting a stale IP after
+// a DHCP renewal (2026-07-10 incident) — every peer dialed a vacant address
+// for the rest of the process lifetime while this node measured itself healthy.
+func (s *Service) announceMsg() []byte {
+	return encode(announce{
+		ID: s.cfg.SelfID, Host: s.cfg.Host, IP: primaryIPFn(),
 		Port: s.cfg.ControlPort, Version: s.cfg.Version,
 	})
+}
+
+func (s *Service) announceLoop(gaddr *net.UDPAddr) {
+	defer s.wg.Done()
 	for i := 0; i < 3; i++ {
-		s.sendTo(gaddr, msg)
+		s.sendTo(gaddr, s.announceMsg())
 		select {
 		case <-s.stop:
 			return
@@ -109,7 +116,7 @@ func (s *Service) announceLoop(gaddr *net.UDPAddr) {
 		case <-s.stop:
 			return
 		case <-t.C:
-			s.sendTo(gaddr, msg)
+			s.sendTo(gaddr, s.announceMsg())
 		}
 	}
 }
@@ -227,6 +234,9 @@ func (s *Service) Stop() error {
 // engine can hand out a LAN-reachable self address (a remote node told to test
 // against "127.0.0.1" would test itself). Returns "" if it can't be determined.
 func PrimaryIP() string { return primaryIP() }
+
+// primaryIPFn is primaryIP, injectable for announce-freshness tests.
+var primaryIPFn = primaryIP
 
 // primaryIP returns the local IP the OS would use for outbound traffic (the
 // default-route source). On a multi-homed host this gives one stable, routable

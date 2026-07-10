@@ -111,7 +111,10 @@ type App struct {
 	disc      *discovery.Service
 	nodeID    string
 	host      string
-	selfAddr  string // this node's LAN-reachable control address (ip:port), set in Start; guarded by a.mu
+	selfAddr  string // this node's LAN-reachable control address (ip:port); refreshed every 10s, guarded by a.mu
+	// primaryIP resolves this node's LAN IP (defaults to discovery.PrimaryIP);
+	// injectable for tests.
+	primaryIP func() string
 
 	// FetchLinks fetches a peer's link report; defaults to an HTTP client call.
 	FetchLinks func(baseURL string) (LinkReport, error)
@@ -435,13 +438,6 @@ func (a *App) Start() error {
 	a.mu.Lock()
 	a.nodeID = nodeID
 	a.host = host
-	// Self's control address as PEERS must reach it. Loopback is the fallback
-	// only — handing "127.0.0.1" to a remote node as a test target makes it
-	// test itself (loopback runs at memory speed and reads as a 100+ Gbit LAN).
-	a.selfAddr = "127.0.0.1:" + strconv.Itoa(controlPort)
-	if ip := discovery.PrimaryIP(); ip != "" {
-		a.selfAddr = net.JoinHostPort(ip, strconv.Itoa(controlPort))
-	}
 	if disc != nil {
 		a.disc = disc
 		a.Discovery = disc
@@ -483,13 +479,14 @@ func (a *App) Start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	a.wg.Add(6)
+	a.wg.Add(7)
 	go a.probeLoop(ctx)
 	go a.peerLoop(ctx)
 	go a.udpLoop(ctx)
 	go a.linkPullLoop(ctx)
 	go a.nicLoop(ctx)
 	go a.heatSyncLoop(ctx)
+	go a.selfAddrLoop(ctx)
 
 	a.sleepMu.Lock()
 	if a.preventSleep && a.keeper == nil {
@@ -820,6 +817,42 @@ func (a *App) selfAddrLocked() string {
 		return a.selfAddr
 	}
 	return "127.0.0.1:" + strconv.Itoa(controlPort)
+}
+
+// refreshSelfAddr recomputes this node's LAN-reachable control address. It is
+// handed to REMOTE nodes as a test target, so it must TRACK IP changes (DHCP
+// renewals, NIC swaps) — a stale value aims peers at a vacant address, the
+// same failure class as the frozen discovery announce (2026-07-10 incident).
+// Loopback is the fallback only: a remote node told to test "127.0.0.1"
+// tests itself at memory speed.
+func (a *App) refreshSelfAddr() {
+	addr := "127.0.0.1:" + strconv.Itoa(controlPort)
+	pf := a.primaryIP
+	if pf == nil {
+		pf = discovery.PrimaryIP
+	}
+	if ip := pf(); ip != "" {
+		addr = net.JoinHostPort(ip, strconv.Itoa(controlPort))
+	}
+	a.mu.Lock()
+	a.selfAddr = addr
+	a.mu.Unlock()
+}
+
+// selfAddrLoop keeps the self address fresh for the engine's lifetime.
+func (a *App) selfAddrLoop(ctx context.Context) {
+	defer a.wg.Done()
+	a.refreshSelfAddr()
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.refreshSelfAddr()
+		}
+	}
 }
 
 // Snapshot returns an immutable copy of current engine state.

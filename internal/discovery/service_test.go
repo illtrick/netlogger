@@ -75,6 +75,26 @@ func TestIsSelfAnnounce(t *testing.T) {
 	}
 }
 
+func TestAnnounceMsgTracksIPChanges(t *testing.T) {
+	old := primaryIPFn
+	defer func() { primaryIPFn = old }()
+	ips := []string{"192.168.0.128", "192.168.0.127"}
+	calls := 0
+	primaryIPFn = func() string { ip := ips[calls%2]; calls++; return ip }
+
+	s := New(Config{SelfID: "x", Host: "h", ControlPort: 8088, Group: "239.255.74.76", Port: 48076})
+	m1, ok1 := decode(s.announceMsg())
+	m2, ok2 := decode(s.announceMsg())
+	if !ok1 || !ok2 {
+		t.Fatalf("announce did not round-trip")
+	}
+	// A frozen announce broadcast a stale IP forever after a DHCP change —
+	// every send must re-read the primary IP.
+	if m1.IP != "192.168.0.128" || m2.IP != "192.168.0.127" {
+		t.Fatalf("announce IP frozen: %q then %q", m1.IP, m2.IP)
+	}
+}
+
 func TestNewAppliesDefaults(t *testing.T) {
 	s := New(Config{Group: "239.255.74.76", Port: 48076})
 	if s.cfg.Interval != 3*time.Second {

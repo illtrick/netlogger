@@ -56,6 +56,34 @@ func TestMeshWarning(t *testing.T) {
 	}
 }
 
+func TestRefreshSelfAddrTracksIPChange(t *testing.T) {
+	ip := "192.168.0.128"
+	a := &App{primaryIP: func() string { return ip }}
+	a.refreshSelfAddr()
+	a.mu.Lock()
+	first := a.selfAddr
+	a.mu.Unlock()
+	if first != "192.168.0.128:8088" {
+		t.Fatalf("selfAddr = %q", first)
+	}
+	ip = "192.168.0.127" // DHCP moved us — the next refresh must follow
+	a.refreshSelfAddr()
+	a.mu.Lock()
+	second := a.selfAddr
+	a.mu.Unlock()
+	if second != "192.168.0.127:8088" {
+		t.Fatalf("selfAddr stale after IP change: %q", second)
+	}
+	// No route at all → loopback fallback (local API only).
+	a.primaryIP = func() string { return "" }
+	a.refreshSelfAddr()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.selfAddr != "127.0.0.1:8088" {
+		t.Fatalf("no-route fallback = %q", a.selfAddr)
+	}
+}
+
 func TestReachWarning(t *testing.T) {
 	self := "me"
 	// Every measuring peer reports total loss toward us → warn.
