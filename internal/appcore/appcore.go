@@ -59,6 +59,7 @@ type Snapshot struct {
 	Platform         string // this binary's GOOS/GOARCH
 	Build            string // this binary's exact git commit
 	BuildWarning     string // set when a peer runs an incompatible version or a skewed build
+	ReachWarning     string // set when every peer reports ~100% loss toward this machine (inbound blocked)
 	LastReset        string // outcome of the most recent ResetAll (empty until one runs)
 	// Events is the merged mesh-wide connectivity timeline (this machine + every
 	// peer's pulled events), oldest first, host-labeled; the UI renders newest first.
@@ -414,8 +415,13 @@ func (a *App) Start() error {
 	host, _ := os.Hostname()
 	var disc *discovery.Service
 	if a.Discovery == nil {
-		_ = firewall.AllowProgram("NetLogger")
-		_ = firewall.AllowPing("NetLogger ICMP")
+		// Best-effort and health-verified (PowerShell probes ~1s each) — run
+		// off the startup path. Rules from the previous run are usually still
+		// healthy, so nothing depends on this finishing first.
+		go func() {
+			_ = firewall.AllowProgram("NetLogger")
+			_ = firewall.AllowPing("NetLogger ICMP")
+		}()
 		svc := discovery.New(discovery.Config{
 			SelfID: nodeID, Host: host, ControlPort: controlPort, Version: version.Version,
 			Group: discoveryGroup, Port: discoveryPort,
@@ -894,6 +900,7 @@ func (a *App) Snapshot() Snapshot {
 	snap.Matrix = assembleMatrix(selfRep, reps)
 	snap.SelfPeer.LinkSpeedMbit = selfRep.LinkSpeedMbit
 	snap.BuildWarning = meshWarning(buildID{Version: version.Version, Build: version.Build, Platform: version.Platform()}, reps)
+	snap.ReachWarning = reachWarning(snap.SelfPeer.ID, reps)
 	for i := range snap.Peers {
 		if r, ok := reps[snap.Peers[i].ID]; ok {
 			snap.Peers[i].Build = r.Build

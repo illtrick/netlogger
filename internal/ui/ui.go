@@ -513,6 +513,10 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 	if s.BuildWarning != "" {
 		skew = "⚠ " + s.BuildWarning
 	}
+	reach := ""
+	if s.ReachWarning != "" {
+		reach = "⚠ " + s.ReachWarning
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -542,6 +546,7 @@ func layoutHeader(gtx layout.Context, th *material.Theme, s appcore.Snapshot, re
 			)
 		}),
 		caption(skew, colBad),
+		caption(reach, colBad),
 		caption(statusMsg, colTextSec),
 		caption(s.LastReset, colTextSec),
 	)

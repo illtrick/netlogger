@@ -34,11 +34,15 @@ func StartServer(port int) *Server {
 		port = DefaultServerPort
 	}
 	s := &Server{port: port, stop: make(chan struct{}), done: make(chan struct{})}
-	// Best-effort; only effective when elevated (the app self-elevates). The
+	// Best-effort and health-verified (spawns PowerShell probes) — run async
+	// so server start isn't delayed. iperf3 binds regardless; the firewall
+	// only gates inbound, and existing rules are usually still healthy. The
 	// program rule covers the extracted binary on every port; the per-port
 	// rule is belt-and-braces for layouts where the binary path shifts.
-	ensureFirewallProgram(bin)
-	ensureFirewallPort(port)
+	go func() {
+		ensureFirewallProgram(bin)
+		ensureFirewallPort(port)
+	}()
 	go s.run()
 	return s
 }

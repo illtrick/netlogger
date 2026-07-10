@@ -117,6 +117,31 @@ func meshWarning(self buildID, reps map[string]LinkReport) string {
 	return ""
 }
 
+// reachWarning detects the "inbound blackout" failure from the 2026-07-10
+// incident: this machine's OUTBOUND works fine (we pulled these very reports),
+// yet every peer that measures us reports ~total loss TOWARD us — meaning our
+// inbound (firewall posture, network profile flipped to Public, block-all
+// toggle) is dropping their probes. From this machine's own chair everything
+// looks healthy except red rows elsewhere, so say it explicitly. Empty when
+// any peer can reach us or nothing has measured us yet.
+func reachWarning(selfID string, reps map[string]LinkReport) string {
+	measured, dead := 0, 0
+	for _, r := range reps {
+		for _, l := range r.Links {
+			if l.PeerID == selfID {
+				measured++
+				if l.LossPct >= 99 {
+					dead++
+				}
+			}
+		}
+	}
+	if measured > 0 && dead == measured {
+		return "every peer reports ~100% loss toward this machine — inbound traffic looks blocked. Check the firewall and network profile (Private, not Public)."
+	}
+	return ""
+}
+
 // versionOr / platformOr render an unset field readably in the warning text.
 func versionOr(v string) string {
 	if v == "" {

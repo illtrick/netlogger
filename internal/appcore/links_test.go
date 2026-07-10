@@ -56,6 +56,30 @@ func TestMeshWarning(t *testing.T) {
 	}
 }
 
+func TestReachWarning(t *testing.T) {
+	self := "me"
+	// Every measuring peer reports total loss toward us → warn.
+	reps := map[string]LinkReport{
+		"a": {NodeID: "a", Links: []LinkStat{{PeerID: self, LossPct: 100}}},
+		"b": {NodeID: "b", Links: []LinkStat{{PeerID: self, LossPct: 99.5}, {PeerID: "a", LossPct: 0}}},
+	}
+	if w := reachWarning(self, reps); w == "" {
+		t.Fatalf("all-peers-dead-toward-self should warn")
+	}
+	// One peer reaches us fine → no warning (their problem, not our inbound).
+	reps["b"] = LinkReport{NodeID: "b", Links: []LinkStat{{PeerID: self, LossPct: 0}}}
+	if w := reachWarning(self, reps); w != "" {
+		t.Fatalf("a reachable path should clear the warning, got %q", w)
+	}
+	// Nothing measures us yet (fresh mesh) → silent.
+	if w := reachWarning(self, map[string]LinkReport{"a": {NodeID: "a"}}); w != "" {
+		t.Fatalf("no measurements should stay silent, got %q", w)
+	}
+	if w := reachWarning(self, nil); w != "" {
+		t.Fatalf("no reports should stay silent, got %q", w)
+	}
+}
+
 func TestAssembleMatrixCombinesAllReports(t *testing.T) {
 	own := LinkReport{NodeID: "a", Host: "hostA", Links: []LinkStat{
 		{PeerID: "b", RTTms: 1.0, JitterMs: 0.2, LossPct: 0, Drops: 0},
